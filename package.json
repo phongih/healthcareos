@@ -1,0 +1,34 @@
+{
+  "name": "healthcareos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HealthcareOS (HCOS-P0-ENG-001) — S0 Platform Kernel/Identity/Tenant Isolation, S1 Patient Registry & Clinical Encounter",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run tests/security tests/clinical tests/http tests/registry tests/config",
+    "test:integration": "vitest run tests/integration",
+    "db:migrate": "node scripts/migrate.mjs",
+    "gate:g0g1": "npm run typecheck && npm run test:unit && npm run test:integration",
+    "start": "node dist/main.js",
+    "build": "esbuild services/api/src/main.ts --bundle --platform=node --target=node22 --format=esm --packages=external --sourcemap --outfile=dist/main.js",
+    "dev": "tsx services/api/src/main.ts",
+    "verify:r2": "bash scripts/r2-verify.sh"
+  },
+  "dependencies": {
+    "jose": "^5.9.6",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "esbuild": "^0.24.0"
+  }
+}

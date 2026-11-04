@@ -1,0 +1,14 @@
+# Build context = thư mục gốc repo:  docker build -f services/api/Dockerfile .
+# Dockerfile.dockerignore cạnh Dockerfile được BuildKit ưu tiên; file này là bản dự phòng/tài liệu.
+**/node_modules
+dist
+coverage
+.git
+.github
+.env
+.env.*
+*.log
+tests
+docs
+HCOS-S0-R1_*.md
+**/*.test.ts

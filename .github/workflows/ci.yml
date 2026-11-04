@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run test:unit
+
+  # Gate G0/G1: RLS, trigger bất biến, FK ghép, audit append-only trên PostgreSQL thật.
+  integration-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HCOS_IT: '1'
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm install --no-audit --no-fund
+      - name: Migrations apply cleanly and are idempotent
+        run: |
+          createdb hcos_ci
+          PGDATABASE=hcos_ci node scripts/migrate.mjs
+          PGDATABASE=hcos_ci node scripts/migrate.mjs
+      - run: npm run test:integration
+
+  # R1: image phải build được (npm ci cần package-lock.json đã commit) và chạy bằng user không phải root.
+  container:
+    runs-on: ubuntu-latest
+    needs: typecheck-and-unit
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f services/api/Dockerfile -t hcos-api:ci .
+      - name: Non-root runtime user
+        run: test "$(docker run --rm --entrypoint id hcos-api:ci -u)" != "0"
+      - name: Invalid config fails fast (exit 1, no secrets in output)
+        run: |
+          set +e
+          out=$(docker run --rm -e HCOS_DATABASE_URL='postgres://postgres:Hunter2@h/db' hcos-api:ci 2>&1); code=$?
+          echo "$out"; test $code -eq 1; ! echo "$out" | grep -q Hunter2
