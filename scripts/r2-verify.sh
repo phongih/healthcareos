@@ -61,8 +61,11 @@ sh_step D11 "invalid config in container fails fast without leaking" 'o=$(docker
 docker rm -f hcos-r2-api hcos-r2-pg >/dev/null 2>&1; docker network rm hcos-r2 >/dev/null 2>&1
 
 # ---------------- Tổng kết ----------------
+# Tính FAIL NGOÀI pipeline (gán trong `{ ...; } | tee` chạy ở subshell nên sẽ bị mất => exit luôn 0).
 FAIL=0
+for r in "${RESULTS[@]}"; do [ "$r" != 0 ] && FAIL=1; done
+[ "${#RESULTS[@]}" -ge 21 ] || FAIL=1   # script bị cắt ngang/thiếu bước cũng là thất bại
 { echo "# HCOS-S0-R2 verify summary ($(date -u +%FT%TZ))"; for i in "${!NAMES[@]}"; do
-    r=PASS; [ "${RESULTS[$i]}" != 0 ] && { r=FAIL; FAIL=1; }; echo "- ${NAMES[$i]}: $r (exit ${RESULTS[$i]})"; done
-  echo; [ $FAIL = 0 ] && echo "G0 = PASS" || echo "G0 != PASS (xem log từng bước)"; } | tee "$OUT/SUMMARY.md"
+    r=PASS; [ "${RESULTS[$i]}" != 0 ] && r=FAIL; echo "- ${NAMES[$i]}: $r (exit ${RESULTS[$i]})"; done
+  echo; [ "$FAIL" = 0 ] && echo "G0 = PASS" || echo "G0 != PASS (xem log từng bước)"; } | tee "$OUT/SUMMARY.md"
 exit $FAIL
