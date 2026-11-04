@@ -112,7 +112,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
       logger: { error: () => undefined },
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    base = `http://127.0.0.1:${server.address().port}`;
+    base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   });
 
   afterAll(async () => {
