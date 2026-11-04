@@ -17,6 +17,11 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
+      # Chưa có lockfile trong repo: xuất bản lockfile do CI sinh ra để tải về và commit (sau đó npm ci mới tái lập được).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
       - run: npm run typecheck
       - run: npm run test:unit
 
@@ -60,6 +65,9 @@ jobs:
     needs: typecheck-and-unit
     steps:
       - uses: actions/checkout@v4
+      - name: Lockfile must be committed (Dockerfile uses npm ci)
+        run: |
+          test -s package-lock.json || { echo "::error::package-lock.json is missing. Download the 'package-lock' artifact of the typecheck-and-unit job, commit it, and push."; exit 1; }
       - run: docker build -f services/api/Dockerfile -t hcos-api:ci .
       - name: Non-root runtime user
         run: test "$(docker run --rm --entrypoint id hcos-api:ci -u)" != "0"
