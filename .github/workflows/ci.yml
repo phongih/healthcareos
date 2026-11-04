@@ -16,12 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
-      # Chưa có lockfile trong repo: xuất bản lockfile do CI sinh ra để tải về và commit (sau đó npm ci mới tái lập được).
-      - uses: actions/upload-artifact@v4
-        with:
-          name: package-lock
-          path: package-lock.json
+      - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run test:unit
 
@@ -51,7 +46,7 @@ jobs:
         with:
           node-version: 22
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - name: Migrations apply cleanly and are idempotent
         run: |
           createdb hcos_ci
@@ -76,3 +71,20 @@ jobs:
           set +e
           out=$(docker run --rm -e HCOS_DATABASE_URL='postgres://postgres:Hunter2@h/db' hcos-api:ci 2>&1); code=$?
           echo "$out"; test $code -eq 1; ! echo "$out" | grep -q Hunter2
+
+  # R2: toàn bộ kịch bản chấp nhận (npm ci, tsc, vitest, PG16, JWKS e2e, docker build/run, DB down, docker stop, credentials).
+  # Log từng bước + SUMMARY.md được giữ làm artifact, kể cả khi thất bại.
+  r2-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: bash scripts/r2-verify.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r2-evidence
+          path: evidence/r2/
