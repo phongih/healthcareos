@@ -9,7 +9,7 @@ declare -a NAMES=() RESULTS=()
 step() { # step <id> <mô tả> -- <lệnh...>
   local id=$1 desc=$2; shift 3
   { echo "\$ $*"; "$@"; echo "[exit=$?]"; } >"$OUT/$id.log" 2>&1
-  local ec; ec=$(grep -o '\[exit=[0-9]*\]$' "$OUT/$id.log" | tail -1 | tr -dc 0-9)
+  local ec; ec=$(grep -ao '\[exit=[0-9]*\]$' "$OUT/$id.log" | tail -1 | tr -dc 0-9)
   NAMES+=("$id $desc"); RESULTS+=("${ec:-1}")
   printf '%-4s %-60s exit=%s\n' "$id" "$desc" "${ec:-1}"
 }
@@ -38,7 +38,7 @@ sh_step B7 "integration tests (PG16; main.ts suites use real pg + real jose JWKS
 # ---------------- Phase D ----------------
 sh_step D1 "docker build (multi-stage)" 'docker build -f services/api/Dockerfile -t hcos-api:r2 .'
 sh_step D2 "image runs as non-root" 'test "$(docker run --rm --entrypoint id hcos-api:r2 -u)" != "0"'
-sh_step D3 "no credentials baked in image" 'docker image inspect hcos-api:r2 --format "{{json .Config.Env}} {{json .Config.Cmd}}" | tee /dev/stderr | grep -Eiq "password|secret|postgres://" && exit 1; docker history --no-trunc hcos-api:r2 | grep -Eiq "password|secret|postgres://" && exit 1; exit 0'
+sh_step D3 "no credentials baked in image" 'cfg=$(docker image inspect hcos-api:r2 --format "env={{json .Config.Env}} cmd={{json .Config.Cmd}} labels={{json .Config.Labels}}"); echo "$cfg"; hist=$(docker history --no-trunc --format "{{.CreatedBy}}" hcos-api:r2); echo "--- layer commands (truncated to 160 cols):"; echo "$hist" | cut -c1-160; echo "--- scan:"; if printf "%s\n%s\n" "$cfg" "$hist" | grep -Ein "password|passwd|secret|postgres://|HCOS_DATABASE_URL="; then echo "FOUND credential-like text above"; exit 1; fi; echo "no credential-like text found"'
 
 # Container + JWKS cục bộ: dùng DB riêng, role đăng nhập hạn chế.
 APP_PW="app-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
