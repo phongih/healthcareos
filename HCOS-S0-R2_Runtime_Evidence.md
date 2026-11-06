@@ -1,5 +1,24 @@
 # HCOS-S0-R2 — Runtime Evidence
 
+> **Cập nhật 2026-11-07:** G0 = PASS dựa trên GitHub Actions run #7 (commit `f491d74`), xem `HCOS-S0-R2_Acceptance.md`. Phần "Ghi nhận ban đầu" bên dưới là bối cảnh sandbox ngày 2026-11-04 (khi chưa có mạng); nó **không** còn là kết luận hiện hành.
+
+## Bằng chứng CI thật (GitHub Actions, repo `phongih/healthcareos`)
+
+| Run | Commit | Kết quả | Ghi chú |
+|---|---|---|---|
+| #1 | `49389a3` | đỏ | `tsc` thật: `server.address()` kiểu `string \| AddressInfo \| null` (6 lỗi, 3 file test); `integration-postgres` xanh (53s) |
+| #2 | `bb2438f` | đỏ | `container`: thiếu `package-lock.json` |
+| #3 | `04f15a9` | đỏ | như trên |
+| #4 | `6aed992` | xanh | thêm `package-lock.json` (53s) |
+| #5 | `5032282` | xanh (giả) | thêm `npm ci` + job `r2-acceptance`; script luôn thoát 0 (lỗi subshell) |
+| #6 | `0477efe` | đỏ (đúng) | exit code đã sửa; D3 rớt vì log bị hỏng bởi `tee /dev/stderr`; 20/21 bước PASS (log đã xem) |
+| #7 | `f491d74` | **xanh** | D3 đã sửa; cả 21 bước đạt (suy ra từ exit code, log chi tiết trong artifact `r2-evidence`) |
+
+Log run #6 (đã xem trực tiếp): A1–A4, B1–B7, D1, D2, D5–D11 đều `exit=0`; D3 `exit=1` kèm `binary file matches`. Điều này chứng minh bằng CI thật: `npm ci`, `tsc` strict, vitest, PG16, integration (kể cả `main.ts` + JWKS), docker build, user non-root, `/healthz` 200, `/readyz` 200, healthcheck healthy, DB mất ⇒ `/readyz` 503 và `/healthz` 200, `docker stop` thoát 0, không lộ bí mật trong log, cấu hình sai thoát 1.
+
+---
+
+## Ghi nhận ban đầu (sandbox, trước khi có CI thật)
 Ghi nhận: 2026-11-04 (UTC 01:22). Phiên này chạy trong sandbox đám mây (`hostname=vm`, `user=root`, `pwd=/home/claude`), **không phải** VM PoC/CI có repo Git và egress tới registry như R2 yêu cầu.
 
 ## A. Environment baseline (thật)
