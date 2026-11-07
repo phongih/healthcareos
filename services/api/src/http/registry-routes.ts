@@ -7,19 +7,22 @@
  *   POST /api/persons/:id/identifiers       thêm định danh
  *   POST /api/identifiers/:id/retire        ngừng/đánh dấu nhập nhầm (If-Match bắt buộc)
  *   POST /api/persons/:id/merge             merge :id (source) vào targetPersonId
+ *   POST /api/persons/:id/unmerge           hoàn tác merge của :id (409 {error:'UNMERGE_BLOCKED', blockers} nếu không còn an toàn)
+ *   POST /fhir/Patient                      tạo person + patient tại organization (managingOrganization) trong một transaction
  *
  * Body chỉ lấy các khoá đã biết (khoá lạ bị bỏ qua), kiểu sai => 422. Quyết định truy cập nằm ở PersonRegistryService.
  */
-import { asPersonId, isUuid, type Sex } from '../../../../packages/domain/src/s0-contracts';
+import { asOrganizationId, asPersonId, isUuid, type Sex } from '../../../../packages/domain/src/s0-contracts';
+import { FhirMappingError, fromFhirPatient, toFhirPatient, type FhirPatient } from '../../../../packages/domain/src/s1-contracts';
 import type { NewIdentifierInput, NewPersonInput } from '../../../../packages/domain/src/person-registry';
 import { ClinicalError } from '../clinical/encounter.service';
 import type { PersonRegistryService } from '../registry/person-registry.service';
 import { parseIfMatch, requireBody, type Route, type RouteResult } from './clinical-routes';
-import { HttpError, PLAIN_JSON } from './http-kernel';
+import { FHIR_JSON, HttpError, PLAIN_JSON } from './http-kernel';
 
 export type RegistryApi = Pick<
   PersonRegistryService,
-  'createPerson' | 'findDuplicates' | 'getPerson' | 'addIdentifier' | 'retireIdentifier' | 'mergePersons'
+  'createPerson' | 'findDuplicates' | 'getPerson' | 'addIdentifier' | 'retireIdentifier' | 'mergePersons' | 'unmergePersons' | 'registerPersonAndPatient'
 >;
 
 const etag = (v: number): string => `W/"${v}"`;
@@ -65,6 +68,48 @@ const object = (b: unknown): Record<string, unknown> => b as Record<string, unkn
 
 function parsePersonId(v: string) {
   return asPersonId(v);
+}
+
+const ID_TYPES = ['national_id', 'health_insurance', 'passport', 'phone', 'external'] as const;
+const ORG_REF = /^Organization\/([0-9a-fA-F-]{36})$/;
+
+/** FHIR Patient -> đầu vào đăng ký. Đối xứng với toFhirPatient: MRN là identifier type.text='mrn', system `urn:hcos:mrn:<orgId>`. */
+function patientFromFhir(r: FhirPatient) {
+  let draft;
+  try {
+    draft = fromFhirPatient(r);
+  } catch (e) {
+    if (e instanceof FhirMappingError) throw e;
+    throw new FhirMappingError('Malformed FHIR Patient');
+  }
+  const ref = ORG_REF.exec(r.managingOrganization?.reference ?? '');
+  if (!ref || !isUuid(ref[1]!)) throw new FhirMappingError('Patient.managingOrganization must be Organization/<uuid>');
+  const organizationId = asOrganizationId(ref[1]!);
+  if (!Array.isArray(r.identifier ?? [])) throw new FhirMappingError('Patient.identifier must be an array');
+
+  let mrn: string | undefined;
+  const identifiers: NewIdentifierInput[] = [];
+  for (const i of r.identifier ?? []) {
+    if (!i || typeof i.value !== 'string' || typeof i.system !== 'string') throw new FhirMappingError('Identifier requires system and value');
+    const kind = i.type?.text;
+    if (kind === 'mrn') {
+      if (mrn !== undefined) throw new FhirMappingError('Only one MRN identifier is allowed');
+      if (i.system !== `urn:hcos:mrn:${organizationId}`) throw new FhirMappingError('MRN system must be urn:hcos:mrn:<managingOrganization>');
+      mrn = i.value;
+    } else if (typeof kind === 'string' && (ID_TYPES as readonly string[]).includes(kind)) {
+      identifiers.push({
+        type: kind as NewIdentifierInput['type'],
+        system: i.system,
+        value: i.value,
+        periodStart: i.period?.start ?? null,
+        periodEnd: i.period?.end ?? null,
+      });
+    } else {
+      throw new FhirMappingError('Identifier.type.text must be one of: mrn, ' + ID_TYPES.join(', '));
+    }
+  }
+  if (mrn === undefined) throw new FhirMappingError('An MRN identifier (type.text = mrn) is required');
+  return { organizationId, mrn, person: { ...draft, identifiers } satisfies NewPersonInput };
 }
 
 export function buildRegistryRoutes(api: RegistryApi): readonly Route[] {
@@ -173,6 +218,44 @@ export function buildRegistryRoutes(api: RegistryApi): readonly Route[] {
           input.ctx,
         );
         return json(200, r, { etag: etag(r.target.version) });
+      },
+    },
+    {
+      method: 'POST',
+      pattern: ['api', 'persons', ':id', 'unmerge'],
+      handler: async (input, [id]) => {
+        const o = object(await requireBody(input));
+        const es = o['expectedSourceVersion'];
+        const et = o['expectedTargetVersion'];
+        if (typeof es !== 'number' || typeof et !== 'number') return bad('expectedSourceVersion and expectedTargetVersion must be numbers');
+        try {
+          const r = await api.unmergePersons(
+            { sourcePersonId: parsePersonId(id!), reason: reqStr(o, 'reason', 500), expectedSourceVersion: es, expectedTargetVersion: et },
+            input.ctx,
+          );
+          return json(200, r, { etag: etag(r.source.version) });
+        } catch (e) {
+          if (e instanceof ClinicalError && e.details?.['reason'] === 'UNMERGE_BLOCKED') {
+            return json(409, { error: 'UNMERGE_BLOCKED', blockers: e.details['blockers'] });
+          }
+          throw e;
+        }
+      },
+    },
+    {
+      method: 'POST',
+      pattern: ['fhir', 'Patient'],
+      handler: async (input) => {
+        const resource = (await requireBody(input)) as FhirPatient;
+        if (resource === null || typeof resource !== 'object' || Array.isArray(resource)) throw new FhirMappingError('Body must be a Patient resource');
+        const m = patientFromFhir(resource);
+        const r = await api.registerPersonAndPatient(m, input.ctx);
+        return {
+          status: 201,
+          body: toFhirPatient(r.person, r.patient, r.identifiers),
+          contentType: FHIR_JSON,
+          headers: { location: `/fhir/Patient/${r.patient.patientId}`, etag: etag(r.patient.version) },
+        };
       },
     },
   ];

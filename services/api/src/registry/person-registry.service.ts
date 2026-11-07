@@ -7,13 +7,15 @@
  * Phân quyền (vai trò lấy từ iam.memberships còn hiệu lực, giới hạn trong org của token; tenant_admin/system không bị giới hạn org):
  *   person:create / person:identifier : clinic_staff, clinic_admin, doctor
  *   person:search                     : + pharmacist     (người dùng cũng được đọc chính person của mình)
- *   person:merge                      : clinic_admin, tenant_admin   (một thao tác thay đổi liên kết hồ sơ => chỉ quản trị đăng ký)
+ *   person:merge / person:unmerge     : clinic_admin, tenant_admin   (thay đổi liên kết hồ sơ => chỉ quản trị đăng ký)
+ *   patient:register                  : clinic_staff, clinic_admin, doctor — kiểm theo vai trò TẠI organization đích
  * Audit: payload chỉ chứa ID/đếm/loại; KHÔNG chứa họ tên, ngày sinh, SĐT hay giá trị định danh.
  */
 import { randomUUID } from 'node:crypto';
 
 import {
   asPersonId,
+  asPatientId,
   TenantIsolationError,
   VersionConflictError,
   type AuditEventId,
@@ -55,6 +57,11 @@ import {
   type NewPersonInput,
   type NormalizedIdentifier,
   type PersonMergeRecord,
+  type PersonUnmergeRecord,
+  type RegisterPersonPatientInput,
+  type UnmergePersonInput,
+  type UnmergeResult,
+  type UnmergeBlocker,
 } from '../../../../packages/domain/src/person-registry';
 import {
   ClinicalError,
@@ -68,9 +75,11 @@ import {
   mapPatient,
   mapPerson,
   mapUser,
+  iso,
   type OutboxDraft,
 } from '../clinical/encounter.service';
 import {
+  assertOrganizationAllowed,
   assertSameTenant,
   requireTenantContext,
   withTenantTransaction,
@@ -103,6 +112,13 @@ export interface SurvivorPatch {
 }
 
 /** Mọi method tự lọc theo tenant (và bị RLS bảo vệ) trong transaction hiện tại. */
+export interface TargetRestore {
+  readonly birthDate: string | null;
+  readonly sex: Sex | null;
+  readonly phone: string | null;
+  readonly email: string | null;
+}
+
 export interface RegistryRepository {
   findUserBySubject(subject: string): Promise<User | null>;
   listMemberships(userId: UserId): Promise<Membership[]>;
@@ -123,6 +139,15 @@ export interface RegistryRepository {
   moveIdentifier(id: string, toPersonId: PersonId, expectedVersion: number): Promise<boolean>;
   repointUsers(sourceId: PersonId, targetId: PersonId): Promise<UserId[]>;
   insertMergeRecord(r: PersonMergeRecord): Promise<void>;
+  /** Merge đang hiệu lực (chưa có unmerge) của source; null nếu không có. */
+  findActiveMergeBySource(sourceId: PersonId): Promise<PersonMergeRecord | null>;
+  listUserIdsByPerson(personId: PersonId): Promise<UserId[]>;
+  insertUnmergeRecord(r: PersonUnmergeRecord): Promise<void>;
+  restoreSource(sourceId: PersonId, expectedVersion: number): Promise<Person | null>;
+  restoreTarget(targetId: PersonId, v: TargetRestore, expectedVersion: number): Promise<Person | null>;
+  movePatientsBack(fromPersonId: PersonId, toPersonId: PersonId, ids: readonly PatientId[]): Promise<PatientId[]>;
+  repointUsersBack(fromPersonId: PersonId, toPersonId: PersonId, ids: readonly UserId[]): Promise<UserId[]>;
+  insertPatient(p: Patient): Promise<void>;
   enqueueOutbox(tenantId: TenantId, ev: OutboxDraft): Promise<void>;
   appendAudit(ev: NewAuditEvent): Promise<void>;
 }
@@ -141,12 +166,14 @@ export interface RegistryServiceDeps {
 // ---------------------------------------------------------------------------
 // Authorization
 // ---------------------------------------------------------------------------
-type Permission = 'person:create' | 'person:identifier' | 'person:search' | 'person:merge';
+type Permission = 'person:create' | 'person:identifier' | 'person:search' | 'person:merge' | 'person:unmerge' | 'patient:register';
 const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
   'person:create': ['clinic_staff', 'clinic_admin', 'doctor'],
   'person:identifier': ['clinic_staff', 'clinic_admin', 'doctor'],
   'person:search': ['clinic_staff', 'clinic_admin', 'doctor', 'pharmacist'],
   'person:merge': ['clinic_admin', 'tenant_admin'],
+  'person:unmerge': ['clinic_admin', 'tenant_admin'],
+  'patient:register': ['clinic_staff', 'clinic_admin', 'doctor'],
 };
 
 interface Principal {
@@ -159,6 +186,8 @@ interface AuditMeta {
   readonly resourceType: string;
   readonly resourceId?: string;
   readonly personId?: PersonId;
+  readonly patientId?: PatientId;
+  readonly organizationId?: string;
 }
 
 interface Draft {
@@ -174,6 +203,7 @@ interface Draft {
 }
 
 const SEXES: readonly string[] = ['male', 'female', 'other', 'unknown'];
+const MRN_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/;
 const MAX_IDENTIFIERS = 10;
 const MAX_CANDIDATES = 20;
 
@@ -206,60 +236,70 @@ export class PersonRegistryService {
     return this.tx(ctx, meta, async (repo) => {
       const principal = await this.principal(repo, ctx);
       this.authorize(principal, 'person:create');
-
-      const draft = this.prepare(input, true);
-      const override = this.parseOverride(input);
-
-      const ranked = await this.rank(repo, draft, ctx);
-      if (ranked.some((c) => c.level === 'definite')) {
-        throw new ClinicalError('CONFLICT', 'An identifier already belongs to another person', { reason: 'IDENTIFIER_TAKEN' });
-      }
-      const blocking = ranked.filter((c) => c.level === 'probable');
-      if (blocking.length > 0 && !override) {
-        throw new ClinicalError('CONFLICT', 'Possible duplicate person', { reason: 'DUPLICATE_CANDIDATES', candidates: blocking });
-      }
-
-      const now = this.now();
-      const person: Person = {
-        tenantId: ctx.tenantId,
-        personId: asPersonId(this.newId()),
-        givenName: draft.givenName,
-        familyName: draft.familyName,
-        birthDate: draft.birthDate,
-        sex: draft.sex,
-        phone: draft.phone,
-        email: draft.email,
-        status: 'active',
-        mergedIntoPersonId: null,
-        createdAt: now,
-        updatedAt: now,
-        version: 1,
-      };
-      await repo.insertPerson(person, { nameKey: draft.nameKey, phoneKey: draft.phoneKey });
-
-      const identifiers: Identifier[] = [];
-      for (const n of draft.identifiers) {
-        const identifier = this.toIdentifier(ctx.tenantId, person.personId, n, now);
-        await repo.insertIdentifier(identifier);
-        identifiers.push(identifier);
-      }
-
-      await repo.enqueueOutbox(ctx.tenantId, {
-        aggregateType: 'person',
-        aggregateId: person.personId,
-        eventType: 'patient.person.created',
-        payload: { personId: person.personId, identifierCount: identifiers.length },
-      });
-      await repo.appendAudit(
-        this.event(ctx, { ...meta, resourceId: person.personId, personId: person.personId }, 'success', principal.user, {
-          identifierCount: identifiers.length,
-          overrideUsed: Boolean(override && blocking.length > 0),
-          overrideReason: override && blocking.length > 0 ? override : undefined,
-          possibleDuplicates: ranked.filter((c) => c.level === 'possible').length,
-        }),
-      );
-      return { person, identifiers, possibleDuplicates: ranked.filter((c) => c.level === 'possible') };
+      return this.createPersonWithin(repo, ctx, principal, meta, input);
     });
+  }
+
+  /** Thân của createPerson, dùng lại để tạo person + patient trong cùng một transaction. */
+  private async createPersonWithin(
+    repo: RegistryRepository,
+    ctx: TenantContext,
+    principal: Principal,
+    meta: AuditMeta,
+    input: NewPersonInput,
+  ): Promise<CreatePersonResult> {
+    const draft = this.prepare(input, true);
+    const override = this.parseOverride(input);
+
+    const ranked = await this.rank(repo, draft, ctx);
+    if (ranked.some((c) => c.level === 'definite')) {
+      throw new ClinicalError('CONFLICT', 'An identifier already belongs to another person', { reason: 'IDENTIFIER_TAKEN' });
+    }
+    const blocking = ranked.filter((c) => c.level === 'probable');
+    if (blocking.length > 0 && !override) {
+      throw new ClinicalError('CONFLICT', 'Possible duplicate person', { reason: 'DUPLICATE_CANDIDATES', candidates: blocking });
+    }
+
+    const now = this.now();
+    const person: Person = {
+      tenantId: ctx.tenantId,
+      personId: asPersonId(this.newId()),
+      givenName: draft.givenName,
+      familyName: draft.familyName,
+      birthDate: draft.birthDate,
+      sex: draft.sex,
+      phone: draft.phone,
+      email: draft.email,
+      status: 'active',
+      mergedIntoPersonId: null,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+    await repo.insertPerson(person, { nameKey: draft.nameKey, phoneKey: draft.phoneKey });
+
+    const identifiers: Identifier[] = [];
+    for (const n of draft.identifiers) {
+      const identifier = this.toIdentifier(ctx.tenantId, person.personId, n, now);
+      await repo.insertIdentifier(identifier);
+      identifiers.push(identifier);
+    }
+
+    await repo.enqueueOutbox(ctx.tenantId, {
+      aggregateType: 'person',
+      aggregateId: person.personId,
+      eventType: 'patient.person.created',
+      payload: { personId: person.personId, identifierCount: identifiers.length },
+    });
+    await repo.appendAudit(
+      this.event(ctx, { ...meta, resourceId: person.personId, personId: person.personId }, 'success', principal.user, {
+        identifierCount: identifiers.length,
+        overrideUsed: Boolean(override && blocking.length > 0),
+        overrideReason: override && blocking.length > 0 ? override : undefined,
+        possibleDuplicates: ranked.filter((c) => c.level === 'possible').length,
+      }),
+    );
+    return { person, identifiers, possibleDuplicates: ranked.filter((c) => c.level === 'possible') };
   }
 
   // ---- Duplicate search ----------------------------------------------------
@@ -470,6 +510,8 @@ export class PersonRegistryService {
         retiredIdentifierIds: retired,
         repointedUserIds,
         mergedAt: this.now(),
+        targetSnapshot: { ...target },
+        targetVersionAfter: patchedTarget.version,
       });
 
       await repo.enqueueOutbox(ctx.tenantId, {
@@ -497,6 +539,201 @@ export class PersonRegistryService {
         retiredIdentifierIds: retired,
         repointedUserIds,
       };
+    });
+  }
+
+  // ---- Unmerge ---------------------------------------------------------------
+  /**
+   * Hoàn tác một merge. Chỉ chạy khi mọi thứ merge đã chạm vào VẪN NGUYÊN (chặn + báo lý do, không đoán):
+   *   - target còn `active`, version == version ngay sau merge (chưa bị sửa / chưa bị merge tiếp);
+   *   - các hồ sơ bệnh nhân đã chuyển vẫn thuộc target; các định danh đã chuyển vẫn ở target và còn `active`;
+   *   - các tài khoản đã trỏ lại vẫn trỏ vào target.
+   * Hoàn nguyên: source -> active; target -> giá trị trước merge (phần "điền chỗ trống" bị rút lại); patient/định danh/tài khoản
+   * trả về source. Định danh trùng bị ngừng lúc merge KHÔNG được bật lại (target đang giữ bản active): ghi vào kết quả để xử lý tay.
+   * Bản ghi unmerge (append-only) được ghi TRƯỚC khi sửa person: trigger DB chỉ cho merged -> active khi có bản ghi này cùng transaction.
+   */
+  async unmergePersons(input: UnmergePersonInput, ctx: TenantContext = requireTenantContext()): Promise<UnmergeResult> {
+    const meta: AuditMeta = { action: 'person.unmerge', resourceType: 'Person', resourceId: input.sourcePersonId };
+    return this.tx(ctx, meta, async (repo) => {
+      const principal = await this.principal(repo, ctx);
+      this.authorize(principal, 'person:unmerge');
+
+      const reason = (input.reason ?? '').trim();
+      if (reason.length < 5 || reason.length > 500) throw new ClinicalError('VALIDATION', 'reason must be 5-500 characters');
+      for (const v of [input.expectedSourceVersion, input.expectedTargetVersion]) {
+        if (!Number.isInteger(v) || v < 1) throw new ClinicalError('VALIDATION', 'expected versions must be positive integers');
+      }
+
+      const source = await repo.findPerson(input.sourcePersonId);
+      if (!source) throw new ClinicalError('NOT_FOUND', 'Person not found');
+      assertSameTenant(source, ctx);
+      if (source.status !== 'merged' || source.mergedIntoPersonId === null) {
+        throw new ClinicalError('INVALID_STATE', 'Person is not merged');
+      }
+      const merge = await repo.findActiveMergeBySource(source.personId);
+      if (!merge || merge.targetPersonId !== source.mergedIntoPersonId) {
+        throw new ClinicalError('INVALID_STATE', 'No active merge record for this person');
+      }
+      assertSameTenant(merge, ctx);
+      const target = await repo.findPerson(merge.targetPersonId);
+      if (!target) throw new ClinicalError('NOT_FOUND', 'Merge target not found');
+      assertSameTenant(target, ctx);
+
+      if (source.version !== input.expectedSourceVersion) throw new VersionConflictError('Person', source.personId, input.expectedSourceVersion);
+      if (target.version !== input.expectedTargetVersion) throw new VersionConflictError('Person', target.personId, input.expectedTargetVersion);
+
+      // ---- Kiểm tra trạng thái "vẫn nguyên" (thu thập mọi lý do chặn) ----
+      const blockers: UnmergeBlocker[] = [];
+      if (merge.targetSnapshot === null || merge.targetVersionAfter === null) {
+        blockers.push('MERGE_RECORD_LEGACY');
+      } else {
+        if (target.status !== 'active') blockers.push('TARGET_NOT_ACTIVE');
+        else if (target.version !== merge.targetVersionAfter) blockers.push('TARGET_MODIFIED');
+      }
+      const targetPatientIds = new Set((await repo.listPatientsByPerson(target.personId)).map((x) => x.patientId as string));
+      if (!merge.movedPatientIds.every((id) => targetPatientIds.has(id))) blockers.push('PATIENTS_CHANGED');
+
+      const movedIdentifiers: Identifier[] = [];
+      let identifiersIntact = true;
+      for (const id of merge.movedIdentifierIds) {
+        const i = await repo.findIdentifier(id);
+        if (!i || i.personId !== target.personId || i.status !== 'active') identifiersIntact = false;
+        else movedIdentifiers.push(i);
+      }
+      if (!identifiersIntact) blockers.push('IDENTIFIERS_CHANGED');
+
+      const targetUserIds = new Set<string>(await repo.listUserIdsByPerson(target.personId));
+      if (!merge.repointedUserIds.every((id) => targetUserIds.has(id))) blockers.push('USERS_CHANGED');
+
+      if (blockers.length > 0) {
+        throw new ClinicalError('CONFLICT', 'Merge can no longer be undone safely', { reason: 'UNMERGE_BLOCKED', blockers });
+      }
+
+      // ---- Thực hiện (mọi bước cùng transaction; sai bất kỳ điều kiện đếm nào => rollback) ----
+      const unmergeId = this.newId();
+      const record: PersonUnmergeRecord = {
+        unmergeId,
+        tenantId: ctx.tenantId,
+        mergeId: merge.mergeId,
+        sourcePersonId: source.personId,
+        targetPersonId: target.personId,
+        reason,
+        unmergedByUserId: principal.user.userId,
+        restoredPatientIds: merge.movedPatientIds,
+        restoredIdentifierIds: merge.movedIdentifierIds,
+        leftInactiveIdentifierIds: merge.retiredIdentifierIds,
+        restoredUserIds: merge.repointedUserIds,
+      };
+      await repo.insertUnmergeRecord(record);
+
+      const restoredSource = await repo.restoreSource(source.personId, source.version);
+      if (!restoredSource) throw new VersionConflictError('Person', source.personId, source.version);
+
+      const snap = merge.targetSnapshot as Readonly<Record<string, unknown>>;
+      const restoredTarget = await repo.restoreTarget(
+        target.personId,
+        {
+          birthDate: (snap['birthDate'] as string | null | undefined) ?? null,
+          sex: (snap['sex'] as Sex | null | undefined) ?? null,
+          phone: (snap['phone'] as string | null | undefined) ?? null,
+          email: (snap['email'] as string | null | undefined) ?? null,
+        },
+        target.version,
+      );
+      if (!restoredTarget) throw new VersionConflictError('Person', target.personId, target.version);
+
+      const movedBack = await repo.movePatientsBack(target.personId, source.personId, merge.movedPatientIds);
+      if (movedBack.length !== merge.movedPatientIds.length) {
+        throw new ClinicalError('CONFLICT', 'Merge can no longer be undone safely', { reason: 'UNMERGE_BLOCKED', blockers: ['PATIENTS_CHANGED'] });
+      }
+      for (const i of movedIdentifiers) {
+        if (!(await repo.moveIdentifier(i.identifierId, source.personId, i.version))) {
+          throw new ClinicalError('CONFLICT', 'Merge can no longer be undone safely', { reason: 'UNMERGE_BLOCKED', blockers: ['IDENTIFIERS_CHANGED'] });
+        }
+      }
+      const usersBack = await repo.repointUsersBack(target.personId, source.personId, merge.repointedUserIds);
+      if (usersBack.length !== merge.repointedUserIds.length) {
+        throw new ClinicalError('CONFLICT', 'Merge can no longer be undone safely', { reason: 'UNMERGE_BLOCKED', blockers: ['USERS_CHANGED'] });
+      }
+
+      await repo.enqueueOutbox(ctx.tenantId, {
+        aggregateType: 'person',
+        aggregateId: target.personId,
+        eventType: 'patient.person.unmerged',
+        payload: { unmergeId, mergeId: merge.mergeId, sourcePersonId: source.personId, targetPersonId: target.personId, restoredPatientIds: merge.movedPatientIds },
+      });
+      await repo.appendAudit(
+        this.event(ctx, { ...meta, personId: target.personId }, 'success', principal.user, {
+          unmergeId,
+          mergeId: merge.mergeId,
+          restoredPatients: merge.movedPatientIds.length,
+          restoredIdentifiers: merge.movedIdentifierIds.length,
+          leftInactiveIdentifiers: merge.retiredIdentifierIds.length,
+          restoredUsers: merge.repointedUserIds.length,
+        }),
+      );
+      return {
+        unmergeId,
+        mergeId: merge.mergeId,
+        source: restoredSource,
+        target: restoredTarget,
+        restoredPatientIds: merge.movedPatientIds,
+        restoredIdentifierIds: merge.movedIdentifierIds,
+        leftInactiveIdentifierIds: merge.retiredIdentifierIds,
+        restoredUserIds: merge.repointedUserIds,
+      };
+    });
+  }
+
+  // ---- Person + Patient trong một transaction (POST /fhir/Patient) ------------
+  /**
+   * Tạo person (có phát hiện trùng như createPerson, KHÔNG có override) và hồ sơ patient tại organization đích, atomic:
+   * lỗi ở bước nào (trùng định danh, MRN đã dùng...) => không để lại person mồ côi.
+   * Quyền: person:create và patient:register theo vai trò TẠI organization đích (membership của chính org đó).
+   */
+  async registerPersonAndPatient(
+    input: RegisterPersonPatientInput,
+    ctx: TenantContext = requireTenantContext(),
+  ): Promise<{ person: Person; patient: Patient; identifiers: readonly Identifier[]; possibleDuplicates: readonly DuplicateCandidate[] }> {
+    const meta: AuditMeta = { action: 'patient.register', resourceType: 'Patient', organizationId: input.organizationId };
+    return this.tx(ctx, meta, async (repo) => {
+      if (!MRN_RE.test(input.mrn)) throw new ClinicalError('VALIDATION', 'Invalid MRN format');
+      assertOrganizationAllowed(input.organizationId, ctx);
+      const principal = await this.principalAt(repo, ctx, input.organizationId);
+      this.authorize(principal, 'person:create');
+      this.authorize(principal, 'patient:register');
+      if (input.person.duplicateOverride !== undefined) {
+        throw new ClinicalError('VALIDATION', 'duplicateOverride is not supported here; create the person first via /api/persons');
+      }
+
+      const created = await this.createPersonWithin(repo, ctx, principal, { action: 'person.create', resourceType: 'Person' }, input.person);
+
+      const now = this.now();
+      const patient: Patient = {
+        tenantId: ctx.tenantId,
+        patientId: asPatientId(this.newId()),
+        personId: created.person.personId,
+        organizationId: input.organizationId,
+        mrn: input.mrn,
+        status: 'active',
+        registeredAt: now,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+      };
+      await repo.insertPatient(patient); // CONFLICT: MRN_TAKEN | ID_COLLISION
+      await repo.enqueueOutbox(ctx.tenantId, {
+        aggregateType: 'patient',
+        aggregateId: patient.patientId,
+        eventType: 'patient.registered',
+        payload: { patientId: patient.patientId, personId: patient.personId, organizationId: patient.organizationId },
+      });
+      await repo.appendAudit(
+        this.event(ctx, { ...meta, resourceId: patient.patientId, patientId: patient.patientId, personId: patient.personId }, 'success', principal.user, {
+          identifierCount: created.identifiers.length,
+        }),
+      );
+      return { person: created.person, patient, identifiers: created.identifiers, possibleDuplicates: created.possibleDuplicates };
     });
   }
 
@@ -629,6 +866,21 @@ export class PersonRegistryService {
     return { user, roles };
   }
 
+  /** Vai trò CHỈ từ membership của organization chỉ định (không cộng dồn vai trò ở org khác). */
+  private async principalAt(repo: RegistryRepository, ctx: TenantContext, organizationId: string): Promise<Principal> {
+    const user = await repo.findUserBySubject(ctx.userSubject);
+    if (!user || user.status !== 'active') throw new ClinicalError('FORBIDDEN', 'Caller is not an active user');
+    assertSameTenant(user, ctx);
+    const now = this.clock().getTime();
+    const roles = new Set<Role>();
+    for (const m of await repo.listMemberships(user.userId)) {
+      const valid =
+        m.organizationId === organizationId && m.status === 'active' && Date.parse(m.validFrom) <= now && (m.validTo === null || Date.parse(m.validTo) > now);
+      if (valid) roles.add(m.role);
+    }
+    return { user, roles };
+  }
+
   private authorize(p: Principal, perm: Permission): void {
     if (!PERMISSIONS[perm].some((r) => p.roles.has(r))) throw new ClinicalError('FORBIDDEN', `Missing permission ${perm}`);
   }
@@ -644,12 +896,12 @@ export class PersonRegistryService {
       eventId: this.newId() as AuditEventId,
       tenantId: ctx.tenantId,
       actor: { type: 'user', id: user?.userId ?? ctx.userSubject },
-      organizationId: null,
+      organizationId: (meta.organizationId ?? null) as NewAuditEvent['organizationId'],
       action: meta.action,
       resourceType: meta.resourceType,
       resourceId: meta.resourceId ?? null,
       personId: meta.personId ?? null,
-      patientId: null,
+      patientId: (meta.patientId ?? null) as NewAuditEvent['patientId'],
       outcome,
       correlationId: ctx.correlationId as CorrelationId,
       sourceIp: null,
@@ -690,6 +942,10 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   identifiers_active_system_value_uk: 'IDENTIFIER_TAKEN',
   persons_pkey: 'ID_COLLISION',
   person_merges_source_uk: 'ALREADY_MERGED',
+  person_unmerges_merge_uk: 'ALREADY_UNMERGED',
+  patients_org_mrn_uk: 'MRN_TAKEN',
+  patients_person_org_uk: 'PERSON_ALREADY_REGISTERED',
+  patients_pkey: 'ID_COLLISION',
 };
 
 function translatePgError(e: unknown): never {
@@ -880,10 +1136,129 @@ export class PgRegistryRepository implements RegistryRepository {
       await this.db.query(
         `INSERT INTO patient.person_merges
            (merge_id, tenant_id, source_person_id, target_person_id, reason, merged_by_user_id, source_snapshot,
-            moved_patient_ids, moved_identifier_ids, retired_identifier_ids, repointed_user_ids)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::uuid[], $9::uuid[], $10::uuid[], $11::uuid[])`,
+            moved_patient_ids, moved_identifier_ids, retired_identifier_ids, repointed_user_ids,
+            target_snapshot, target_version_after)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::uuid[], $9::uuid[], $10::uuid[], $11::uuid[], $12::jsonb, $13)`,
         [m.mergeId, m.tenantId, m.sourcePersonId, m.targetPersonId, m.reason, m.mergedByUserId, JSON.stringify(m.sourceSnapshot),
-         pgUuidArray(m.movedPatientIds), pgUuidArray(m.movedIdentifierIds), pgUuidArray(m.retiredIdentifierIds), pgUuidArray(m.repointedUserIds)],
+         pgUuidArray(m.movedPatientIds), pgUuidArray(m.movedIdentifierIds), pgUuidArray(m.retiredIdentifierIds), pgUuidArray(m.repointedUserIds),
+         m.targetSnapshot === null ? null : JSON.stringify(m.targetSnapshot), m.targetVersionAfter],
+      );
+    } catch (e) {
+      translatePgError(e);
+    }
+  }
+
+  async findActiveMergeBySource(sourceId: PersonId): Promise<PersonMergeRecord | null> {
+    // Mảng/jsonb đọc qua to_json(...)::text để kết quả giống nhau trên mọi driver.
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT m.merge_id, m.tenant_id, m.source_person_id, m.target_person_id, m.reason, m.merged_by_user_id, m.merged_at,
+              m.source_snapshot::text AS source_snapshot, m.target_snapshot::text AS target_snapshot, m.target_version_after,
+              to_json(m.moved_patient_ids)::text AS moved_patient_ids, to_json(m.moved_identifier_ids)::text AS moved_identifier_ids,
+              to_json(m.retired_identifier_ids)::text AS retired_identifier_ids, to_json(m.repointed_user_ids)::text AS repointed_user_ids
+         FROM patient.person_merges m
+        WHERE m.tenant_id = $1 AND m.source_person_id = $2
+          AND NOT EXISTS (SELECT 1 FROM patient.person_unmerges u WHERE u.tenant_id = m.tenant_id AND u.merge_id = m.merge_id)
+        ORDER BY m.merged_at DESC, m.merge_id LIMIT 1`,
+      [this.t, sourceId],
+    );
+    const x = r.rows[0];
+    if (!x) return null;
+    const list = (v: unknown): string[] => (typeof v === 'string' ? (JSON.parse(v) as string[]) : []);
+    const obj = (v: unknown): Record<string, unknown> | null => (typeof v === 'string' ? (JSON.parse(v) as Record<string, unknown>) : null);
+    return {
+      mergeId: String(x['merge_id']),
+      tenantId: x['tenant_id'] as TenantId,
+      sourcePersonId: x['source_person_id'] as PersonId,
+      targetPersonId: x['target_person_id'] as PersonId,
+      reason: String(x['reason']),
+      mergedByUserId: x['merged_by_user_id'] as UserId,
+      sourceSnapshot: obj(x['source_snapshot']) ?? {},
+      movedPatientIds: list(x['moved_patient_ids']) as PatientId[],
+      movedIdentifierIds: list(x['moved_identifier_ids']),
+      retiredIdentifierIds: list(x['retired_identifier_ids']),
+      repointedUserIds: list(x['repointed_user_ids']) as UserId[],
+      mergedAt: iso(x['merged_at']),
+      targetSnapshot: obj(x['target_snapshot']),
+      targetVersionAfter: x['target_version_after'] === null || x['target_version_after'] === undefined ? null : Number(x['target_version_after']),
+    };
+  }
+
+  async listUserIdsByPerson(personId: PersonId): Promise<UserId[]> {
+    const r = await this.db.query<{ user_id: UserId }>(`SELECT user_id FROM iam.users WHERE tenant_id = $1 AND person_id = $2`, [this.t, personId]);
+    return r.rows.map((x) => x.user_id);
+  }
+
+  async insertUnmergeRecord(u: PersonUnmergeRecord): Promise<void> {
+    try {
+      await this.db.query(
+        `INSERT INTO patient.person_unmerges
+           (unmerge_id, tenant_id, merge_id, source_person_id, target_person_id, reason, unmerged_by_user_id,
+            restored_patient_ids, restored_identifier_ids, left_inactive_identifier_ids, restored_user_ids)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid[], $9::uuid[], $10::uuid[], $11::uuid[])`,
+        [u.unmergeId, u.tenantId, u.mergeId, u.sourcePersonId, u.targetPersonId, u.reason, u.unmergedByUserId,
+         pgUuidArray(u.restoredPatientIds), pgUuidArray(u.restoredIdentifierIds), pgUuidArray(u.leftInactiveIdentifierIds), pgUuidArray(u.restoredUserIds)],
+      );
+    } catch (e) {
+      translatePgError(e);
+    }
+  }
+
+  async restoreSource(sourceId: PersonId, expectedVersion: number): Promise<Person | null> {
+    try {
+      const r = await this.db.query(
+        `UPDATE patient.persons SET status = 'active', merged_into_person_id = NULL
+          WHERE tenant_id = $1 AND person_id = $2 AND version = $3 AND status = 'merged' RETURNING ${PERSON_COLS}`,
+        [this.t, sourceId, expectedVersion],
+      );
+      return r.rows[0] ? mapPerson(r.rows[0]) : null;
+    } catch (e) {
+      return translatePgError(e);
+    }
+  }
+
+  async restoreTarget(targetId: PersonId, v: TargetRestore, expectedVersion: number): Promise<Person | null> {
+    try {
+      const r = await this.db.query(
+        `UPDATE patient.persons
+            SET birth_date = $3::date, sex = $4::text, phone = $5::text, email = $6::text, phone_key = $7::text
+          WHERE tenant_id = $1 AND person_id = $2 AND version = $8 AND status = 'active' RETURNING ${PERSON_COLS}`,
+        [this.t, targetId, v.birthDate, v.sex, v.phone, v.email, normalizePhone(v.phone), expectedVersion],
+      );
+      return r.rows[0] ? mapPerson(r.rows[0]) : null;
+    } catch (e) {
+      return translatePgError(e);
+    }
+  }
+
+  async movePatientsBack(fromPersonId: PersonId, toPersonId: PersonId, ids: readonly PatientId[]): Promise<PatientId[]> {
+    if (ids.length === 0) return [];
+    try {
+      const r = await this.db.query<{ patient_id: PatientId }>(
+        `UPDATE patient.patients SET person_id = $3
+          WHERE tenant_id = $1 AND person_id = $2 AND patient_id = ANY($4::uuid[]) RETURNING patient_id`,
+        [this.t, fromPersonId, toPersonId, pgUuidArray(ids)],
+      );
+      return r.rows.map((x) => x.patient_id).sort();
+    } catch (e) {
+      return translatePgError(e);
+    }
+  }
+
+  async repointUsersBack(fromPersonId: PersonId, toPersonId: PersonId, ids: readonly UserId[]): Promise<UserId[]> {
+    if (ids.length === 0) return [];
+    const r = await this.db.query<{ user_id: UserId }>(
+      `UPDATE iam.users SET person_id = $3 WHERE tenant_id = $1 AND person_id = $2 AND user_id = ANY($4::uuid[]) RETURNING user_id`,
+      [this.t, fromPersonId, toPersonId, pgUuidArray(ids)],
+    );
+    return r.rows.map((x) => x.user_id).sort();
+  }
+
+  async insertPatient(p: Patient): Promise<void> {
+    try {
+      await this.db.query(
+        `INSERT INTO patient.patients (patient_id, tenant_id, person_id, organization_id, mrn, status, registered_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [p.patientId, p.tenantId, p.personId, p.organizationId, p.mrn, p.status, p.registeredAt],
       );
     } catch (e) {
       translatePgError(e);

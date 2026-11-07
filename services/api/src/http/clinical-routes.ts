@@ -3,6 +3,7 @@
  *
  *   POST /api/patients                     đăng ký hồ sơ bệnh nhân (person_id -> patient_id tại organization)
  *   GET  /fhir/Patient/:id
+ *   GET  /fhir/Patient?organization=<uuid>&(identifier=system|value | mrn=… | given=…&family=…&birthdate=…)&_count=1..20
  *   POST /fhir/Encounter                   tạo đợt khám (practitioner = người gọi, status do server)
  *   GET  /fhir/Encounter/:id               (ETag = W/"<version>")
  *   GET  /fhir/Encounter/:id/$everything   Bundle(Encounter + Condition + Observation)
@@ -41,7 +42,7 @@ import { FHIR_JSON, HttpError, PLAIN_JSON } from './http-kernel';
 
 export type ClinicalApi = Pick<
   ClinicalEncounterService,
-  'registerPatient' | 'getPatient' | 'createEncounter' | 'addCondition' | 'recordObservation' | 'closeEncounter' | 'getEncounterChart'
+  'registerPatient' | 'getPatient' | 'searchPatients' | 'createEncounter' | 'addCondition' | 'recordObservation' | 'closeEncounter' | 'getEncounterChart'
 >;
 
 export interface RouteInput {
@@ -131,6 +132,43 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
           contentType: PLAIN_JSON,
           headers: { location: `/fhir/Patient/${patient.patientId}`, etag: etag(patient.version) },
         };
+      },
+    },
+    {
+      method: 'GET',
+      pattern: ['fhir', 'Patient'],
+      handler: async (input) => {
+        const q = input.url.searchParams;
+        const org = q.get('organization');
+        if (!org || !isUuid(org)) throw new HttpError(400, 'required', "Search requires a valid 'organization' parameter");
+        for (const k of q.keys()) {
+          if (!['organization', 'identifier', 'mrn', 'given', 'family', 'birthdate', '_count'].includes(k)) {
+            throw new HttpError(400, 'not-supported', `Unsupported search parameter '${k}'`);
+          }
+          if (q.getAll(k).length > 1) throw new HttpError(400, 'invalid', `Parameter '${k}' may appear only once`);
+        }
+        const idRaw = q.get('identifier');
+        let identifier: { system: string; value: string } | undefined;
+        if (idRaw !== null) {
+          const bar = idRaw.indexOf('|');
+          if (bar < 1 || bar === idRaw.length - 1) throw new HttpError(422, 'invalid', "identifier must be 'system|value'");
+          identifier = { system: idRaw.slice(0, bar), value: idRaw.slice(bar + 1) };
+        }
+        const countRaw = q.get('_count');
+        const count = countRaw === null ? undefined : /^\d{1,3}$/.test(countRaw) ? Number(countRaw) : NaN;
+        const results = await api.searchPatients(
+          {
+            organizationId: asOrganizationId(org),
+            ...(identifier ? { identifier } : {}),
+            ...(q.get('mrn') !== null ? { mrn: q.get('mrn')! } : {}),
+            ...(q.get('given') !== null ? { givenName: q.get('given')! } : {}),
+            ...(q.get('family') !== null ? { familyName: q.get('family')! } : {}),
+            ...(q.get('birthdate') !== null ? { birthDate: q.get('birthdate')! } : {}),
+            ...(count !== undefined ? { count } : {}),
+          },
+          input.ctx,
+        );
+        return fhir(200, bundle('searchset', results.map((r) => toFhirPatient(r.person, r.patient, r.identifiers))));
       },
     },
     {

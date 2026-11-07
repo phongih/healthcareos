@@ -15,12 +15,12 @@ import {
 } from '../../packages/domain/src/s0-contracts';
 import {
   RegistryValidationError, foldText, identifierKey, levenshtein, nameKey, normalizeIdentifier, normalizePhone, scoreMatch,
-  type PersonMergeRecord,
+  type PersonMergeRecord, type PersonUnmergeRecord,
 } from '../../packages/domain/src/person-registry';
 import { ClinicalError, type OutboxDraft } from '../../services/api/src/clinical/encounter.service';
 import {
   PersonRegistryService,
-  type CandidateQuery, type IdentifierMatch, type PersonKeys, type RegistryRepository, type RegistryUnitOfWork, type SurvivorPatch,
+  type CandidateQuery, type IdentifierMatch, type PersonKeys, type RegistryRepository, type RegistryUnitOfWork, type SurvivorPatch, type TargetRestore,
 } from '../../services/api/src/registry/person-registry.service';
 
 type Mut<T> = { -readonly [K in keyof T]: T[K] };
@@ -110,11 +110,11 @@ const AN = { givenName: 'Văn An', familyName: 'Nguyễn', birthDate: '1990-05-1
 
 interface State {
   persons: Mut<Person>[]; keys: Record<string, PersonKeys>; identifiers: Mut<Identifier>[]; patients: Mut<Patient>[]; users: Mut<User>[];
-  memberships: Membership[]; merges: PersonMergeRecord[]; outbox: Array<OutboxDraft & { tenantId: TenantId }>; audit: NewAuditEvent[];
+  memberships: Membership[]; merges: PersonMergeRecord[]; unmerges: PersonUnmergeRecord[]; outbox: Array<OutboxDraft & { tenantId: TenantId }>; audit: NewAuditEvent[];
 }
 
 class Store {
-  state: State = { persons: [], keys: {}, identifiers: [], patients: [], users: [], memberships: [], merges: [], outbox: [], audit: [] };
+  state: State = { persons: [], keys: {}, identifiers: [], patients: [], users: [], memberships: [], merges: [], unmerges: [], outbox: [], audit: [] };
   /** Gây lỗi giữa chừng để kiểm tra rollback. */
   failAt: string | null = null;
 }
@@ -200,10 +200,59 @@ class MemRepo implements RegistryRepository {
     return hit.map((u) => u.userId).sort();
   }
   async insertMergeRecord(r: PersonMergeRecord) {
-    if (this.s.merges.some((m) => m.tenantId === r.tenantId && m.sourcePersonId === r.sourcePersonId)) {
+    if (this.s.merges.some((m) => m.tenantId === r.tenantId && m.sourcePersonId === r.sourcePersonId && !this.isUnmerged(m))) {
       throw new ClinicalError('CONFLICT', 'Conflicting record', { reason: 'ALREADY_MERGED' });
     }
     this.s.merges.push(r);
+  }
+  private isUnmerged(m: PersonMergeRecord) { return this.s.unmerges.some((u) => u.tenantId === m.tenantId && u.mergeId === m.mergeId); }
+  async findActiveMergeBySource(sourceId: PersonId) {
+    const m = this.vis(this.s.merges).find((x) => x.sourcePersonId === sourceId && !this.isUnmerged(x));
+    return m ? structuredClone(m) : null;
+  }
+  async listUserIdsByPerson(personId: PersonId) { return this.vis(this.s.users).filter((u) => u.personId === personId).map((u) => u.userId).sort(); }
+  async insertUnmergeRecord(r: PersonUnmergeRecord) {
+    this.maybeFail('insertUnmergeRecord');
+    if (this.s.unmerges.some((u) => u.tenantId === r.tenantId && u.mergeId === r.mergeId)) {
+      throw new ClinicalError('CONFLICT', 'Conflicting record', { reason: 'ALREADY_UNMERGED' });
+    }
+    this.s.unmerges.push(structuredClone(r));
+  }
+  async restoreSource(sourceId: PersonId, v: number) {
+    const src = this.vis(this.s.persons).find((p) => p.personId === sourceId);
+    if (!src || src.status !== 'merged' || src.version !== v) return null;
+    Object.assign(src, { status: 'active', mergedIntoPersonId: null, version: v + 1 });
+    return { ...src };
+  }
+  async restoreTarget(targetId: PersonId, r: TargetRestore, v: number) {
+    const t = this.vis(this.s.persons).find((x) => x.personId === targetId);
+    if (!t || t.status !== 'active' || t.version !== v) return null;
+    Object.assign(t, { birthDate: r.birthDate, sex: r.sex, phone: r.phone, email: r.email, version: v + 1 });
+    return { ...t };
+  }
+  async movePatientsBack(from: PersonId, to: PersonId, ids: readonly Patient['patientId'][]) {
+    this.maybeFail('movePatientsBack');
+    const moved: Patient['patientId'][] = [];
+    for (const p of this.vis(this.s.patients).filter((x) => x.personId === from && ids.includes(x.patientId))) {
+      p.personId = to; moved.push(p.patientId);
+    }
+    return moved.sort();
+  }
+  async repointUsersBack(from: PersonId, to: PersonId, ids: readonly UserId[]) {
+    const hit = this.vis(this.s.users).filter((u) => u.personId === from && ids.includes(u.userId));
+    hit.forEach((u) => { u.personId = to; });
+    return hit.map((u) => u.userId).sort();
+  }
+  async insertPatient(p: Patient) {
+    this.maybeFail('insertPatient');
+    if (p.tenantId !== this.tenantId) throw Object.assign(new Error('rls'), { code: '42501' });
+    if (this.s.patients.some((x) => x.tenantId === p.tenantId && x.organizationId === p.organizationId && x.mrn === p.mrn)) {
+      throw new ClinicalError('CONFLICT', 'Conflicting record', { reason: 'MRN_TAKEN' });
+    }
+    if (this.s.patients.some((x) => x.tenantId === p.tenantId && x.personId === p.personId && x.organizationId === p.organizationId)) {
+      throw new ClinicalError('CONFLICT', 'Conflicting record', { reason: 'PERSON_ALREADY_REGISTERED' });
+    }
+    this.s.patients.push({ ...p });
   }
   async enqueueOutbox(tenantId: TenantId, ev: OutboxDraft) { this.s.outbox.push({ ...ev, tenantId }); }
   async appendAudit(ev: NewAuditEvent) { this.s.audit.push(ev); }
@@ -538,5 +587,176 @@ describe('registry / getPerson', () => {
     expect(await code(w.svc.getPerson(own.personId, w.ctx.nurseB))).toBe('NOT_FOUND');
     expect(await code(w.svc.getPerson(asPersonId(uid(9999)), w.ctx.nurse))).toBe('NOT_FOUND');
     expect(await code(w.svc.getPerson(own.personId, w.ctx.tenantAdmin))).toBe('FORBIDDEN');
+  });
+});
+
+// ===========================================================================
+// Unmerge
+// ===========================================================================
+describe('registry / unmergePersons', () => {
+  const doMerge = async () => {
+    const fx = await mergeFixture();
+    const m = await w.svc.mergePersons(
+      { sourcePersonId: fx.source.personId, targetPersonId: fx.target.personId, reason: 'Cùng một người, đối chiếu CCCD', expectedSourceVersion: fx.source.version, expectedTargetVersion: fx.target.version },
+      w.ctx.clinicAdmin,
+    );
+    const src = () => w.s.persons.find((p) => p.personId === fx.source.personId)!;
+    const tgt = () => w.s.persons.find((p) => p.personId === fx.target.personId)!;
+    const input = (o: object = {}) => ({ sourcePersonId: fx.source.personId, reason: 'Merge nhầm, hai người khác nhau', expectedSourceVersion: src().version, expectedTargetVersion: tgt().version, ...o });
+    return { ...fx, m, src, tgt, input };
+  };
+
+  it('restores source, target fields, patients, identifiers and users; leaves retired duplicates inactive; records history', async () => {
+    const { source, target, patient, dupe, src, tgt, input } = await doMerge();
+    const cccdId = w.s.identifiers.find((i) => i.value === '079090000001')!.identifierId;
+    const r = await w.svc.unmergePersons(input(), w.ctx.clinicAdmin);
+
+    expect(src()).toMatchObject({ status: 'active', mergedIntoPersonId: null });
+    expect(tgt()).toMatchObject({ status: 'active', birthDate: '1990-05-17', sex: null, phone: null, email: null });
+    expect(w.s.patients.find((p) => p.patientId === patient.patientId)!.personId).toBe(source.personId);
+    expect(w.s.identifiers.find((i) => i.identifierId === cccdId)!.personId).toBe(source.personId);
+    expect(w.s.identifiers.find((i) => i.identifierId === dupe.identifierId)).toMatchObject({ status: 'inactive', personId: source.personId });
+    expect(w.s.users.find((u) => u.userId === U.patientUser)!.personId).toBe(source.personId);
+    expect(r).toMatchObject({ restoredPatientIds: [patient.patientId], restoredIdentifierIds: [cccdId], leftInactiveIdentifierIds: [dupe.identifierId], restoredUserIds: [U.patientUser] });
+    expect(w.s.unmerges).toHaveLength(1);
+    expect(w.s.unmerges[0]).toMatchObject({ mergeId: w.s.merges[0]!.mergeId, sourcePersonId: source.personId, targetPersonId: target.personId, unmergedByUserId: U.clinicAdmin });
+    expect(w.s.outbox.at(-1)).toMatchObject({ eventType: 'patient.person.unmerged' });
+    const audit = w.s.audit.at(-1)!;
+    expect(audit).toMatchObject({ action: 'person.unmerge', outcome: 'success', payload: { restoredPatients: 1, restoredIdentifiers: 1, leftInactiveIdentifiers: 1, restoredUsers: 1 } });
+    expect(JSON.stringify(audit)).not.toContain('079090000001');
+    // source đọc lại như một person độc lập (không redirect)
+    expect((await w.svc.getPerson(source.personId, w.ctx.pharm)).person.personId).toBe(source.personId);
+  });
+
+  it('blocks (409 UNMERGE_BLOCKED, no changes) when data changed after the merge — never guesses', async () => {
+    const cases: Array<[string, (c: Awaited<ReturnType<typeof doMerge>>) => void | Promise<void>, string]> = [
+      ['target edited', (c) => { c.tgt().version += 1; }, 'TARGET_MODIFIED'],
+      ['patient moved elsewhere', (c) => { w.s.patients.find((p) => p.patientId === c.patient.patientId)!.personId = asPersonId(uid(9001)); }, 'PATIENTS_CHANGED'],
+      ['identifier retired', (c) => { w.s.identifiers.find((i) => i.value === '079090000001')!.status = 'inactive'; }, 'IDENTIFIERS_CHANGED'],
+      ['user re-pointed', (c) => { w.s.users.find((u) => u.userId === U.patientUser)!.personId = asPersonId(uid(9002)); }, 'USERS_CHANGED'],
+    ];
+    for (const [name, mutate, blocker] of cases) {
+      w = world();
+      const c = await doMerge();
+      await mutate(c);
+      const before = structuredClone(w.store.state);
+      const err = await w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin).catch((e) => e);
+      expect(err, name).toMatchObject({ code: 'CONFLICT', details: { reason: 'UNMERGE_BLOCKED' } });
+      expect(err.details.blockers, name).toContain(blocker);
+      expect(w.store.state, name).toEqual(before);
+    }
+  });
+
+  it('blocks legacy merge records (no snapshot) and a target that is no longer active', async () => {
+    let c = await doMerge();
+    const rec = w.s.merges[0] as { targetSnapshot: unknown; targetVersionAfter: unknown };
+    rec.targetSnapshot = null; rec.targetVersionAfter = null;
+    let err = await w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin).catch((e) => e);
+    expect(err.details).toMatchObject({ reason: 'UNMERGE_BLOCKED', blockers: ['MERGE_RECORD_LEGACY'] });
+
+    w = world(); c = await doMerge();
+    Object.assign(c.tgt(), { status: 'merged', mergedIntoPersonId: asPersonId(uid(9003)) });
+    err = await w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin).catch((e) => e);
+    expect(err.details.blockers).toContain('TARGET_NOT_ACTIVE');
+  });
+
+  it('enforces permission, validation, optimistic versions and state', async () => {
+    const c = await doMerge();
+    const before = structuredClone(w.store.state);
+    expect(await code(w.svc.unmergePersons(c.input(), w.ctx.nurse))).toBe('FORBIDDEN');
+    expect(await code(w.svc.unmergePersons(c.input(), w.ctx.doctor))).toBe('FORBIDDEN');
+    expect(await code(w.svc.unmergePersons(c.input({ reason: 'ngắn' }), w.ctx.clinicAdmin))).toBe('VALIDATION');
+    expect(await code(w.svc.unmergePersons(c.input({ expectedTargetVersion: 0 }), w.ctx.clinicAdmin))).toBe('VALIDATION');
+    expect(await code(w.svc.unmergePersons(c.input({ expectedSourceVersion: 99 }), w.ctx.clinicAdmin))).toBe('VersionConflictError');
+    expect(await code(w.svc.unmergePersons(c.input({ expectedTargetVersion: 99 }), w.ctx.clinicAdmin))).toBe('VersionConflictError');
+    expect(await code(w.svc.unmergePersons(c.input({ sourcePersonId: asPersonId(uid(9999)) }), w.ctx.clinicAdmin))).toBe('NOT_FOUND');
+    expect(await code(w.svc.unmergePersons(c.input({ sourcePersonId: c.target.personId }), w.ctx.clinicAdmin))).toBe('INVALID_STATE');
+    expect(await code(w.svc.unmergePersons(c.input(), w.ctx.nurseB))).toBe('FORBIDDEN');
+    expect(w.store.state).toEqual(before);
+  });
+
+  it('cannot be undone twice, and the source can be merged again afterwards', async () => {
+    const c = await doMerge();
+    await w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin);
+    expect(await code(w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin))).toBe('INVALID_STATE');
+    const again = await w.svc.mergePersons(
+      { sourcePersonId: c.source.personId, targetPersonId: c.target.personId, reason: 'Hoá ra vẫn là một người', expectedSourceVersion: c.src().version, expectedTargetVersion: c.tgt().version },
+      w.ctx.clinicAdmin,
+    );
+    expect(again.mergeId).not.toBe(c.m.mergeId);
+    expect(w.s.merges).toHaveLength(2);
+    // merge mới lại có thể unmerge, và nó là bản ghi merge đang hiệu lực (không nhầm với bản đã undo)
+    const r = await w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin);
+    expect(r.mergeId).toBe(again.mergeId);
+    expect(w.s.unmerges).toHaveLength(2);
+  });
+
+  it('rolls back everything if a step fails midway (no half-restored state)', async () => {
+    for (const point of ['insertUnmergeRecord', 'movePatientsBack']) {
+      w = world();
+      const c = await doMerge();
+      const before = structuredClone(w.store.state);
+      w.store.failAt = point;
+      expect(await code(w.svc.unmergePersons(c.input(), w.ctx.clinicAdmin)), point).not.toBe('OK');
+      w.store.failAt = null;
+      expect(w.store.state, point).toEqual(before);
+    }
+  });
+
+  it('is invisible across tenants', async () => {
+    const c = await doMerge();
+    expect(await code(w.svc.unmergePersons(c.input(), w.ctx.nurseB))).toBe('FORBIDDEN');
+    expect(w.s.unmerges).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// POST /fhir/Patient — person + patient atomically
+// ===========================================================================
+describe('registry / registerPersonAndPatient', () => {
+  const input = (o: object = {}) => ({ person: { ...AN, identifiers: [CCCD] }, organizationId: OA, mrn: 'MRN-NEW-1', ...o });
+
+  it('creates person, identifiers and patient in one transaction with outbox and PHI-free audit', async () => {
+    const r = await w.svc.registerPersonAndPatient(input(), w.ctx.nurse);
+    expect(r.patient).toMatchObject({ tenantId: TA, organizationId: OA, mrn: 'MRN-NEW-1', personId: r.person.personId, status: 'active', version: 1 });
+    expect(w.s.persons).toHaveLength(1);
+    expect(w.s.patients).toHaveLength(1);
+    expect(w.s.identifiers).toHaveLength(1);
+    expect(w.s.outbox.map((o) => o.eventType)).toEqual(['patient.person.created', 'patient.registered']);
+    const dump = JSON.stringify(w.s.audit);
+    for (const phi of ['Nguyễn', 'Văn An', '079090000001', '0912345678', '1990-05-17']) expect(dump).not.toContain(phi);
+    expect(w.s.audit.at(-1)).toMatchObject({ action: 'patient.register', outcome: 'success', patientId: r.patient.patientId });
+  });
+
+  it('leaves no orphan person when the MRN or an identifier is already taken, or a later step fails', async () => {
+    await w.svc.registerPersonAndPatient(input(), w.ctx.nurse);
+    const before = structuredClone(w.store.state);
+    const mrnClash = await code(w.svc.registerPersonAndPatient(input({ person: { givenName: 'Khác', familyName: 'Hẳn', birthDate: '1980-01-01' } }), w.ctx.nurse));
+    expect(mrnClash).toBe('CONFLICT:MRN_TAKEN');
+    const idClash = await code(w.svc.registerPersonAndPatient(input({ mrn: 'MRN-NEW-2', person: { givenName: 'Khác', familyName: 'Hẳn', birthDate: '1980-01-01', identifiers: [CCCD] } }), w.ctx.nurse));
+    expect(idClash).toBe('CONFLICT:IDENTIFIER_TAKEN');
+    w.store.failAt = 'insertPatient';
+    expect(await code(w.svc.registerPersonAndPatient(input({ mrn: 'MRN-NEW-3', person: { givenName: 'Ba', familyName: 'Lê', birthDate: '1975-03-03' } }), w.ctx.nurse))).not.toBe('OK');
+    w.store.failAt = null;
+    expect(w.store.state).toEqual(before);
+  });
+
+  it('blocks probable duplicates without an override, and refuses duplicateOverride here', async () => {
+    await w.svc.createPerson({ ...AN, phone: null }, w.ctx.nurse);
+    expect(await code(w.svc.registerPersonAndPatient(input({ person: { ...AN, phone: null } }), w.ctx.nurse))).toBe('CONFLICT:DUPLICATE_CANDIDATES');
+    expect(await code(w.svc.registerPersonAndPatient(input({ person: { ...AN, duplicateOverride: { reason: 'khác người, đã đối chiếu' } } }), w.ctx.nurse))).toBe('VALIDATION');
+    expect(w.s.patients).toHaveLength(0);
+  });
+
+  it('checks role AT the target organization, org scope, MRN format and tenant', async () => {
+    expect(await code(w.svc.registerPersonAndPatient(input(), w.ctx.pharm))).toBe('FORBIDDEN');
+    expect(await code(w.svc.registerPersonAndPatient(input(), w.ctx.patientUser))).not.toBe('OK');
+    expect(await code(w.svc.registerPersonAndPatient(input(), w.ctx.nurseNoOrg))).not.toBe('OK');
+    expect(await code(w.svc.registerPersonAndPatient(input(), w.ctx.nurseOtherOrg))).not.toBe('OK');
+    expect(await code(w.svc.registerPersonAndPatient(input(), w.ctx.nurseB))).not.toBe('OK');
+    expect(await code(w.svc.registerPersonAndPatient(input({ mrn: 'bad mrn!' }), w.ctx.nurse))).toBe('VALIDATION');
+    expect(await code(w.svc.registerPersonAndPatient(input({ person: { ...AN, email: 'nope' } }), w.ctx.nurse))).toBe('VALIDATION');
+    expect(w.s.persons).toHaveLength(0);
+    expect(w.s.patients).toHaveLength(0);
   });
 });

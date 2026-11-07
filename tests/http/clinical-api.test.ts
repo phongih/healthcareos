@@ -72,6 +72,7 @@ const fake: ClinicalApi = {
     const patient: Patient = { tenantId: TA, patientId: PAT, personId: person.personId, organizationId: OA, mrn: 'MRN-1', status: 'active', registeredAt: T0, createdAt: T0, updatedAt: T0, version: 4 };
     return { person, patient, identifiers: [] as Identifier[] };
   },
+  async searchPatients(input, ctx) { rec('searchPatients', input, ctx); await maybeFail(); return []; },
   async createEncounter(input, ctx) { rec('createEncounter', input, ctx); await maybeFail(); return encounter({ version: 1 }); },
   async addCondition(input, ctx) { rec('addCondition', input, ctx); await maybeFail(); return condition; },
   async recordObservation(input, ctx) { rec('recordObservation', input, ctx); await maybeFail(); return observation; },

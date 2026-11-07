@@ -276,6 +276,10 @@ export interface PersonMergeRecord {
   readonly retiredIdentifierIds: readonly string[];
   readonly repointedUserIds: readonly UserId[];
   readonly mergedAt: ISODateTime;
+  /** Trạng thái TARGET ngay trước merge (để unmerge hoàn nguyên phần "điền chỗ trống"). null = dòng merge cũ (trước migration 004). */
+  readonly targetSnapshot: Readonly<Record<string, unknown>> | null;
+  /** version của target ngay sau merge; unmerge chỉ chạy khi target chưa bị đổi kể từ đó. null = dòng merge cũ. */
+  readonly targetVersionAfter: number | null;
 }
 
 export interface MergeResult {
@@ -292,4 +296,74 @@ export interface MergeResult {
 export interface PatientOrgRef {
   readonly patientId: PatientId;
   readonly organizationId: OrganizationId;
+}
+
+// ---------------------------------------------------------------------------
+// Unmerge
+// ---------------------------------------------------------------------------
+export interface UnmergePersonInput {
+  /** Person đã bị merge (id gốc, trạng thái `merged`). */
+  readonly sourcePersonId: PersonId;
+  readonly reason: string;
+  readonly expectedSourceVersion: number;
+  readonly expectedTargetVersion: number;
+}
+
+export type UnmergeBlocker =
+  | 'MERGE_RECORD_LEGACY'
+  | 'TARGET_NOT_ACTIVE'
+  | 'TARGET_MODIFIED'
+  | 'PATIENTS_CHANGED'
+  | 'IDENTIFIERS_CHANGED'
+  | 'USERS_CHANGED';
+
+export interface PersonUnmergeRecord {
+  readonly unmergeId: string;
+  readonly tenantId: Person['tenantId'];
+  readonly mergeId: string;
+  readonly sourcePersonId: PersonId;
+  readonly targetPersonId: PersonId;
+  readonly reason: string;
+  readonly unmergedByUserId: UserId;
+  readonly restoredPatientIds: readonly PatientId[];
+  readonly restoredIdentifierIds: readonly string[];
+  readonly leftInactiveIdentifierIds: readonly string[];
+  readonly restoredUserIds: readonly UserId[];
+}
+
+export interface UnmergeResult {
+  readonly unmergeId: string;
+  readonly mergeId: string;
+  readonly source: Person;
+  readonly target: Person;
+  readonly restoredPatientIds: readonly PatientId[];
+  readonly restoredIdentifierIds: readonly string[];
+  /** Định danh trùng bị ngừng lúc merge: GIỮ inactive trên source (target đang giữ bản active), cần xử lý thủ công. */
+  readonly leftInactiveIdentifierIds: readonly string[];
+  readonly restoredUserIds: readonly UserId[];
+}
+
+// ---------------------------------------------------------------------------
+// Đăng ký person + patient trong MỘT transaction (POST /fhir/Patient)
+// ---------------------------------------------------------------------------
+export interface RegisterPersonPatientInput {
+  readonly person: NewPersonInput;
+  readonly organizationId: OrganizationId;
+  readonly mrn: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tìm kiếm bệnh nhân (trong MỘT organization)
+// ---------------------------------------------------------------------------
+export interface PatientSearchInput {
+  readonly organizationId: OrganizationId;
+  /** FHIR `identifier=system|value`. */
+  readonly identifier?: { readonly system: string; readonly value: string };
+  readonly mrn?: string;
+  /** Tên + ngày sinh phải đi cùng nhau (không cho tìm chỉ theo tên). */
+  readonly givenName?: string;
+  readonly familyName?: string;
+  readonly birthDate?: ISODate;
+  /** 1..20 (mặc định 20). */
+  readonly count?: number;
 }

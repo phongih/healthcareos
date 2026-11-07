@@ -50,7 +50,9 @@ import {
   type ClinicalRepository,
   type ClinicalUnitOfWork,
   type OutboxDraft,
+  type PatientSearchQuery,
 } from '../../services/api/src/clinical/encounter.service';
+import { nameKey as buildNameKey } from '../../packages/domain/src/person-registry';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -178,6 +180,22 @@ class MemoryRepo implements ClinicalRepository {
   }
   async listIdentifiers(personId: Person['personId']) {
     return this.vis(this.s.identifiers).filter((i) => i.personId === personId);
+  }
+  async searchPatients(q: PatientSearchQuery) {
+    const hits = this.vis(this.s.patients).filter((p) => {
+      if (p.organizationId !== q.organizationId) return false;
+      if (q.mrn !== null && p.mrn !== q.mrn) return false;
+      if (q.nameKey !== null) {
+        const person = this.s.persons.find((x) => x.tenantId === p.tenantId && x.personId === p.personId);
+        if (!person || person.birthDate !== q.birthDate || buildNameKey(person.givenName, person.familyName) !== q.nameKey) return false;
+      }
+      if (q.identifier !== null) {
+        const idf = q.identifier;
+        if (!this.s.identifiers.some((i) => i.tenantId === p.tenantId && i.personId === p.personId && i.status === 'active' && i.system === idf.system && idf.values.includes(i.value))) return false;
+      }
+      return true;
+    });
+    return hits.sort((a, b) => (a.registeredAt + a.patientId).localeCompare(b.registeredAt + b.patientId)).slice(0, q.limit).map((p) => ({ ...p }));
   }
   async insertPatient(p: Patient) {
     this.writable(p.tenantId);
@@ -804,5 +822,78 @@ describe('G1 / getPatient access control & subject integrity', () => {
     expect(w.store.state.conditions).toHaveLength(0);
     expect(w.store.state.observations).toHaveLength(0);
     expect(await outcome(w.svc.addCondition({ encounterId: encounter.encounterId, code: ICD_J06, expectedPatientId: encounter.patientId }, w.ctx.docA1))).toBe('OK');
+  });
+});
+
+
+// ===========================================================================
+// Tìm kiếm bệnh nhân
+// ===========================================================================
+describe('G1 / patient search', () => {
+  const idn = (over: Partial<Identifier> = {}): Identifier => ({
+    tenantId: TENANT_A, identifierId: uid(8100) as Identifier['identifierId'], personId: P.a1, type: 'national_id',
+    system: 'https://moh.gov.vn/cccd', value: '079090000001', status: 'active', createdAt: T0, updatedAt: T0, version: 1, ...over,
+  } as Identifier);
+
+  it('finds by MRN, by name+birthdate (accent/order-insensitive) and by identifier; criteria are ANDed', async () => {
+    const p1 = await w.register(P.a1, 'MRN-001');
+    await w.register(P.a3, 'MRN-003');
+    w.store.state.identifiers.push(idn());
+    const q = (o: object) => w.svc.searchPatients({ organizationId: ORG_A1, ...o }, w.ctx.nurse);
+
+    expect((await q({ mrn: 'MRN-001' })).map((r) => r.patient.patientId)).toEqual([p1.patientId]);
+    expect((await q({ givenName: 'Van A', familyName: 'NGUYEN', birthDate: '1990-05-17' })).map((r) => r.patient.mrn)).toEqual(['MRN-001']);
+    const byId = await q({ identifier: { system: 'https://moh.gov.vn/cccd', value: '079 090 000 001' } });
+    expect(byId.map((r) => r.patient.mrn)).toEqual(['MRN-001']);
+    expect(byId[0]!.identifiers).toHaveLength(1);
+    expect(await q({ mrn: 'MRN-003', identifier: { system: 'https://moh.gov.vn/cccd', value: '079090000001' } })).toEqual([]);
+    expect(await q({ mrn: 'MRN-404' })).toEqual([]);
+  });
+
+  it('is scoped to the organization and tenant, and requires membership in that organization', async () => {
+    await w.register(P.a1, 'MRN-001');
+    expect(await w.svc.searchPatients({ organizationId: ORG_A2, mrn: 'MRN-001' }, w.ctx.docA2)).toEqual([]);
+    expect(await outcome(w.svc.searchPatients({ organizationId: ORG_A1, mrn: 'MRN-001' }, w.ctx.docA2))).toBe('ORG_NOT_ALLOWED');
+    expect(await outcome(w.svc.searchPatients({ organizationId: ORG_A1, mrn: 'MRN-001' }, w.ctx.docA2Widened))).toBe('FORBIDDEN');
+    expect(await w.svc.searchPatients({ organizationId: ORG_B1, mrn: MRN_B }, w.ctx.docB)).toHaveLength(1);
+    expect(await outcome(w.svc.searchPatients({ organizationId: ORG_B1, mrn: MRN_B }, w.ctx.docA1))).toBe('ORG_NOT_ALLOWED');
+  });
+
+  it('enforces roles and validates input', async () => {
+    await w.register(P.a1, 'MRN-001');
+    const s = (o: object, c = w.ctx.docA1) => outcome(w.svc.searchPatients({ organizationId: ORG_A1, ...o }, c));
+    expect(await s({ mrn: 'MRN-001' }, w.ctx.pharm)).toBe('OK');
+    expect(await s({ mrn: 'MRN-001' }, w.ctx.patientA1)).toBe('ORG_NOT_ALLOWED');
+    expect(await s({ mrn: 'MRN-001' }, w.ctx.disabled)).not.toBe('OK');
+    expect(await s({ mrn: 'MRN-001' }, w.ctx.revoked)).not.toBe('OK');
+    expect(await s({})).toBe('VALIDATION');
+    expect(await s({ givenName: 'Văn A', familyName: 'Nguyễn' })).toBe('VALIDATION');
+    expect(await s({ givenName: 'Văn A', birthDate: '1990-05-17' })).toBe('VALIDATION');
+    expect(await s({ givenName: 'Văn A', familyName: 'Nguyễn', birthDate: '17/05/1990' })).toBe('VALIDATION');
+    expect(await s({ mrn: 'bad mrn!' })).toBe('VALIDATION');
+    expect(await s({ mrn: 'MRN-001', count: 0 })).toBe('VALIDATION');
+    expect(await s({ mrn: 'MRN-001', count: 21 })).toBe('VALIDATION');
+    expect(await s({ identifier: { system: 'x', value: '1' } })).toBe('VALIDATION');
+  });
+
+  it('audits only criteria kinds and result count — never the searched values', async () => {
+    await w.register(P.a1, 'MRN-001');
+    await w.svc.searchPatients({ organizationId: ORG_A1, givenName: 'Văn A', familyName: 'Nguyễn', birthDate: '1990-05-17', mrn: 'MRN-001' }, w.ctx.nurse);
+    const ev = w.store.state.audit.at(-1)!;
+    expect(ev).toMatchObject({ action: 'patient.search', outcome: 'success', payload: { criteria: ['mrn', 'name+birthdate'], resultCount: 1 } });
+    const dump = JSON.stringify([...w.store.state.audit, ...w.sink.events]);
+    for (const phi of ['Nguyễn', 'Văn A', '1990-05-17', 'MRN-001']) expect(dump.replace(/"resourceId":"[^"]*"/g, '')).not.toContain(phi);
+  });
+
+  it('honours _count and ordering, and a leaky repository cannot leak another tenant', async () => {
+    const a = await w.register(P.a1, 'MRN-001');
+    await w.register(P.a3, 'MRN-003');
+    const first = await w.svc.searchPatients({ organizationId: ORG_A1, givenName: 'x', familyName: 'y', birthDate: '1990-05-17', count: 1 }, w.ctx.nurse).catch(() => null);
+    expect(first).toEqual([]);
+    const lim = await w.svc.searchPatients({ organizationId: ORG_A1, mrn: a.mrn, count: 1 }, w.ctx.nurse);
+    expect(lim).toHaveLength(1);
+    const leaky = buildWorld({ leaky: true });
+    leaky.store.state.patients.push({ ...leaky.store.state.patients[0]!, patientId: asPatientId(uid(599)), mrn: 'MRN-X', organizationId: ORG_A1 }); // tenant B, org id trùng A1
+    expect(await outcome(leaky.svc.searchPatients({ organizationId: ORG_A1, mrn: 'MRN-X' }, leaky.ctx.docA1))).toBe('RESOURCE_TENANT_MISMATCH');
   });
 });

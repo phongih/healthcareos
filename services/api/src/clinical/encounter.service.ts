@@ -52,6 +52,7 @@ import {
   type NewObservationInput,
   type Observation,
 } from '../../../../packages/domain/src/s1-contracts';
+import { nameKey as buildNameKey, type PatientSearchInput } from '../../../../packages/domain/src/person-registry';
 import {
   assertOrganizationAllowed,
   assertSameTenant,
@@ -87,10 +88,22 @@ export interface OutboxDraft {
 }
 
 /** Mọi method đều ngầm định tenant của transaction hiện tại (RLS) và PHẢI tự lọc theo tenant_id. */
+export interface PatientSearchQuery {
+  readonly organizationId: OrganizationId;
+  readonly mrn: string | null;
+  /** Khoá tên đã chuẩn hoá (đi cùng birthDate). */
+  readonly nameKey: string | null;
+  readonly birthDate: string | null;
+  readonly identifier: { readonly system: string; readonly values: readonly string[] } | null;
+  readonly limit: number;
+}
+
 export interface ClinicalRepository {
   findPerson(personId: PersonId): Promise<Person | null>;
   findPatient(patientId: PatientId): Promise<Patient | null>;
   listIdentifiers(personId: PersonId): Promise<Identifier[]>;
+  /** Tìm patient TRONG một organization; mọi điều kiện cho trước đều phải khớp (AND). Sắp theo registered_at, patient_id. */
+  searchPatients(q: PatientSearchQuery): Promise<Patient[]>;
   /** Ném ClinicalError('CONFLICT', ..., { reason }) khi vi phạm unique. */
   insertPatient(patient: Patient): Promise<void>;
   findUserBySubject(subject: string): Promise<User | null>;
@@ -510,6 +523,78 @@ export class ClinicalEncounterService {
     });
   }
 
+  /**
+   * Tìm bệnh nhân trong MỘT organization (bắt buộc), cần quyền đọc bệnh án tại organization đó.
+   * Chống dò quét: phải có tiêu chí chọn lọc — `identifier` (system|value), `mrn`, hoặc `tên + ngày sinh` — không có "liệt kê tất cả";
+   * tối đa 20 kết quả. Tìm theo tên dựa trên name_key (dòng legacy chưa có khoá sẽ không được tìm bằng tên).
+   * Audit chỉ ghi LOẠI tiêu chí và số kết quả, không ghi giá trị tìm kiếm.
+   */
+  async searchPatients(
+    input: PatientSearchInput,
+    ctx: TenantContext = requireTenantContext(),
+  ): Promise<Array<{ person: Person; patient: Patient; identifiers: Identifier[] }>> {
+    const meta: AuditMeta = { action: 'patient.search', resourceType: 'Patient', organizationId: input.organizationId };
+    return this.tx(ctx, meta, async (repo) => {
+      assertOrganizationAllowed(input.organizationId, ctx);
+      const principal = await this.principal(repo, ctx, input.organizationId);
+      this.authorize(principal, 'chart:read');
+
+      const criteria: string[] = [];
+      let mrn: string | null = null;
+      if (input.mrn !== undefined) {
+        if (!MRN_RE.test(input.mrn)) throw new ClinicalError('VALIDATION', 'Invalid MRN format');
+        mrn = input.mrn;
+        criteria.push('mrn');
+      }
+      let identifier: PatientSearchQuery['identifier'] = null;
+      if (input.identifier !== undefined) {
+        const system = input.identifier.system;
+        const raw = input.identifier.value.trim();
+        if (system.length < 3 || system.length > 200 || raw.length < 1 || raw.length > 128) {
+          throw new ClinicalError('VALIDATION', 'identifier must be system|value');
+        }
+        const stripped = raw.replace(/[\s.-]/g, '');
+        identifier = { system, values: [...new Set([raw, stripped, stripped.toUpperCase()])] };
+        criteria.push('identifier');
+      }
+      let nameKeyValue: string | null = null;
+      let birthDate: string | null = null;
+      const hasName = input.givenName !== undefined || input.familyName !== undefined;
+      if (hasName || input.birthDate !== undefined) {
+        if (!input.givenName || !input.familyName || !input.birthDate) {
+          throw new ClinicalError('VALIDATION', 'Name search requires given, family and birthdate together');
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(input.birthDate)) throw new ClinicalError('VALIDATION', 'Invalid birthdate');
+        nameKeyValue = buildNameKey(input.givenName, input.familyName);
+        if (nameKeyValue === '') throw new ClinicalError('VALIDATION', 'Invalid name');
+        birthDate = input.birthDate;
+        criteria.push('name+birthdate');
+      }
+      if (criteria.length === 0) {
+        throw new ClinicalError('VALIDATION', 'Search requires identifier, mrn, or given+family+birthdate');
+      }
+      const count = input.count ?? 20;
+      if (!Number.isInteger(count) || count < 1 || count > 20) throw new ClinicalError('VALIDATION', '_count must be between 1 and 20');
+
+      const patients = await repo.searchPatients({ organizationId: input.organizationId, mrn, nameKey: nameKeyValue, birthDate, identifier, limit: count });
+      const out: Array<{ person: Person; patient: Patient; identifiers: Identifier[] }> = [];
+      for (const patient of patients) {
+        assertSameTenant(patient, ctx);
+        if (patient.organizationId !== input.organizationId) continue; // phòng thủ chiều sâu: repo lỗi không được trả org khác
+        const person = await repo.findPerson(patient.personId);
+        if (!person) continue;
+        assertSameTenant(person, ctx);
+        const identifiers = await repo.listIdentifiers(person.personId);
+        for (const i of identifiers) assertSameTenant(i, ctx);
+        out.push({ person, patient, identifiers });
+      }
+      await repo.appendAudit(
+        this.event(ctx, meta, 'success', principal.user, { criteria, resultCount: out.length }),
+      );
+      return out;
+    });
+  }
+
   // ---- Internals ---------------------------------------------------------
   private assertSubject(encounter: Encounter, expected: PatientId | undefined): void {
     if (expected !== undefined && expected !== encounter.patientId) {
@@ -773,6 +858,31 @@ export class PgClinicalRepository implements ClinicalRepository {
   async findPatient(patientId: PatientId): Promise<Patient | null> {
     const r = await this.db.query(`SELECT ${PATIENT_COLS} FROM patient.patients WHERE tenant_id = $1 AND patient_id = $2`, [this.t, patientId]);
     return r.rows[0] ? mapPatient(r.rows[0]) : null;
+  }
+
+  async searchPatients(q: PatientSearchQuery): Promise<Patient[]> {
+    const r = await this.db.query(
+      `SELECT ${PATIENT_COLS} FROM patient.patients
+        WHERE tenant_id = $1 AND organization_id = $2
+          AND ($3::text IS NULL OR mrn = $3::text)
+          AND ($4::text IS NULL OR EXISTS (
+                SELECT 1 FROM patient.persons p
+                 WHERE p.tenant_id = patients.tenant_id AND p.person_id = patients.person_id
+                   AND p.name_key = $4::text AND p.birth_date = $5::date))
+          AND ($6::text IS NULL OR EXISTS (
+                SELECT 1 FROM patient.identifiers i
+                 WHERE i.tenant_id = patients.tenant_id AND i.person_id = patients.person_id
+                   AND i.status = 'active' AND i.system = $6::text AND i.value = ANY($7::text[])))
+        ORDER BY registered_at, patient_id
+        LIMIT $8`,
+      [
+        this.t, q.organizationId, q.mrn, q.nameKey, q.birthDate,
+        q.identifier ? q.identifier.system : null,
+        q.identifier ? `{${q.identifier.values.map((v) => '"' + v.replace(/(["\\])/g, '\\$1') + '"').join(',')}}` : null,
+        q.limit,
+      ],
+    );
+    return r.rows.map(mapPatient);
   }
 
   async insertPatient(p: Patient): Promise<void> {
