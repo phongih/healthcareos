@@ -1,0 +1,152 @@
+{
+  "realm": "hcos",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "accessTokenLifespan": 900,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "doctor"
+      },
+      {
+        "name": "clinic_staff"
+      },
+      {
+        "name": "clinic_admin"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "hcos-staging-cli",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "aud-hcos-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "hcos-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "00000000-0000-4000-8000-0000000000a1",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "org_ids",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "org_ids",
+            "claim.value": "[\"00000000-0000-4000-8000-0000000000b1\"]",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "org_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "org_id",
+            "claim.value": "00000000-0000-4000-8000-0000000000b1",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000c1",
+      "username": "bacsi",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "bacsi@example.invalid",
+      "firstName": "bacsi",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__PW_BACSI__",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "doctor"
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000c2",
+      "username": "dieuduong",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dieuduong@example.invalid",
+      "firstName": "dieuduong",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__PW_DIEUDUONG__",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "clinic_staff"
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000c3",
+      "username": "quantri",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "quantri@example.invalid",
+      "firstName": "quantri",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "__PW_QUANTRI__",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "clinic_admin"
+      ]
+    }
+  ]
+}

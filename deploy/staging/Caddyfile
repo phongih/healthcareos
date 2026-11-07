@@ -1,0 +1,20 @@
+smart.id.vn {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	# Keycloak: chỉ mở realm hcos và tài nguyên tĩnh; KHÔNG mở /auth/admin và realm master.
+	@kc path /auth/realms/hcos/* /auth/resources/*
+	handle @kc {
+		reverse_proxy 127.0.0.1:8081
+	}
+	@api path /fhir/* /api/* /healthz /readyz
+	handle @api {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		respond "not found" 404
+	}
+}
