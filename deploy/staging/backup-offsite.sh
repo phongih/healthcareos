@@ -13,6 +13,9 @@ STATE="${STATE_DIR:-/var/lib/hcos-backup-offsite}"
 AGE="${AGE_BIN:-age}"; GCLOUD="${GCLOUD_BIN:-gcloud}"
 PREFIX="${GCS_PREFIX:-hcos}"
 [ -s "$RECIPIENTS" ] || { echo "thiếu khoá công khai age: $RECIPIENTS" >&2; exit 2; }
+# Khoá công khai age hợp lệ có dạng age1<58 ký tự a-z0-9>. Từ chối khoá giữ chỗ ("age1...") và KHOÁ RIÊNG (không bao giờ được nằm trên VM).
+if grep -q 'AGE-SECRET-KEY' "$RECIPIENTS"; then echo "$RECIPIENTS chứa KHOÁ RIÊNG: xoá ngay và dùng khoá công khai (age1...)" >&2; exit 2; fi
+grep -Eq '^age1[0-9a-z]{50,}$' "$RECIPIENTS" || { echo "$RECIPIENTS không chứa khoá công khai age hợp lệ (dạng age1xxxx…, ~62 ký tự)" >&2; exit 2; }
 mkdir -p "$STATE/pending"   # file đã mã hoá chờ xác minh: GIỮ NGUYÊN giữa các lần thử lại (age mã hoá không tất định)
 touch "$STATE/uploaded.list"
 fail=0; n=0
@@ -25,7 +28,10 @@ for base in $(ls -1 "$DIR"/hcos-*.dump 2>/dev/null | sort | sed 's/\.dump$//'); 
   ok=1
   for ext in dump globals.sql sha256; do
     src="$DIR/$b.$ext"; enc="$STATE/pending/$b.$ext.age"; obj="gs://$BUCKET/$PREFIX/$b.$ext.age"
-    [ -s "$enc" ] || { "$AGE" -R "$RECIPIENTS" -o "$enc.part" "$src" && mv "$enc.part" "$enc"; }
+    if [ ! -s "$enc" ]; then
+      if "$AGE" -R "$RECIPIENTS" -o "$enc.part" "$src"; then mv "$enc.part" "$enc"
+      else rm -f "$enc.part"; echo "mã hoá lỗi: $src" >&2; ok=0; continue; fi
+    fi
     # Đã có trên bucket (lần chạy trước bị gián đoạn) => chỉ xác minh, không ghi đè.
     "$GCLOUD" storage cp --no-clobber "$enc" "$obj" >/dev/null 2>&1 || true
     want=$(openssl md5 -binary "$enc" | base64)
