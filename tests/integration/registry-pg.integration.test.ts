@@ -458,6 +458,10 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect((await http('POST', '/fhir/Patient', T.patientUser(), fhirPatient({ mrn: 'MRN-F4', family: 'Ba', given: ['Lê'], birth: '1950-05-05' }), FHIR_CT)).status).toBe(403);
     expect((await http('POST', '/fhir/Patient', T.nurseB(), fhirPatient({ mrn: 'MRN-F4', family: 'Ba', given: ['Lê'], birth: '1950-05-05' }), FHIR_CT)).status).toBe(403);
     expect((await http('POST', '/fhir/Patient', T.nurse(), fhirPatient({ mrn: 'MRN-F4', org: OB, family: 'Ba', given: ['Lê'], birth: '1950-05-05' }), FHIR_CT)).status).toBe(403);
+    // Quyền được kiểm tra TRƯỚC validation: vai trò sai + body hỏng => 403 (không phải 422).
+    const broken = { resourceType: 'Patient', managingOrganization: { reference: `Organization/${OA}` } };
+    expect((await http('POST', '/fhir/Patient', T.pharm(), broken, FHIR_CT)).status).toBe(403);
+    expect((await http('POST', '/fhir/Patient', T.nurse(), broken, FHIR_CT)).status).toBe(422);
     const noMrn = fhirPatient({ mrn: 'x' }); (noMrn.identifier as object[]).shift();
     expect((await http('POST', '/fhir/Patient', T.nurse(), noMrn, FHIR_CT)).status).toBe(422);
     expect((await http('POST', '/fhir/Patient', T.nurse(), { ...fhirPatient({ mrn: 'MRN-F5' }), resourceType: 'Observation' }, FHIR_CT)).status).toBe(422);

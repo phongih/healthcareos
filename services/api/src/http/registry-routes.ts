@@ -22,7 +22,7 @@ import { FHIR_JSON, HttpError, PLAIN_JSON } from './http-kernel';
 
 export type RegistryApi = Pick<
   PersonRegistryService,
-  'createPerson' | 'findDuplicates' | 'getPerson' | 'addIdentifier' | 'retireIdentifier' | 'mergePersons' | 'unmergePersons' | 'registerPersonAndPatient'
+  'createPerson' | 'findDuplicates' | 'getPerson' | 'addIdentifier' | 'retireIdentifier' | 'mergePersons' | 'unmergePersons' | 'registerPersonAndPatient' | 'authorizeRegisterPatient'
 >;
 
 const etag = (v: number): string => `W/"${v}"`;
@@ -248,6 +248,9 @@ export function buildRegistryRoutes(api: RegistryApi): readonly Route[] {
       handler: async (input) => {
         const resource = (await requireBody(input)) as FhirPatient;
         if (resource === null || typeof resource !== 'object' || Array.isArray(resource)) throw new FhirMappingError('Body must be a Patient resource');
+        // Quyền TRƯỚC validation: nếu body nêu một organization hợp lệ, kiểm tra vai trò tại org đó trước khi map/validate phần còn lại.
+        const orgRef = /^Organization\/([0-9a-fA-F-]{36})$/.exec(String((resource as { managingOrganization?: { reference?: unknown } }).managingOrganization?.reference ?? ''));
+        if (orgRef && isUuid(orgRef[1]!)) await api.authorizeRegisterPatient(asOrganizationId(orgRef[1]!), input.ctx);
         const m = patientFromFhir(resource);
         const r = await api.registerPersonAndPatient(m, input.ctx);
         return {

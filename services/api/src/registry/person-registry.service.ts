@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import {
   asPersonId,
   asPatientId,
+  type OrganizationId,
   TenantIsolationError,
   VersionConflictError,
   type AuditEventId,
@@ -691,6 +692,20 @@ export class PersonRegistryService {
    * lỗi ở bước nào (trùng định danh, MRN đã dùng...) => không để lại person mồ côi.
    * Quyền: person:create và patient:register theo vai trò TẠI organization đích (membership của chính org đó).
    */
+  /**
+   * Kiểm tra quyền đăng ký bệnh nhân tại một organization TRƯỚC khi route phân tích/validate body.
+   * Không ghi dữ liệu; lỗi quyền được audit như mọi thao tác bị từ chối.
+   */
+  async authorizeRegisterPatient(organizationId: OrganizationId, ctx: TenantContext = requireTenantContext()): Promise<void> {
+    const meta: AuditMeta = { action: 'patient.register', resourceType: 'Patient', organizationId };
+    await this.tx(ctx, meta, async (repo) => {
+      assertOrganizationAllowed(organizationId, ctx);
+      const principal = await this.principalAt(repo, ctx, organizationId);
+      this.authorize(principal, 'person:create');
+      this.authorize(principal, 'patient:register');
+    });
+  }
+
   async registerPersonAndPatient(
     input: RegisterPersonPatientInput,
     ctx: TenantContext = requireTenantContext(),
