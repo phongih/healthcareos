@@ -9,7 +9,7 @@ rnd() { openssl rand -base64 18 | tr -d '/+=' ; }
 DBPW=$(cat ~/hcos_api.pw)
 
 # 1. Seed dữ liệu giả (superuser, socket cục bộ)
-sudo -u postgres psql -d hcos -v ON_ERROR_STOP=1 -f "$PWD/seed.sql"
+sudo -u postgres psql -d hcos -v ON_ERROR_STOP=1 < "$PWD/seed.sql"   # qua stdin: user postgres không đọc được /home
 
 # 2. Mật khẩu ngẫu nhiên, ghi vào file chỉ chủ sở hữu đọc được
 if [ ! -f secrets.env ]; then
@@ -18,9 +18,13 @@ fi
 set -a; . ./secrets.env; set +a
 
 # 3. Realm import đã điền mật khẩu
-mkdir -p kc-import
+mkdir -p kc-import kc-h2
+# Keycloak chạy uid 1000 (khác user của bạn): thư mục import phải đọc được, thư mục H2 phải ghi được.
+chmod 755 kc-import
+sudo chown -R 1000:0 kc-h2
 sed -e "s/__PW_BACSI__/$PW_BACSI/" -e "s/__PW_DIEUDUONG__/$PW_DIEUDUONG/" -e "s/__PW_QUANTRI__/$PW_QUANTRI/" \
   hcos-realm.template.json > kc-import/hcos-realm.json
+chmod 644 kc-import/hcos-realm.json   # XOÁ file này sau khi Keycloak đã import (chứa mật khẩu demo)
 
 # 4. Cấu hình API
 cat > hcos.env <<ENV

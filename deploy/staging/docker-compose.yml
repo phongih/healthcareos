@@ -22,7 +22,7 @@ services:
       KC_DB: dev-file
     volumes:
       - ./kc-import:/opt/keycloak/data/import:ro
-      - kc-data:/opt/keycloak/data/h2
+      - ./kc-h2:/opt/keycloak/data/h2
   caddy:
     image: caddy:2
     network_mode: host
@@ -31,5 +31,4 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
 volumes:
-  kc-data:
   caddy-data:
