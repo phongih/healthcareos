@@ -48,6 +48,15 @@ describe('loadConfig', () => {
     expect(problems({ ...OK, HCOS_JWKS_URL: 'http://localhost:9000/jwks' })).toHaveLength(0);
   });
 
+  it('HCOS_HOST: optional IP literal; hostnames and garbage are rejected', () => {
+    expect(loadConfig(OK).host).toBeUndefined();
+    expect(loadConfig({ ...OK, HCOS_HOST: '127.0.0.1' }).host).toBe('127.0.0.1');
+    expect(loadConfig({ ...OK, HCOS_HOST: '::1' }).host).toBe('::1');
+    expect(loadConfig({ ...OK, HCOS_HOST: '  ' }).host).toBeUndefined();
+    expect(problems({ ...OK, HCOS_HOST: 'localhost' })).toEqual(['HCOS_HOST must be an IPv4 or IPv6 address']);
+    expect(problems({ ...OK, HCOS_HOST: '0.0.0.0/0' })).toHaveLength(1);
+  });
+
   it('rejects bad numbers and never echoes secrets in the error', () => {
     expect(problems({ ...OK, HCOS_PORT: '70000' })).toHaveLength(1);
     expect(problems({ ...OK, HCOS_PORT: 'abc' })).toHaveLength(1);

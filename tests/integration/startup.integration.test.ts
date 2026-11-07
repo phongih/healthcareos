@@ -65,8 +65,8 @@ async function waitFor(pred: () => boolean | Promise<boolean>, ms: number, what:
 const withTimeout = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout: ${what}`)), ms))]);
 
-const get = async (port: number, path: string) => {
-  const r = await fetch(`http://127.0.0.1:${port}${path}`);
+const get = async (port: number, path: string, host = '127.0.0.1') => {
+  const r = await fetch(`http://${host}:${port}${path}`);
   return { status: r.status as number, text: await r.text() };
 };
 
@@ -129,6 +129,19 @@ run('Runtime: main.ts + PostgreSQL', () => {
     expect(p.out().includes('shutting down')).toBe(true);
     expect(p.out().includes('"msg":"stopped"')).toBe(true);
     expect(p.out().includes(APP_PW)).toBe(false);
+  });
+
+  it('HCOS_HOST binds ONLY the requested address (reachable there, refused on another loopback address)', async () => {
+    const port = freePort(5);
+    const p = launch({ ...baseEnv(dbUrl(APP_ROLE, APP_PW, DB1), port), HCOS_HOST: '127.0.0.2' });
+    live.push(p);
+    await waitFor(() => p.out().includes('hcos-api listening'), 30_000, 'startup');
+    expect((await get(port, '/healthz', '127.0.0.2')).status).toBe(200);
+    let refused = false;
+    try { await get(port, '/healthz', '127.0.0.1'); } catch { refused = true; }
+    expect(refused).toBe(true);
+    p.child.kill('SIGINT');
+    expect((await withTimeout(p.exited, 15_000, 'graceful exit')).code).toBe(0);
   });
 
   it('/readyz turns 503 when the database disappears while /healthz stays 200; SIGTERM still exits 0; no leaks', async () => {

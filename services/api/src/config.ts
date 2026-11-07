@@ -8,16 +8,20 @@
  *   HCOS_JWT_AUDIENCE   vd hcos-api
  *   HCOS_JWKS_URL       https://idp.example.vn/.well-known/jwks.json (bắt buộc https, trừ localhost)
  *   HCOS_PORT           mặc định 8080
+ *   HCOS_HOST           địa chỉ IP (v4/v6) để lắng nghe, vd 127.0.0.1 khi chạy sau reverse proxy cùng máy; mặc định: mọi giao diện
  *   HCOS_MAX_BODY_BYTES mặc định 1048576
  *   HCOS_DB_POOL_MAX    mặc định 10
  *   HCOS_READY_TIMEOUT_MS  timeout của /readyz, mặc định 2000
  */
+import { isIP } from 'node:net';
 export interface AppConfig {
   readonly databaseUrl: string;
   readonly issuer: string[];
   readonly audience: string[];
   readonly jwksUrl: string;
   readonly port: number;
+  /** Địa chỉ IP để lắng nghe; undefined = mọi giao diện (hành vi cũ, cần cho container). */
+  readonly host: string | undefined;
   readonly maxBodyBytes: number;
   readonly dbPoolMax: number;
   readonly readyTimeoutMs: number;
@@ -49,6 +53,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     }
     return n;
   };
+
+  const hostRaw = env['HCOS_HOST']?.trim();
+  if (hostRaw && isIP(hostRaw) === 0) problems.push('HCOS_HOST must be an IPv4 or IPv6 address');
 
   const databaseUrl = req('HCOS_DATABASE_URL');
   if (databaseUrl) {
@@ -82,6 +89,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     audience,
     jwksUrl,
     port: int('HCOS_PORT', 8080, 1, 65535),
+    host: hostRaw && isIP(hostRaw) !== 0 ? hostRaw : undefined,
     maxBodyBytes: int('HCOS_MAX_BODY_BYTES', 1_048_576, 1024, 50 * 1_048_576),
     dbPoolMax: int('HCOS_DB_POOL_MAX', 10, 1, 200),
     readyTimeoutMs: int('HCOS_READY_TIMEOUT_MS', 2000, 100, 30_000),

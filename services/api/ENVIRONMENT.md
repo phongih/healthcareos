@@ -9,6 +9,7 @@ Cấu hình **chỉ** qua biến môi trường lúc chạy. Image không chứa
 | `HCOS_JWT_AUDIENCE` | có | — | Nhiều giá trị: phân tách bằng dấu phẩy |
 | `HCOS_JWKS_URL` | có | — | `https://…` (http chỉ cho localhost/127.0.0.1) |
 | `HCOS_PORT` | không | `8080` | 1–65535 |
+| `HCOS_HOST` | không | mọi giao diện | Địa chỉ IP (v4/v6) để lắng nghe. Đặt `127.0.0.1` khi chạy sau reverse proxy cùng máy (network host) để API không lộ ra ngoài proxy. Trong container bridge mạng mặc định phải để trống. Tên host không được chấp nhận |
 | `HCOS_MAX_BODY_BYTES` | không | `1048576` | 1024 – 52428800 |
 | `HCOS_DB_POOL_MAX` | không | `10` | 1–200 |
 | `HCOS_READY_TIMEOUT_MS` | không | `2000` | Timeout cứng của `/readyz` (100–30000) |

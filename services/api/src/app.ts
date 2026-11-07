@@ -63,7 +63,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
 
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(cfg.port, resolve);
+      if (cfg.host) server.listen(cfg.port, cfg.host, resolve);
+      else server.listen(cfg.port, resolve);
     });
     const addr = server.address() as { port: number } | null;
     const port = addr?.port ?? cfg.port;

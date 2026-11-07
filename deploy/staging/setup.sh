@@ -33,5 +33,6 @@ HCOS_JWT_ISSUER=https://smart.id.vn/auth/realms/hcos
 HCOS_JWT_AUDIENCE=hcos-api
 HCOS_JWKS_URL=https://smart.id.vn/auth/realms/hcos/protocol/openid-connect/certs
 HCOS_PORT=8080
+HCOS_HOST=127.0.0.1
 ENV
 echo "OK. Tiếp theo: docker compose --env-file secrets.env up -d"
