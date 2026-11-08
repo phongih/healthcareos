@@ -20,7 +20,7 @@ sudo -u postgres bash -c 'cd /tmp && echo preflight > pf.txt && /usr/local/lib/h
 sudo -u postgres psql -tA -c "show data_directory" -c "show wal_level" -c "show archive_mode"
 sudo grep -n -i 'replication' /etc/postgresql/16/main/pg_hba.conf
 ```
-Lưu ý: bước này chạy qua `sudo` nên có PATH đầy đủ và KHÔNG chứng minh dịch vụ PostgreSQL tìm được `gcloud`; vì vậy `pitr.env` dùng đường dẫn tuyệt đối. Sau khi bật, luôn kiểm tra `pg_stat_archiver` (đã gặp lỗi này thật ở lần bật đầu trên VM). Phải thấy `PREFLIGHT OK`, `wal_level=replica` (hoặc cao hơn), và một dòng `local replication all peer` (nếu thiếu, `pg_basebackup` sẽ bị từ chối). Chỉ khi đạt mới bật:
+Lưu ý: `pitr-common.sh` tự đặt PATH đầy đủ vì dịch vụ PostgreSQL gọi lệnh archive với PATH khác (đã gặp thật: gcloud snap báo `dirname/readlink/python: not found`). Bước này chạy qua `sudo` nên có PATH đầy đủ và KHÔNG chứng minh dịch vụ PostgreSQL tìm được `gcloud`; vì vậy `pitr.env` dùng đường dẫn tuyệt đối. Sau khi bật, luôn kiểm tra `pg_stat_archiver` (đã gặp lỗi này thật ở lần bật đầu trên VM). Phải thấy `PREFLIGHT OK`, `wal_level=replica` (hoặc cao hơn), và một dòng `local replication all peer` (nếu thiếu, `pg_basebackup` sẽ bị từ chối). Chỉ khi đạt mới bật:
 ```
 sudo tee /etc/postgresql/16/main/conf.d/hcos-archive.conf >/dev/null <<'CONF'
 archive_mode = on

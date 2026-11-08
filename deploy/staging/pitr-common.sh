@@ -1,4 +1,7 @@
 # Dùng chung cho các script PITR (source, không chạy trực tiếp).
+# PostgreSQL chạy archive_command với PATH của dịch vụ, có thể thiếu thư mục hệ thống (đã gặp: gcloud snap báo "dirname/readlink/python: not found").
+# Tự đặt PATH đầy đủ để không phụ thuộc môi trường của người gọi.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin${PATH:+:$PATH}"
 [ -r "${PITR_ENV:-/etc/hcos/pitr.env}" ] && . "${PITR_ENV:-/etc/hcos/pitr.env}"
 BUCKET="${BUCKET:?cần BUCKET (đặt trong /etc/hcos/pitr.env)}"
 PREFIX="${GCS_PREFIX:-pitr}"
