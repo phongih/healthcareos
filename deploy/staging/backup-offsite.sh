@@ -20,13 +20,14 @@ mkdir -p "$STATE/pending"   # file đã mã hoá chờ xác minh: GIỮ NGUYÊN 
 touch "$STATE/uploaded.list"
 fail=0; n=0
 shopt -s nullglob
-for base in $(ls -1 "$DIR"/hcos-*.dump 2>/dev/null | sort | sed 's/\.dump$//'); do
+for base in $(ls -1 "$DIR"/hcos-????????T??????Z.dump 2>/dev/null | sort | sed 's/\.dump$//'); do
   b=$(basename "$base")
   if grep -qx "$b" "$STATE/uploaded.list"; then continue; fi
   # Bản sao lưu phải đủ bộ và checksum đúng trước khi mã hoá.
   ( cd "$DIR" && sha256sum -c "$b.sha256" >/dev/null 2>&1 ) || { echo "BỎ QUA $b: checksum không khớp hoặc thiếu file" >&2; fail=1; continue; }
   ok=1
-  for ext in dump globals.sql sha256; do
+  exts="dump globals.sql sha256"; [ -s "$DIR/$b.keycloak.dump" ] && exts="dump globals.sql keycloak.dump sha256"
+  for ext in $exts; do
     src="$DIR/$b.$ext"; enc="$STATE/pending/$b.$ext.age"; obj="gs://$BUCKET/$PREFIX/$b.$ext.age"
     if [ ! -s "$enc" ]; then
       if "$AGE" -R "$RECIPIENTS" -o "$enc.part" "$src"; then mv "$enc.part" "$enc"

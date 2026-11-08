@@ -15,13 +15,24 @@ sudo -u postgres psql -d hcos -v ON_ERROR_STOP=1 < "$PWD/seed.sql"   # qua stdin
 if [ ! -f secrets.env ]; then
   { echo "KC_ADMIN_PASSWORD=$(rnd)"; echo "PW_BACSI=$(rnd)"; echo "PW_DIEUDUONG=$(rnd)"; echo "PW_QUANTRI=$(rnd)"; } > secrets.env
 fi
+grep -q '^KC_DB_PASSWORD=' secrets.env || echo "KC_DB_PASSWORD=$(rnd)" >> secrets.env
 set -a; . ./secrets.env; set +a
 
+# 2b. Role + database RIÊNG cho Keycloak (tách khỏi DB nghiệp vụ hcos). Mật khẩu truyền qua biến môi trường, không qua tham số dòng lệnh.
+sudo -u postgres env KCPW="$KC_DB_PASSWORD" psql -X -q -v ON_ERROR_STOP=1 -d postgres <<'SQL'
+\getenv pw KCPW
+SELECT format('CREATE ROLE keycloak LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L', :'pw')
+  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'keycloak') \gexec
+SELECT format('ALTER ROLE keycloak PASSWORD %L', :'pw') \gexec
+SELECT 'CREATE DATABASE keycloak OWNER keycloak'
+  WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'keycloak') \gexec
+REVOKE ALL ON DATABASE keycloak FROM PUBLIC;
+SQL
+
 # 3. Realm import đã điền mật khẩu
-mkdir -p kc-import kc-h2
-# Keycloak chạy uid 1000 (khác user của bạn): thư mục import phải đọc được, thư mục H2 phải ghi được.
+mkdir -p kc-import
+# Keycloak chạy uid 1000 (khác user của bạn): thư mục import phải đọc được.
 chmod 755 kc-import
-sudo chown -R 1000:0 kc-h2
 sed -e "s/__PW_BACSI__/$PW_BACSI/" -e "s/__PW_DIEUDUONG__/$PW_DIEUDUONG/" -e "s/__PW_QUANTRI__/$PW_QUANTRI/" \
   hcos-realm.template.json > kc-import/hcos-realm.json
 chmod 644 kc-import/hcos-realm.json   # XOÁ file này sau khi Keycloak đã import (chứa mật khẩu demo)
@@ -36,3 +47,4 @@ HCOS_PORT=8080
 HCOS_HOST=127.0.0.1
 ENV
 echo "OK. Tiếp theo: docker compose --env-file secrets.env up -d"
+echo "Realm chỉ được import khi DB Keycloak chưa có realm 'hcos'. Sau khi import xong: rm -rf kc-import (chứa mật khẩu demo)."

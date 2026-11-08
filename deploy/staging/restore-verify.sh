@@ -7,7 +7,7 @@ set -euo pipefail
 DB="${PGDATABASE:-hcos}"; DIR="${BACKUP_DIR:-/var/backups/hcos}"; SCRATCH="hcos_restore_check_$$"
 STRICT=0; FILE=""
 for a in "$@"; do case "$a" in --strict-counts) STRICT=1;; *) FILE="$a";; esac; done
-[ -n "$FILE" ] || FILE=$(ls -1 "$DIR"/hcos-*.dump | sort | tail -n 1)
+[ -n "$FILE" ] || FILE=$(ls -1 "$DIR"/hcos-????????T??????Z.dump | sort | tail -n 1)
 BASE="${FILE%.dump}"
 FAIL=0; ok(){ echo "  ok    $*"; }; bad(){ echo "  FAIL  $*"; FAIL=1; }
 q(){ psql -X -q -tA -v ON_ERROR_STOP=1 "$@"; }
@@ -39,5 +39,17 @@ FORKS=$(q -d "$SCRATCH" -c "SELECT coalesce(sum(n-d),0) FROM (SELECT count(*) n,
 TRG=$(q -d "$SCRATCH" -c "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('person_merges_immutable','person_unmerges_immutable')")
 [ "$TRG" = 2 ] && ok "trigger bất biến của lịch sử merge/unmerge còn nguyên" || bad "thiếu trigger bất biến ($TRG/2)"
 if q -d "$SCRATCH" -c "DELETE FROM platform.audit_events" >/dev/null 2>&1; then bad "audit_events vẫn xoá được sau khôi phục"; else ok "audit_events vẫn append-only"; fi
+
+KCFILE="$BASE.keycloak.dump"
+if [ -f "$KCFILE" ]; then
+  KCS="${SCRATCH}_kc"
+  q -d postgres -c "CREATE DATABASE \"$KCS\""
+  if pg_restore --no-password -d "$KCS" --exit-on-error "$KCFILE"; then
+    R=$(q -d "$KCS" -c "SELECT count(*) FROM realm WHERE name='hcos'")
+    U=$(q -d "$KCS" -c "SELECT count(*) FROM user_entity")
+    [ "$R" = 1 ] && [ "$U" -ge 1 ] && ok "DB Keycloak khôi phục được (realm hcos, $U người dùng)" || bad "DB Keycloak thiếu realm/người dùng (realm=$R, users=$U)"
+  else bad "pg_restore DB Keycloak lỗi"; fi
+  psql -X -q -d postgres -c "DROP DATABASE IF EXISTS \"$KCS\"" >/dev/null 2>&1 || true
+fi
 
 [ "$FAIL" = 0 ] && echo "RESTORE VERIFY: PASS" || { echo "RESTORE VERIFY: FAIL"; exit 1; }

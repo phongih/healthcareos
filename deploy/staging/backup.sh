@@ -11,7 +11,15 @@ TS=$(date -u +%Y%m%dT%H%M%SZ); BASE="$DIR/hcos-$TS"
 pg_dump -Fc --no-password -d "$DB" -f "$BASE.dump"
 pg_dumpall --globals-only --no-role-passwords -d "$DB" > "$BASE.globals.sql" 2>/dev/null || pg_dumpall --globals-only --no-role-passwords > "$BASE.globals.sql"
 pg_restore --list "$BASE.dump" > /dev/null          # file đọc được, danh mục hợp lệ
-( cd "$DIR" && sha256sum "hcos-$TS.dump" "hcos-$TS.globals.sql" > "hcos-$TS.sha256" )
+FILES="hcos-$TS.dump hcos-$TS.globals.sql"
+# DB của Keycloak (người dùng, thông tin xác thực, OTP): sao lưu cùng bộ nếu tồn tại (KC_DB_NAME, mặc định keycloak).
+KCDB="${KC_DB_NAME:-keycloak}"
+if psql -X -q -tA --no-password -d postgres -c "SELECT 1 FROM pg_database WHERE datname='$KCDB'" | grep -q 1; then
+  pg_dump -Fc --no-password -d "$KCDB" -f "$BASE.keycloak.dump"
+  pg_restore --list "$BASE.keycloak.dump" > /dev/null
+  FILES="$FILES hcos-$TS.keycloak.dump"
+fi
+( cd "$DIR" && sha256sum $FILES > "hcos-$TS.sha256" )
 # Giữ KEEP bản gần nhất
-ls -1 "$DIR"/hcos-*.dump 2>/dev/null | sort | head -n -"$KEEP" | while read -r f; do b="${f%.dump}"; rm -f "$b.dump" "$b.globals.sql" "$b.sha256"; done
+ls -1 "$DIR"/hcos-????????T??????Z.dump 2>/dev/null | sort | head -n -"$KEEP" | while read -r f; do b="${f%.dump}"; rm -f "$b.dump" "$b.globals.sql" "$b.keycloak.dump" "$b.sha256"; done
 echo "backup ok: $BASE.dump ($(du -h "$BASE.dump" | cut -f1))"

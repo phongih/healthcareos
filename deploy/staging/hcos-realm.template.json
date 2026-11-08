@@ -21,11 +21,11 @@
   },
   "clients": [
     {
-      "clientId": "hcos-staging-cli",
+      "clientId": "hcos-web",
       "enabled": true,
       "publicClient": true,
-      "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
       "protocol": "openid-connect",
       "protocolMappers": [
         {
@@ -87,7 +87,19 @@
             "userinfo.token.claim": "false"
           }
         }
-      ]
+      ],
+      "name": "HealthcareOS web (authorization code + PKCE)",
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://smart.id.vn/callback",
+        "http://127.0.0.1:9999/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://smart.id.vn/"
+      }
     }
   ],
   "users": [
@@ -108,6 +120,9 @@
       ],
       "realmRoles": [
         "doctor"
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
       ]
     },
     {
@@ -127,6 +142,9 @@
       ],
       "realmRoles": [
         "clinic_staff"
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
       ]
     },
     {
@@ -146,7 +164,16 @@
       ],
       "realmRoles": [
         "clinic_admin"
+      ],
+      "requiredActions": [
+        "CONFIGURE_TOTP"
       ]
     }
-  ]
+  ],
+  "passwordPolicy": "length(12) and notUsername",
+  "eventsEnabled": true,
+  "eventsExpiration": 7776000,
+  "adminEventsEnabled": true,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000
 }
