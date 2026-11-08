@@ -1,0 +1,17 @@
+[Unit]
+Description=HCOS ops status endpoint (127.0.0.1:8090)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/lib/hcos/status-server.py
+User=nobody
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/hcos-status
+
+[Install]
+WantedBy=multi-user.target

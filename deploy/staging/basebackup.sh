@@ -12,4 +12,5 @@ trap 'rm -f "$enc" "$enc.part"' EXIT
 pg_basebackup -D - -Ft -X fetch -c fast --no-password | gzip -c | "$AGE" -R "$RECIPIENTS" -o "$enc.part"
 mv "$enc.part" "$enc"
 upload_verified "$enc" "gs://$BUCKET/$PREFIX/base/$TS.tar.gz.age"
+touch "$STATE/last_base_ok"   # healthcheck.sh dựa vào dấu này
 echo "basebackup ok: $TS ($(du -h "$enc" | cut -f1) mã hoá)"

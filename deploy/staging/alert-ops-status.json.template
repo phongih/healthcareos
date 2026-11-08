@@ -1,0 +1,30 @@
+{
+  "displayName": "HCOS ops status failing",
+  "documentation": {
+    "content": "smart.id.vn/opsstatus không trả 200: sao lưu/WAL archive/đĩa/dịch vụ có vấn đề hoặc cron healthcheck đã ngừng. Xem /var/lib/hcos-status/detail.txt trên VM (sudo cat), và journalctl -t hcos-health.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "ops status check failed",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"__CHECK_ID__\" AND resource.type=\"uptime_url\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_NEXT_OLDER",
+            "crossSeriesReducer": "REDUCE_COUNT_FALSE",
+            "groupByFields": ["resource.label.*"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 1,
+        "duration": "60s",
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "notificationChannels": ["__CHANNEL__"],
+  "alertStrategy": { "autoClose": "1800s" }
+}

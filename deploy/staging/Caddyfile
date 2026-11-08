@@ -14,6 +14,10 @@ smart.id.vn {
 	handle @api {
 		reverse_proxy 127.0.0.1:8080
 	}
+	# Trạng thái vận hành (chỉ OK/FAIL, không chi tiết) cho uptime check.
+	handle /opsstatus {
+		reverse_proxy 127.0.0.1:8090
+	}
 	handle {
 		respond "not found" 404
 	}
