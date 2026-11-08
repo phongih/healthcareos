@@ -4,6 +4,7 @@
 set -euo pipefail
 umask 077
 HERE="$(dirname "$(readlink -f "$0")")"; . "$HERE/pitr-common.sh"
+check_tools
 check_recipient
 mkdir -p "$STATE/base"
 TS=$(date -u +%Y%m%dT%H%M%SZ); enc="$STATE/base/$TS.tar.gz.age"

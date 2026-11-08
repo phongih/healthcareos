@@ -11,7 +11,8 @@ cd ~/healthcareos && git pull
 sudo install -d -m 755 /usr/local/lib/hcos
 sudo install -m 755 deploy/staging/{pitr-common,wal-archive,basebackup,wal-restore,pitr-restore}.sh /usr/local/lib/hcos/
 sudo chmod 644 /etc/hcos/backup.age.pub                       # khoá CÔNG KHAI: user postgres cần đọc
-echo 'BUCKET=hco-staging-backups-513303' | sudo tee /etc/hcos/pitr.env >/dev/null
+# PostgreSQL chạy với PATH tối thiểu: dùng đường dẫn tuyệt đối (gcloud cài bằng snap ở /snap/bin; kiểm tra: command -v gcloud age)
+printf 'BUCKET=hco-staging-backups-513303\nGCLOUD_BIN=/snap/bin/gcloud\nAGE_BIN=/usr/bin/age\n' | sudo tee /etc/hcos/pitr.env >/dev/null
 ```
 Kiểm tra trước khi bật (đẩy một file thử bằng đúng user và đường đi sẽ dùng thật; object `ZZ_PREFLIGHT_*` sẽ ở lại trên bucket vì VM không có quyền xoá):
 ```
@@ -19,7 +20,7 @@ sudo -u postgres bash -c 'cd /tmp && echo preflight > pf.txt && /usr/local/lib/h
 sudo -u postgres psql -tA -c "show data_directory" -c "show wal_level" -c "show archive_mode"
 sudo grep -n -i 'replication' /etc/postgresql/16/main/pg_hba.conf
 ```
-Phải thấy `PREFLIGHT OK`, `wal_level=replica` (hoặc cao hơn), và một dòng `local replication all peer` (nếu thiếu, `pg_basebackup` sẽ bị từ chối). Chỉ khi đạt mới bật:
+Lưu ý: bước này chạy qua `sudo` nên có PATH đầy đủ và KHÔNG chứng minh dịch vụ PostgreSQL tìm được `gcloud`; vì vậy `pitr.env` dùng đường dẫn tuyệt đối. Sau khi bật, luôn kiểm tra `pg_stat_archiver` (đã gặp lỗi này thật ở lần bật đầu trên VM). Phải thấy `PREFLIGHT OK`, `wal_level=replica` (hoặc cao hơn), và một dòng `local replication all peer` (nếu thiếu, `pg_basebackup` sẽ bị từ chối). Chỉ khi đạt mới bật:
 ```
 sudo tee /etc/postgresql/16/main/conf.d/hcos-archive.conf >/dev/null <<'CONF'
 archive_mode = on

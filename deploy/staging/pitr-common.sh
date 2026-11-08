@@ -10,10 +10,16 @@ check_recipient() {
   if grep -q 'AGE-SECRET-KEY' "$RECIPIENTS"; then echo "$RECIPIENTS chứa KHOÁ RIÊNG: xoá ngay" >&2; return 2; fi
   grep -Eq '^age1[0-9a-z]{50,}$' "$RECIPIENTS" || { echo "$RECIPIENTS không chứa khoá công khai age hợp lệ" >&2; return 2; }
 }
+# Dịch vụ PostgreSQL chạy với PATH tối thiểu (không có /snap/bin): phải tìm được gcloud/age ngay, báo lỗi đúng nguyên nhân.
+check_tools() {
+  command -v "$GCLOUD" >/dev/null 2>&1 || { echo "không tìm thấy gcloud ('$GCLOUD'): đặt GCLOUD_BIN=<đường dẫn tuyệt đối> trong /etc/hcos/pitr.env (snap: /snap/bin/gcloud)" >&2; return 2; }
+  command -v "$AGE" >/dev/null 2>&1 || { echo "không tìm thấy age ('$AGE'): đặt AGE_BIN=<đường dẫn tuyệt đối> trong /etc/hcos/pitr.env" >&2; return 2; }
+}
 # upload_verified <file đã mã hoá> <gs://object>: không ghi đè; thành công chỉ khi MD5 trên GCS khớp.
 upload_verified() {
   local enc="$1" obj="$2" want got
-  "$GCLOUD" storage cp --no-clobber "$enc" "$obj" >/dev/null 2>&1 || true
+  "$GCLOUD" storage cp --no-clobber "$enc" "$obj" >/dev/null 2>"${TMPDIR:-/tmp}/hcos-cp.$$" || { echo "gcloud cp lỗi:" >&2; tail -3 "${TMPDIR:-/tmp}/hcos-cp.$$" >&2; }
+  rm -f "${TMPDIR:-/tmp}/hcos-cp.$$"
   want=$(openssl md5 -binary "$enc" | base64)
   got=$("$GCLOUD" storage objects describe "$obj" --format='value(md5_hash)' 2>/dev/null || true)
   [ "$want" = "$got" ] || { echo "KHÔNG xác minh được $obj (md5 cục bộ=$want, trên GCS=${got:-<không có>})" >&2; return 1; }

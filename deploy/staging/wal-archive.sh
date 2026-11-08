@@ -7,6 +7,7 @@ set -euo pipefail
 umask 077
 HERE="$(dirname "$(readlink -f "$0")")"; . "$HERE/pitr-common.sh"
 P="${1:?cần %p}"; F="${2:?cần %f}"
+check_tools
 check_recipient
 mkdir -p "$STATE/wal" "$STATE/done"
 enc="$STATE/wal/$F.gz.age"; obj="gs://$BUCKET/$PREFIX/wal/$F.gz.age"
