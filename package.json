@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "npm run test:unit",
-    "test:unit": "vitest run tests/security tests/clinical tests/http tests/registry tests/config",
+    "test:unit": "vitest run tests/security tests/clinical tests/http tests/registry tests/config tests/pharmacy",
     "test:integration": "vitest run tests/integration",
     "db:migrate": "node scripts/migrate.mjs",
     "gate:g0g1": "npm run typecheck && npm run test:unit && npm run test:integration",
