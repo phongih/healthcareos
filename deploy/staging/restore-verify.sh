@@ -20,7 +20,7 @@ q -d postgres -c "CREATE DATABASE \"$SCRATCH\""
 pg_restore --no-password -d "$SCRATCH" --exit-on-error "$FILE" && ok "pg_restore hoàn tất" || bad "pg_restore lỗi"
 
 TABLES=$(q -d "$SCRATCH" -c "SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-  WHERE c.relkind='r' AND n.nspname IN ('iam','patient','platform','clinical') ORDER BY 1")
+  WHERE c.relkind='r' AND n.nspname IN ('iam','patient','platform','clinical','pharmacy') ORDER BY 1")
 [ -n "$TABLES" ] && ok "$(echo "$TABLES" | wc -l) bảng nghiệp vụ có mặt" || bad "không có bảng nghiệp vụ"
 TOTAL=0
 for t in $TABLES; do
@@ -29,7 +29,7 @@ for t in $TABLES; do
 done
 ok "tổng số dòng đã khôi phục: $TOTAL"; [ "$STRICT" = 1 ] && ok "số dòng khớp nguồn (strict)"
 
-NOFORCE=$(q -d "$SCRATCH" -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='r' AND n.nspname IN ('iam','patient','clinical') AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")
+NOFORCE=$(q -d "$SCRATCH" -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='r' AND n.nspname IN ('iam','patient','clinical','pharmacy') AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")
 [ "$NOFORCE" = 0 ] && ok "mọi bảng iam/patient/clinical còn ENABLE+FORCE RLS" || bad "$NOFORCE bảng mất RLS/FORCE RLS sau khôi phục"
 
 BROKEN=$(q -d "$SCRATCH" -c "SELECT count(*) FROM platform.audit_events e WHERE e.prev_hash <> '\\x00'::bytea AND NOT EXISTS (SELECT 1 FROM platform.audit_events p WHERE p.tenant_id=e.tenant_id AND p.event_hash=e.prev_hash)")
