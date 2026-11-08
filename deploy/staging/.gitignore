@@ -2,3 +2,5 @@ secrets.env
 hcos.env
 kc-import/
 kc-h2/
+__pycache__/
+*.pyc
