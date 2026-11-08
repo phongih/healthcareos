@@ -46,14 +46,30 @@ Quay lại nếu lỗi: `sudo rm /etc/postgresql/16/main/conf.d/hcos-archive.con
 - Vòng đời bucket (90 ngày) áp dụng chung cho `wal/` và `base/`: bản sao lưu vật lý nào còn thì WAL tương ứng còn (cùng tuổi). Không đặt vòng đời khác nhau cho hai tiền tố.
 - Thư mục `/var/lib/postgresql/hcos-pitr/done/` chứa MD5 đã xác minh của từng đoạn (rất nhỏ); cần để gọi lại an toàn. Mất thư mục này thì các đoạn đã đẩy sẽ báo lỗi khi bị gọi lại (không ghi đè): xử lý tay.
 
-## Khôi phục theo thời điểm (làm trên máy có khoá riêng, KHÔNG ghi đè cluster đang chạy)
+## Diễn tập khôi phục (Cloud Shell, không đụng cluster đang chạy)
+Cần khoá RIÊNG age: đưa vào `~/key.txt` bằng chức năng Upload của Cloud Shell hoặc `cat > ~/key.txt` rồi dán và Ctrl-D; KHÔNG `cat`/`echo` nội dung, KHÔNG dán vào chat. Xong việc: `shred -u ~/key.txt`.
 ```
-AGE_IDENTITY=~/key.txt BUCKET=hco-staging-backups-513303 DEST=/var/lib/postgresql/16/restore \
-TARGET_TIME='2026-11-08 10:30:00+00' ./pitr-restore.sh       # chọn bản base mới nhất ≤ thời điểm, dựng data dir
-pg_ctl -D <DEST> -o '-p 55433 -c listen_addresses=""' start    # phát lại WAL tới TARGET_TIME rồi dừng ở trạng thái pause
-psql -p 55433 ...                                              # kiểm tra dữ liệu; đúng thì: SELECT pg_wal_replay_resume();
+# 1. Cài (một lần mỗi phiên Cloud Shell)
+sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-common age
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y && sudo apt-get install -y -qq postgresql-16
+# 2. Lấy script từ VM (đã cài ở /usr/local/lib/hcos)
+mkdir -p ~/hcos && gcloud compute scp --tunnel-through-iap --zone=asia-southeast1-c \
+  healthcareos:/usr/local/lib/hcos/pitr-common.sh healthcareos:/usr/local/lib/hcos/wal-restore.sh healthcareos:/usr/local/lib/hcos/pitr-restore.sh ~/hcos/
+# 3. Khoá riêng phải khớp khoá công khai trên VM (hai dòng này phải GIỐNG HỆT; khoá công khai không phải bí mật)
+chmod 600 ~/key.txt; age-keygen -y ~/key.txt            # so với: ssh VM -> cat /etc/hcos/backup.age.pub
+# 4. Dựng lại data dir tới một thời điểm đã biết
+export BUCKET=hco-staging-backups-513303 AGE_IDENTITY=$HOME/key.txt PATH=/usr/lib/postgresql/16/bin:$PATH
+cd ~/hcos && chmod +x *.sh
+time DEST=$HOME/restore TARGET_TIME='2026-11-08 07:00:00+00' ACTION=pause ./pitr-restore.sh
+# 5. Khởi động (cổng riêng, không nghe mạng) và đợi phát lại WAL tới thời điểm đích
+pg_ctl -D ~/restore -w -t 300 -o "-p 55433 -c listen_addresses='' -c unix_socket_directories=/tmp" -l ~/restore.log start
+psql -h /tmp -p 55433 -U postgres -d hcos -tA -c "SELECT pg_is_in_recovery(), pg_last_xact_replay_timestamp()"
+psql -h /tmp -p 55433 -U postgres -d hcos -tA -c "SELECT count(*), max(occurred_at) FROM platform.audit_events"
+# 6. Dọn
+pg_ctl -D ~/restore -m fast stop; rm -rf ~/restore ~/restore.log; shred -u ~/key.txt
 ```
-Trên máy mới: cài PostgreSQL 16 và age, `gcloud auth` có quyền đọc bucket, tải 5 script, rồi như trên. Thời điểm trong `TARGET_TIME` phải sau lần sao lưu vật lý đầu tiên.
+Kết quả đúng: `pg_is_in_recovery` = `t` (đang tạm dừng ở thời điểm đích), `max(occurred_at)` KHÔNG muộn hơn thời điểm đích, và `count(*)` bằng số dòng cùng điều kiện trên DB gốc (`SELECT count(*) FROM platform.audit_events WHERE occurred_at <= '<thời điểm>'`). Ghi lại thời gian `time` của bước 4–5: đó là số đo RTO đầu tiên.
+Muốn dùng bản khôi phục thật sự: `SELECT pg_wal_replay_resume();` (promote) rồi `pg_dump`/chuyển. Trên máy mới: cài PostgreSQL 16, tải script, và các bước như trên; cấu hình `postgresql.conf`/`pg_hba.conf` được tạo tối thiểu vì bản Debian/Ubuntu giữ chúng ngoài thư mục dữ liệu.
 
 ## Đã kiểm chứng / chưa
 - `pitr-selftest.sh` (cluster tạm + PostgreSQL 16 thật + age thật + kho GCS GIẢ là thư mục): dữ liệu khôi phục đúng thời điểm (có nhóm A, B; không có C); không có lần archive lỗi; bản sao lưu và WAL là ciphertext. Kiểm tra phủ định: không đặt thời điểm thì có thêm C. Kiểm tra gọi lặp lại: chấp nhận đúng object đã xác minh, từ chối object bị đổi nội dung.

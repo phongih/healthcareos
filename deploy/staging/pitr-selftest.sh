@@ -38,8 +38,10 @@ archive_command = 'env FAKE_GCS=$FAKE_GCS BUCKET=b GCS_PREFIX=pitr STATE_DIR=$T/
 wal_level = replica
 max_wal_senders = 3
 C
-echo "local replication all trust" >> "$T/pg/pg_hba.conf"
-pg_ctl -D "$T/pg" -w -l "$T/pg.log" start >/dev/null
+echo "local all all trust" >> "$T/pg/pg_hba.conf"; echo "local replication all trust" >> "$T/pg/pg_hba.conf"
+# Mô phỏng Debian/Ubuntu: cấu hình NẰM NGOÀI thư mục dữ liệu (nên pg_basebackup không chép chúng).
+mkdir -p "$T/conf"; mv "$T/pg/postgresql.conf" "$T/pg/pg_hba.conf" "$T/pg/pg_ident.conf" "$T/conf/"
+pg_ctl -D "$T/pg" -w -l "$T/pg.log" -o "-c config_file=$T/conf/postgresql.conf -c hba_file=$T/conf/pg_hba.conf -c ident_file=$T/conf/pg_ident.conf" start >/dev/null
 psql -X -q -c "CREATE TABLE t(phase text, n int)" -c "INSERT INTO t SELECT 'A', g FROM generate_series(1,100) g"
 "$HERE/basebackup.sh" && ok "basebackup chạy và xác minh được" || bad "basebackup lỗi"
 psql -X -q -c "INSERT INTO t SELECT 'B', g FROM generate_series(1,50) g" -c "SELECT pg_switch_wal()" >/dev/null
@@ -55,6 +57,7 @@ N=$(ls "$T/gcs/pitr/wal" | wc -l); [ "$N" -ge 2 ] && ok "$N đoạn WAL đã mã
 grep -aq 'PGDMP\|PostgreSQL' "$T/gcs/pitr/base/"*.age 2>/dev/null && bad "bản sao lưu KHÔNG được mã hoá" || ok "bản sao lưu/WAL là ciphertext (không thấy văn bản gốc)"
 # Khôi phục tới TARGET (giữa B và C)
 AGE_IDENTITY="$T/key.txt" DEST="$T/restore" TARGET_TIME="$TARGET" ACTION=promote "$HERE/pitr-restore.sh" >/dev/null && ok "pitr-restore dựng data dir" || bad "pitr-restore lỗi"
+[ -s "$T/restore/pg_hba.conf" ] && ok "bản khôi phục có cấu hình tối thiểu dù nguồn để cấu hình ngoài data dir" || bad "thiếu pg_hba.conf trong bản khôi phục"
 pg_ctl -D "$T/restore" -w -t 60 -o "-p $((PORT+1)) -c listen_addresses='' -c unix_socket_directories='$T'" -l "$T/restore.log" start >/dev/null 2>&1 || { bad "PostgreSQL khôi phục không khởi động"; tail -20 "$T/restore.log"; }
 export PGPORT=$((PORT+1))
 for i in $(seq 1 30); do [ "$(psql -X -tA -c "SELECT pg_is_in_recovery()" 2>/dev/null)" = f ] && break; sleep 1; done

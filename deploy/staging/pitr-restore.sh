@@ -23,6 +23,11 @@ tmp=$(mktemp "${TMPDIR:-/tmp}/base.XXXXXX"); trap 'rm -f "$tmp"' EXIT
   [ -n "$TARGET" ] && { echo "recovery_target_time = '$TARGET'"; echo "recovery_target_action = '$ACTION'"; }
   echo "archive_mode = off"
 } >> "$DEST/postgresql.auto.conf"
+# Debian/Ubuntu giữ postgresql.conf, pg_hba.conf, pg_ident.conf NGOÀI thư mục dữ liệu (/etc/postgresql/..) nên pg_basebackup không chép chúng.
+# Bản khôi phục thiếu các file này sẽ không khởi động: tạo bản tối thiểu, an toàn (chỉ socket cục bộ, không mạng).
+[ -e "$DEST/postgresql.conf" ] || { echo "# tối thiểu cho bản khôi phục (cấu hình gốc nằm ngoài thư mục dữ liệu)" > "$DEST/postgresql.conf"; echo "tạo $DEST/postgresql.conf tối thiểu"; }
+[ -e "$DEST/pg_hba.conf" ] || { echo "local all all trust" > "$DEST/pg_hba.conf"; echo "tạo $DEST/pg_hba.conf (chỉ socket cục bộ)"; }
+[ -e "$DEST/pg_ident.conf" ] || : > "$DEST/pg_ident.conf"
 touch "$DEST/recovery.signal"
 echo "xong: $DEST. Khởi động thử (cổng khác, không nghe mạng):"
-echo "  pg_ctl -D $DEST -o '-p 55433 -c listen_addresses=\"\"' start"
+echo "  pg_ctl -D $DEST -o \"-p 55433 -c listen_addresses='' -c unix_socket_directories=/tmp\" start"
