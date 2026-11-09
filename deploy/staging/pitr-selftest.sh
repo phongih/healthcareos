@@ -25,7 +25,8 @@ case "$1" in
 esac
 G
 chmod +x "$T/gcloud"
-age-keygen -o "$T/key.txt" 2>/dev/null; grep -o 'age1[0-9a-z]*' "$T/key.txt" | head -1 > "$T/pub"
+age-keygen -o "$T/key.txt" 2>/dev/null; age-keygen -o "$T/key2.txt" 2>/dev/null
+{ grep -o 'age1[0-9a-z]*' "$T/key.txt" | head -1; grep -o 'age1[0-9a-z]*' "$T/key2.txt" | head -1; } > "$T/pub"   # hai khoá độc lập (bắt buộc >= 2)
 export FAKE_GCS="$T/gcs" BUCKET=b GCS_PREFIX=pitr STATE_DIR="$T/st" AGE_RECIPIENTS="$T/pub" GCLOUD_BIN="$T/gcloud" PITR_ENV=/dev/null
 export PGHOST="$T" PGPORT=$PORT PGDATABASE=postgres
 initdb -D "$T/pg" -A trust >/dev/null
@@ -55,6 +56,16 @@ A=$(psql -X -tA -c "SELECT archived_count||'/'||failed_count FROM pg_stat_archiv
 [ "${A#*/}" = 0 ] && ok "không có lần archive lỗi" || bad "có lần archive lỗi ($A)"
 N=$(ls "$T/gcs/pitr/wal" | wc -l); [ "$N" -ge 2 ] && ok "$N đoạn WAL đã mã hoá trên kho giả" || bad "quá ít đoạn WAL ($N)"
 grep -aq 'PGDMP\|PostgreSQL' "$T/gcs/pitr/base/"*.age 2>/dev/null && bad "bản sao lưu KHÔNG được mã hoá" || ok "bản sao lưu/WAL là ciphertext (không thấy văn bản gốc)"
+# Cả hai khoá độc lập đều giải mã được cùng một bản sao lưu (mất một khoá vẫn khôi phục được)
+BF=$(ls "$T"/gcs/pitr/base/*.age | head -1)
+for k in key key2; do
+  LIST=$(age -d -i "$T/$k.txt" "$BF" 2>/dev/null | gunzip -c 2>/dev/null | tar -t 2>/dev/null || true)   # lấy hết rồi mới grep (grep -q + pipefail sẽ bắn SIGPIPE)
+  case "$LIST" in *PG_VERSION*) ok "khoá $k giải mã được bản sao lưu vật lý";; *) bad "khoá $k KHÔNG giải mã được";; esac
+done
+# Khoá THỨ BA (không có trong danh sách người nhận) phải KHÔNG giải mã được
+age-keygen -o "$T/key3.txt" 2>/dev/null
+LIST3=$(age -d -i "$T/key3.txt" "$BF" 2>/dev/null | gunzip -c 2>/dev/null | tar -t 2>/dev/null || true)
+[ -z "$LIST3" ] && ok "khoá lạ không giải mã được (đúng)" || bad "khoá lạ giải mã được bản sao lưu!"
 # Khôi phục tới TARGET (giữa B và C)
 AGE_IDENTITY="$T/key.txt" DEST="$T/restore" TARGET_TIME="$TARGET" ACTION=promote "$HERE/pitr-restore.sh" >/dev/null && ok "pitr-restore dựng data dir" || bad "pitr-restore lỗi"
 [ -s "$T/restore/pg_hba.conf" ] && ok "bản khôi phục có cấu hình tối thiểu dù nguồn để cấu hình ngoài data dir" || bad "thiếu pg_hba.conf trong bản khôi phục"

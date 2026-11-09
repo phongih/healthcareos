@@ -36,6 +36,11 @@ if [ -e "$BACKUP_LOG" ]; then
   last=$(grep -E 'RESTORE VERIFY:' "$BACKUP_LOG" | tail -1); case "$last" in *PASS*) ;; *) R+=("restore-verify gần nhất không PASS");; esac
 else R+=("thiếu log sao lưu"); fi
 
+# 3b. Khoá người nhận (mã hoá sao lưu): cần >= 2 khoá khác nhau
+RECIP="${RECIPIENTS:-/etc/hcos/backup.age.pub}"
+nk=$(grep -E '^age1[0-9a-z]{50,}$' "$RECIP" 2>/dev/null | sort -u | wc -l); [ "$nk" -ge "${MIN_RECIPIENTS:-2}" ] || R+=("danh sách khoá mã hoá sao lưu chỉ có $nk khoá khác nhau (cần >= ${MIN_RECIPIENTS:-2})")
+grep -q 'AGE-SECRET-KEY' "$RECIP" 2>/dev/null && R+=("$RECIP chứa KHOÁ RIÊNG")
+
 # 4. Dịch vụ cục bộ
 curl -fsS -m 5 -o /dev/null "$API_URL" 2>/dev/null || R+=("API /readyz không đạt")
 curl -fsS -m 5 -o /dev/null "$KC_URL" 2>/dev/null || R+=("Keycloak không trả lời")

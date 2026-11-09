@@ -71,6 +71,17 @@ pg_ctl -D ~/restore -m fast stop; rm -rf ~/restore ~/restore.log; shred -u ~/key
 Kết quả đúng: `pg_is_in_recovery` = `t` (đang tạm dừng ở thời điểm đích), `max(occurred_at)` KHÔNG muộn hơn thời điểm đích, và `count(*)` bằng số dòng cùng điều kiện trên DB gốc (`SELECT count(*) FROM platform.audit_events WHERE occurred_at <= '<thời điểm>'`). Ghi lại thời gian `time` của bước 4–5: đó là số đo RTO đầu tiên.
 Muốn dùng bản khôi phục thật sự: `SELECT pg_wal_replay_resume();` (promote) rồi `pg_dump`/chuyển. Trên máy mới: cài PostgreSQL 16, tải script, và các bước như trên; cấu hình `postgresql.conf`/`pg_hba.conf` được tạo tối thiểu vì bản Debian/Ubuntu giữ chúng ngoài thư mục dữ liệu.
 
+## Quản lý khoá mã hoá (bài học từ buổi diễn tập đầu tiên)
+- Danh sách người nhận `/etc/hcos/backup.age.pub` PHẢI có **ít nhất hai khoá công khai khác nhau**, giữ ở hai nơi tách biệt (hai thiết bị, tốt nhất hai người). Các script (`wal-archive`, `basebackup`, `backup-offsite`) từ chối chạy khi ít hơn hai; `healthcheck.sh` cảnh báo.
+- **Không thay khoá, chỉ thêm.** Mỗi bản sao lưu chỉ mở được bằng khoá có trong danh sách lúc nó được mã hoá. Thay khoá trên VM nghĩa là mọi thứ mã hoá trước đó cần khoá cũ: giữ khoá riêng cũ cho tới khi mọi bản sao lưu chỉ dành cho nó đã hết hạn. Bản sao lưu logic được mã hoá lúc ĐẨY ngoài máy (có thể muộn hơn lúc tạo); WAL và bản vật lý được mã hoá ngay lúc tạo.
+- Khoá riêng KHÔNG ở trên VM. Chỉ đưa lên một máy tạm khi diễn tập, rồi `shred -u`. Đặt tên file theo khoá công khai thực sự (kiểm tra bằng `age-keygen -y <file>`), không theo trí nhớ: tên `key_s508.txt` từng chứa một khoá khác.
+- Ghi sổ: thời điểm đổi danh sách người nhận (`ls -l --time-style=full-iso /etc/hcos/backup.age.pub`), khoá công khai, nơi giữ khoá riêng. Kiểm tra độ phủ: `BUCKET=... ./key-coverage.sh <khoá riêng>`.
+- Thêm khoá thứ hai (ví dụ): tạo cặp khoá ở nơi KHÁC (không phải nơi giữ khoá thứ nhất), cất khoá riêng, chỉ đưa khoá CÔNG KHAI lên VM: `echo 'age1…' | sudo tee -a /etc/hcos/backup.age.pub`, rồi chạy `basebackup.sh` ngay để có bản nền mã hoá cho cả hai khoá. Thứ tự bắt buộc: thêm khoá TRƯỚC, cài script mới SAU (script mới từ chối chạy với một khoá, và archive WAL sẽ lỗi).
+
+## Kết quả diễn tập (2026-11-09, GCS thật, Cloud Shell)
+Khôi phục tới 2026-11-09 01:20:34 UTC từ bản nền `20261108T152932Z` + WAL tới `…46`: có dòng đánh dấu A (01:20:14), KHÔNG có dòng B (01:20:54); audit 22 sự kiện khớp DB gốc. Dựng data dir ≈4 s, khởi động + phát lại WAL ≈12–15 s (DB vài MB: không đại diện cho RTO thật). Bản Debian/Ubuntu thiếu `postgresql.conf`/`pg_hba.conf` nên `pitr-restore.sh` tạo bản tối thiểu (đã xác nhận trong buổi diễn tập).
+Phát hiện: mọi thứ mã hoá trước 2026-11-08 13:52:26 UTC (bản vật lý `042844Z`, `103601Z`, WAL `03`–`40`, các bản logic cũ) không giải mã được vì khoá cũ không còn: chỉ khôi phục được từ 15:29:32 UTC ngày 8 trở đi.
+
 ## Đã kiểm chứng / chưa
 - `pitr-selftest.sh` (cluster tạm + PostgreSQL 16 thật + age thật + kho GCS GIẢ là thư mục): dữ liệu khôi phục đúng thời điểm (có nhóm A, B; không có C); không có lần archive lỗi; bản sao lưu và WAL là ciphertext. Kiểm tra phủ định: không đặt thời điểm thì có thêm C. Kiểm tra gọi lặp lại: chấp nhận đúng object đã xác minh, từ chối object bị đổi nội dung.
 - **Chưa kiểm chứng**: `gcloud` và GCS thật (lần chạy đầu trên VM là bằng chứng đầu tiên), một diễn tập khôi phục sự cố thật trên máy mới, thời gian khôi phục với dữ liệu lớn (bản sao lưu hiện ghi qua file tạm, chưa phát trực tiếp), và hành vi khi chuyển timeline nhiều lần.

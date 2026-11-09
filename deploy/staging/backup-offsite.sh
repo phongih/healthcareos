@@ -12,15 +12,18 @@ RECIPIENTS="${AGE_RECIPIENTS:-/etc/hcos/backup.age.pub}"
 STATE="${STATE_DIR:-/var/lib/hcos-backup-offsite}"
 AGE="${AGE_BIN:-age}"; GCLOUD="${GCLOUD_BIN:-gcloud}"
 PREFIX="${GCS_PREFIX:-hcos}"
-[ -s "$RECIPIENTS" ] || { echo "thiếu khoá công khai age: $RECIPIENTS" >&2; exit 2; }
-# Khoá công khai age hợp lệ có dạng age1<58 ký tự a-z0-9>. Từ chối khoá giữ chỗ ("age1...") và KHOÁ RIÊNG (không bao giờ được nằm trên VM).
-if grep -q 'AGE-SECRET-KEY' "$RECIPIENTS"; then echo "$RECIPIENTS chứa KHOÁ RIÊNG: xoá ngay và dùng khoá công khai (age1...)" >&2; exit 2; fi
-grep -Eq '^age1[0-9a-z]{50,}$' "$RECIPIENTS" || { echo "$RECIPIENTS không chứa khoá công khai age hợp lệ (dạng age1xxxx…, ~62 ký tự)" >&2; exit 2; }
+# Danh sách người nhận: tối thiểu MIN_RECIPIENTS (mặc định 2) khoá công khai age khác nhau; từ chối khoá riêng và dòng lạ.
+[ -s "$RECIPIENTS" ] || { echo "thiếu danh sách khoá công khai age: $RECIPIENTS" >&2; exit 2; }
+if grep -q 'AGE-SECRET-KEY' "$RECIPIENTS"; then echo "$RECIPIENTS chứa KHOÁ RIÊNG (không bao giờ được nằm trên VM): xoá ngay" >&2; exit 2; fi
+if grep -Ev '^(age1[0-9a-z]{50,}|#.*|[[:space:]]*)$' "$RECIPIENTS" | grep -q .; then echo "$RECIPIENTS có dòng không hợp lệ" >&2; exit 2; fi
+n=$(grep -E '^age1[0-9a-z]{50,}$' "$RECIPIENTS" | sort -u | wc -l)
+[ "$n" -ge "${MIN_RECIPIENTS:-2}" ] || { echo "$RECIPIENTS có $n khoá khác nhau; cần ít nhất ${MIN_RECIPIENTS:-2}" >&2; exit 2; }
 mkdir -p "$STATE/pending"   # file đã mã hoá chờ xác minh: GIỮ NGUYÊN giữa các lần thử lại (age mã hoá không tất định)
 touch "$STATE/uploaded.list"
 fail=0; n=0
 shopt -s nullglob
-for base in $(ls -1 "$DIR"/hcos-????????T??????Z.dump 2>/dev/null | sort | sed 's/\.dump$//'); do
+# find (không dùng glob trần): với nullglob, mẫu không khớp biến mất và `ls` sẽ liệt kê thư mục hiện tại như thể là các bản sao lưu.
+for base in $(find "$DIR" -maxdepth 1 -type f -name 'hcos-????????T??????Z.dump' 2>/dev/null | sort | sed 's/\.dump$//'); do
   b=$(basename "$base")
   if grep -qx "$b" "$STATE/uploaded.list"; then continue; fi
   # Bản sao lưu phải đủ bộ và checksum đúng trước khi mã hoá.
