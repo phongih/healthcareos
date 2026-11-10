@@ -66,6 +66,7 @@ describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
     const recordedMovements: StockMovement[] = [];
 
     const mockRepo: Partial<PharmacyRepository> = {
+      appendAudit: async () => {},
       findStockLocation: async (id) => ({
         locationId: id,
         tenantId: dummyCtx.tenantId,
@@ -154,6 +155,7 @@ describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
 
     const updatedBalances: Array<{ id: string; qty: number }> = [];
     const mockRepo: Partial<PharmacyRepository> = {
+      appendAudit: async () => {},
       findStockLocation: async (id) => ({
         locationId: id,
         tenantId: dummyCtx.tenantId,
@@ -230,6 +232,7 @@ describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
     ];
 
     const mockRepo: Partial<PharmacyRepository> = {
+      appendAudit: async () => {},
       findStockLocation: async (id) => ({
         locationId: id,
         tenantId: dummyCtx.tenantId,
