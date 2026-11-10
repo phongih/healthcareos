@@ -5,9 +5,13 @@
 # Backup chứa dữ liệu bệnh nhân khi dùng thật: thư mục chỉ chủ sở hữu đọc được; đồng thời PHẢI mã hoá khi sao chép ra ngoài máy.
 set -euo pipefail
 umask 077
+# Chạy bằng user postgres (root không có vai trò trong PostgreSQL: pg_dump sẽ lỗi sau khi đã tạo file rỗng).
+[ "$(id -u)" != 0 ] || { echo "không chạy bằng root: sudo -u postgres env PGDATABASE=hcos $0" >&2; exit 2; }
 DB="${PGDATABASE:-hcos}"; DIR="${BACKUP_DIR:-/var/backups/hcos}"; KEEP="${KEEP:-7}"
 mkdir -p "$DIR"; chmod 700 "$DIR"
 TS=$(date -u +%Y%m%dT%H%M%SZ); BASE="$DIR/hcos-$TS"
+# Lỗi giữa chừng thì xoá mảnh vụn của CHÍNH lần chạy này (không để lại .dump rỗng/thiếu .sha256 làm hỏng đường đẩy ngoài máy).
+trap 'rc=$?; [ "$rc" -eq 0 ] || rm -f "$BASE.dump" "$BASE.globals.sql" "$BASE.keycloak.dump" "$BASE.sha256"' EXIT
 pg_dump -Fc --no-password -d "$DB" -f "$BASE.dump"
 pg_dumpall --globals-only --no-role-passwords -d "$DB" > "$BASE.globals.sql" 2>/dev/null || pg_dumpall --globals-only --no-role-passwords > "$BASE.globals.sql"
 pg_restore --list "$BASE.dump" > /dev/null          # file đọc được, danh mục hợp lệ
