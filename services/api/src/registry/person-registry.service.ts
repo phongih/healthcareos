@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import {
   asPersonId,
   asPatientId,
+  type AccessPolicyId,
   type OrganizationId,
   TenantIsolationError,
   VersionConflictError,
@@ -65,12 +66,24 @@ import {
   type UnmergeBlocker,
 } from '../../../../packages/domain/src/person-registry';
 import {
+  ACCESS_POLICY_CATALOG,
+  buildGrants,
+  decideAccess,
+  isMembershipActive,
+  type AccessDecision,
+  type AccessGrant,
+  type AccessPolicy,
+  type PolicyAction,
+} from '../../../../packages/security/src/access-policy';
+import {
+  ACCESS_POLICY_COLS,
   ClinicalError,
   IDENTIFIER_COLS,
   MEMBERSHIP_COLS,
   PATIENT_COLS,
   PERSON_COLS,
   USER_COLS,
+  mapAccessPolicy,
   mapIdentifier,
   mapMembership,
   mapPatient,
@@ -123,6 +136,8 @@ export interface TargetRestore {
 export interface RegistryRepository {
   findUserBySubject(subject: string): Promise<User | null>;
   listMemberships(userId: UserId): Promise<Membership[]>;
+  /** Policy theo id trong tenant hiện tại (migration 007). */
+  findAccessPolicies(ids: readonly AccessPolicyId[]): Promise<AccessPolicy[]>;
   findPerson(personId: PersonId): Promise<Person | null>;
   insertPerson(p: Person, keys: PersonKeys): Promise<void>;
   findCandidates(q: CandidateQuery): Promise<Person[]>;
@@ -180,7 +195,10 @@ const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
 interface Principal {
   readonly user: User;
   readonly roles: ReadonlySet<Role>;
+  readonly grants: readonly AccessGrant[];
 }
+
+type AllowedDecision = Extract<AccessDecision, { allowed: true }>;
 
 interface AuditMeta {
   readonly action: string;
@@ -213,6 +231,8 @@ export type PersonView = {
   readonly identifiers: readonly Identifier[];
   /** Có giá trị khi ID yêu cầu là person đã bị merge và kết quả là person đích. */
   readonly redirectedFrom: PersonId | null;
+  /** Trường bị access policy che (rỗng = đầy đủ). */
+  readonly redacted?: readonly string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -410,14 +430,28 @@ export class PersonRegistryService {
 
       const principal = await this.principal(repo, ctx);
       const isSelf = principal.user.personId !== null && (principal.user.personId === canonical.personId || principal.user.personId === requested.personId);
-      if (!isSelf) this.authorize(principal, 'person:search');
+      const decision = isSelf ? null : this.authorize(principal, 'person:read');
+      const hidden = decision?.hiddenFields ?? new Set<string>();
 
-      const identifiers = (await repo.listIdentifiers(canonical.personId)).filter((i) => i.status !== 'entered_in_error');
+      const identifiers = hidden.has('identifiers')
+        ? []
+        : (await repo.listIdentifiers(canonical.personId)).filter((i) => i.status !== 'entered_in_error');
       for (const i of identifiers) assertSameTenant(i, ctx);
+      const person: Person = {
+        ...canonical,
+        ...(hidden.has('person.phone') ? { phone: null } : {}),
+        ...(hidden.has('person.email') ? { email: null } : {}),
+        ...(hidden.has('person.birthDate') ? { birthDate: null } : {}),
+      };
+      const redacted = [...hidden].sort();
       await repo.appendAudit(
-        this.event(ctx, { ...meta, personId: canonical.personId }, 'success', principal.user, { self: isSelf, redirected: canonical.personId !== requested.personId }),
+        this.event(ctx, { ...meta, personId: canonical.personId }, 'success', principal.user, {
+          self: isSelf,
+          redirected: canonical.personId !== requested.personId,
+          ...(decision && decision.policyIds.length > 0 ? { accessPolicyIds: decision.policyIds, ...(redacted.length ? { redacted } : {}) } : {}),
+        }),
       );
-      return { person: canonical, identifiers, redirectedFrom: canonical.personId !== requested.personId ? requested.personId : null };
+      return { person, identifiers, redirectedFrom: canonical.personId !== requested.personId ? requested.personId : null, redacted };
     });
   }
 
@@ -871,14 +905,12 @@ export class PersonRegistryService {
     if (!user || user.status !== 'active') throw new ClinicalError('FORBIDDEN', 'Caller is not an active user');
     assertSameTenant(user, ctx);
     const now = this.clock().getTime();
-    const roles = new Set<Role>();
-    for (const m of await repo.listMemberships(user.userId)) {
-      const valid = m.status === 'active' && Date.parse(m.validFrom) <= now && (m.validTo === null || Date.parse(m.validTo) > now);
-      if (!valid) continue;
-      const orgOk = m.role === 'tenant_admin' || m.role === 'system' || ctx.allowedOrganizationIds.includes(m.organizationId);
-      if (orgOk) roles.add(m.role);
-    }
-    return { user, roles };
+    const valid = (await repo.listMemberships(user.userId)).filter(
+      (m) =>
+        isMembershipActive(m, now) &&
+        (m.role === 'tenant_admin' || m.role === 'system' || ctx.allowedOrganizationIds.includes(m.organizationId)),
+    );
+    return this.toPrincipal(repo, ctx, user, valid);
   }
 
   /** Vai trò CHỈ từ membership của organization chỉ định (không cộng dồn vai trò ở org khác). */
@@ -887,17 +919,24 @@ export class PersonRegistryService {
     if (!user || user.status !== 'active') throw new ClinicalError('FORBIDDEN', 'Caller is not an active user');
     assertSameTenant(user, ctx);
     const now = this.clock().getTime();
-    const roles = new Set<Role>();
-    for (const m of await repo.listMemberships(user.userId)) {
-      const valid =
-        m.organizationId === organizationId && m.status === 'active' && Date.parse(m.validFrom) <= now && (m.validTo === null || Date.parse(m.validTo) > now);
-      if (valid) roles.add(m.role);
-    }
-    return { user, roles };
+    const valid = (await repo.listMemberships(user.userId)).filter((m) => m.organizationId === organizationId && isMembershipActive(m, now));
+    return this.toPrincipal(repo, ctx, user, valid);
   }
 
-  private authorize(p: Principal, perm: Permission): void {
-    if (!PERMISSIONS[perm].some((r) => p.roles.has(r))) throw new ClinicalError('FORBIDDEN', `Missing permission ${perm}`);
+  private async toPrincipal(repo: RegistryRepository, ctx: TenantContext, user: User, valid: readonly Membership[]): Promise<Principal> {
+    const grants: AccessGrant[] = await buildGrants(valid, ctx.tenantId, (ids) => repo.findAccessPolicies(ids));
+    return { user, roles: new Set(valid.map((m) => m.role)), grants };
+  }
+
+  /** Vai trò (bảng PERMISSIONS) rồi access policy của từng membership (chỉ thu hẹp). */
+  private authorize(p: Principal, action: PolicyAction): AllowedDecision {
+    const perm = ACCESS_POLICY_CATALOG[action].basePermission as Permission;
+    const d = decideAccess(p.grants, action, PERMISSIONS[perm], { callerUserId: p.user.userId });
+    if (!d.allowed) {
+      if (d.reason === 'ROLE') throw new ClinicalError('FORBIDDEN', `Missing permission ${perm}`);
+      throw new ClinicalError('FORBIDDEN', `Access policy does not permit ${action}`, { reason: 'ACCESS_POLICY' });
+    }
+    return d;
   }
 
   private event(
@@ -941,7 +980,8 @@ export class PersonRegistryService {
         code = 'VERSION_CONFLICT';
       }
       try {
-        await this.audit.record(this.event(ctx, meta, outcome, null, { code }));
+        const reason = e instanceof ClinicalError && typeof e.details?.['reason'] === 'string' ? e.details['reason'] : undefined;
+        await this.audit.record(this.event(ctx, meta, outcome, null, { code, ...(reason ? { reason } : {}) }));
       } catch {
         /* audit lỗi không được đổi kết quả */
       }
@@ -994,6 +1034,15 @@ export class PgRegistryRepository implements RegistryRepository {
   async listMemberships(userId: UserId): Promise<Membership[]> {
     const r = await this.db.query(`SELECT ${MEMBERSHIP_COLS} FROM iam.memberships WHERE tenant_id = $1 AND user_id = $2`, [this.t, userId]);
     return r.rows.map(mapMembership);
+  }
+
+  async findAccessPolicies(ids: readonly AccessPolicyId[]): Promise<AccessPolicy[]> {
+    if (ids.length === 0) return [];
+    const r = await this.db.query(
+      `SELECT ${ACCESS_POLICY_COLS} FROM iam.access_policies WHERE tenant_id = $1 AND policy_id = ANY($2::uuid[])`,
+      [this.t, `{${ids.join(',')}}`],
+    );
+    return r.rows.map(mapAccessPolicy).filter((p): p is AccessPolicy => p !== null);
   }
 
   async findPerson(personId: PersonId): Promise<Person | null> {

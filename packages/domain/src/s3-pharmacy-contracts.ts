@@ -162,3 +162,23 @@ export interface FhirMedicationDispense {
     readonly text?: string;
   }>;
 }
+
+// ---------------------------------------------------------------------------
+// FHIR mappers (đọc)
+// ---------------------------------------------------------------------------
+export const HCOS_MEDICATION_BARCODE_SYSTEM = 'urn:hcos:medication-barcode';
+
+export function toFhirMedication(m: Medication): FhirMedication & {
+  readonly status: 'active' | 'inactive';
+  readonly identifier?: ReadonlyArray<{ readonly system: string; readonly value: string }>;
+} {
+  const name = [m.brandName, m.strength].filter(Boolean).join(' ');
+  return {
+    resourceType: 'Medication',
+    id: m.medicationId,
+    status: m.isActive ? 'active' : 'inactive',
+    code: { text: m.genericName ? `${name} (${m.genericName})` : name },
+    form: { text: m.form },
+    ...(m.barcode ? { identifier: [{ system: HCOS_MEDICATION_BARCODE_SYSTEM, value: m.barcode }] } : {}),
+  };
+}

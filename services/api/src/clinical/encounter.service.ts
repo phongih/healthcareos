@@ -58,6 +58,7 @@ import {
 import { nameKey as buildNameKey, type PatientSearchInput } from '../../../../packages/domain/src/person-registry';
 import {
   ACCESS_POLICY_CATALOG,
+  buildGrants,
   decideAccess,
   type AccessDecision,
   type AccessFacts,
@@ -713,20 +714,7 @@ export class ClinicalEncounterService {
         Date.parse(m.validFrom) <= now &&
         (m.validTo === null || Date.parse(m.validTo) > now),
     );
-    const policyIds = [...new Set(valid.map((m) => m.accessPolicyId).filter((id): id is AccessPolicyId => !!id))];
-    const policies = new Map<string, AccessPolicy>();
-    if (policyIds.length > 0) {
-      for (const p of await repo.findAccessPolicies(policyIds)) {
-        if (p.tenantId !== user.tenantId) {
-          throw new TenantIsolationError('RESOURCE_TENANT_MISMATCH', 'Resource belongs to a different tenant', 403);
-        }
-        policies.set(p.policyId, p);
-      }
-    }
-    const grants: AccessGrant[] = valid.map((m) => ({
-      role: m.role,
-      policy: m.accessPolicyId ? (policies.get(m.accessPolicyId) ?? 'unavailable') : null,
-    }));
+    const grants: AccessGrant[] = await buildGrants(valid, user.tenantId, (ids) => repo.findAccessPolicies(ids));
     return { user, roles: new Set(valid.map((m) => m.role)), grants };
   }
 

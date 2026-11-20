@@ -34,6 +34,15 @@ Ví dụ: điều dưỡng chỉ được ghi nhiệt độ và SpO₂, không t
 | `observation:write` | observation:write | practitioner=self, codes | — | status, effectiveAt |
 | `encounter:close` | encounter:close | encounterClass | — | — |
 
+Person Registry và dược (bổ sung ở HCOS-F3):
+| action | quyền nền | điều kiện | hiddenFields |
+|---|---|---|---|
+| `person:read` | person:search | — | person.phone, person.email, person.birthDate, identifiers |
+| `person:search` · `person:create` · `person:identifier` · `person:merge` · `person:unmerge` | cùng tên | — | — |
+| `pharmacy:catalog:read` · `pharmacy:catalog:write` | cùng tên | — | — |
+| `pharmacy:location:write` · `pharmacy:stock:receive` · `pharmacy:stock:dispense` | cùng tên | locationType | — |
+| `pharmacy:stock:read` | pharmacy:stock:read | locationType | unitCost |
+
 - `codes` nhận `system|code` hoặc `system|*` (mọi mã trong một hệ mã).
 - `readonlyFields`: người gọi không được đặt giá trị **khác mặc định của server** (ví dụ `status` bị khoá thì chỉ ghi được `final`). Vi phạm trả 403 kèm `field`.
 - Xem danh mục qua API: `GET /api/access-policies/catalog`.
@@ -75,7 +84,7 @@ Mỗi thay đổi ghi trong cùng một transaction:
 - Các suite integration giờ áp **toàn bộ** migration (trước đây mỗi suite chọn một tập con).
 
 ## Giới hạn đã biết
-- Mới áp cho **dịch vụ lâm sàng** (S1). Person Registry vẫn chỉ dùng vai trò. Module dược vẫn dùng `roles` trong JWT, chưa dùng membership và chưa có API.
+- Áp cho dịch vụ lâm sàng (S1), Person Registry và dược (HCOS-F3). Chưa áp cho chính API quản trị policy (chỉ `tenant_admin`).
 - Không cache: mỗi request đọc policy trong cùng transaction (luôn mới, tốn thêm 1 truy vấn khi có policy). Đã phát sự kiện outbox để làm cache sau này.
 - Che trường ở mức đối tượng miền. Chưa có che theo mã (ví dụ ẩn riêng kết quả HIV). Muốn vậy cần thêm điều kiện `codes` cho `encounter:read`.
 - Điều kiện là danh mục đóng, có chủ đích. Thêm điều kiện mới phải sửa code, viết test và duyệt.

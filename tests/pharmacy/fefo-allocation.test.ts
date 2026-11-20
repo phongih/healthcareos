@@ -12,23 +12,47 @@ import {
   asStockLocationId,
   type StockMovement,
 } from '../../packages/domain/src/s3-pharmacy-contracts';
-import { type CorrelationId, type TenantContext, type TenantId } from '../../packages/domain/src/s0-contracts';
+import {
+  type CorrelationId,
+  type Membership,
+  type OrganizationId,
+  type TenantContext,
+  type TenantId,
+  type UserId,
+} from '../../packages/domain/src/s0-contracts';
 
 describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
+  const ORG = randomUUID() as OrganizationId;
+  const USER = randomUUID() as UserId;
   const dummyCtx: TenantContext = Object.freeze({
     tenantId: randomUUID() as TenantId,
     userSubject: 'doctor-sub-01',
     userId: null,
     personId: null,
-    activeOrganizationId: null,
-    allowedOrganizationIds: Object.freeze([]),
+    activeOrganizationId: ORG,
+    allowedOrganizationIds: Object.freeze([ORG]),
     roles: Object.freeze(['pharmacist'] as const),
     tokenId: null,
     correlationId: 'unit-pharmacy-corr' as CorrelationId,
   });
 
+  /** Vai trò lấy từ membership trong DB (không từ JWT): dược sĩ tại ORG. */
+  const principalRepo: Partial<PharmacyRepository> = {
+    findUserBySubject: async () => ({
+      tenantId: dummyCtx.tenantId, userId: USER, externalSubject: dummyCtx.userSubject, email: null, displayName: 'DS',
+      personId: null, status: 'active', lastLoginAt: null, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', version: 1,
+    }),
+    listMemberships: async () => [{
+      tenantId: dummyCtx.tenantId, membershipId: randomUUID() as Membership['membershipId'], userId: USER, organizationId: ORG,
+      role: 'pharmacist', status: 'active', validFrom: '2026-01-01T00:00:00Z', validTo: null, accessPolicyId: null,
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', version: 1,
+    }],
+    findAccessPolicies: async () => [],
+    findEncounterRef: async () => ({ organizationId: ORG, patientId: randomUUID(), status: 'in_progress' }),
+  };
+
   const createMockUow = (repo: PharmacyRepository): PharmacyUnitOfWork => ({
-    run: async (_ctx, fn) => fn(repo),
+    run: async (_ctx, fn) => fn({ ...principalRepo, ...repo } as PharmacyRepository),
   });
 
   const dummyAuditSink = {
@@ -70,7 +94,7 @@ describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
       findStockLocation: async (id) => ({
         locationId: id,
         tenantId: dummyCtx.tenantId,
-        organizationId: randomUUID() as any,
+        organizationId: ORG,
         name: 'Kho Test',
         type: 'main_warehouse',
         isActive: true,
@@ -159,7 +183,7 @@ describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
       findStockLocation: async (id) => ({
         locationId: id,
         tenantId: dummyCtx.tenantId,
-        organizationId: randomUUID() as any,
+        organizationId: ORG,
         name: 'Kho Test',
         type: 'main_warehouse',
         isActive: true,
@@ -236,7 +260,7 @@ describe('PharmacyInventoryService - FEFO Allocation Logic', () => {
       findStockLocation: async (id) => ({
         locationId: id,
         tenantId: dummyCtx.tenantId,
-        organizationId: randomUUID() as any,
+        organizationId: ORG,
         name: 'Kho Test',
         type: 'main_warehouse',
         isActive: true,

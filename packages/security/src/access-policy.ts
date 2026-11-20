@@ -20,20 +20,21 @@
  *     vì đó là các con đường hợp lệ độc lập để có quyền.
  *  6. Bộ từ vựng (action, điều kiện, trường) là danh mục đóng; luật lạ bị từ chối khi lưu, không bị bỏ qua.
  */
-import type {
-  AccessPolicyId,
-  ISODateTime,
-  Role,
-  TenantScoped,
-  Timestamped,
-  UserId,
-  Versioned,
+import {
+  TenantIsolationError,
+  type AccessPolicyId,
+  type ISODateTime,
+  type Role,
+  type TenantScoped,
+  type Timestamped,
+  type UserId,
+  type Versioned,
 } from '../../domain/src/s0-contracts';
 
 // ---------------------------------------------------------------------------
 // Danh mục
 // ---------------------------------------------------------------------------
-export type CriterionKey = 'practitioner' | 'encounterClass' | 'encounterStatus' | 'codes';
+export type CriterionKey = 'practitioner' | 'encounterClass' | 'encounterStatus' | 'codes' | 'locationType';
 
 export interface ActionSpec {
   /** Quyền nền trong bảng vai trò của service. */
@@ -46,6 +47,7 @@ export interface ActionSpec {
 
 const ENCOUNTER_CLASSES = ['ambulatory', 'inpatient', 'emergency', 'virtual'] as const;
 const ENCOUNTER_STATUSES = ['planned', 'in_progress', 'finished', 'cancelled', 'entered_in_error'] as const;
+const LOCATION_TYPES = ['main_warehouse', 'dispensary_counter', 'ward_cabinet', 'quarantine'] as const;
 
 export const ACCESS_POLICY_CATALOG = {
   'patient:read': {
@@ -97,6 +99,94 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+
+  // ---- Person Registry ----------------------------------------------------
+  'person:read': {
+    basePermission: 'person:search',
+    description: 'Đọc hồ sơ danh tính (GET /api/persons/:id)',
+    criteria: [],
+    hiddenFields: ['person.phone', 'person.email', 'person.birthDate', 'identifiers'],
+    readonlyFields: [],
+  },
+  'person:search': {
+    basePermission: 'person:search',
+    description: 'Tìm hồ sơ trùng (POST /api/persons/search-duplicates)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'person:create': {
+    basePermission: 'person:create',
+    description: 'Tạo hồ sơ danh tính (kể cả qua POST /fhir/Patient)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'person:identifier': {
+    basePermission: 'person:identifier',
+    description: 'Thêm / ngừng định danh',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'person:merge': {
+    basePermission: 'person:merge',
+    description: 'Gộp hồ sơ trùng',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'person:unmerge': {
+    basePermission: 'person:unmerge',
+    description: 'Hoàn tác gộp hồ sơ',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+
+  // ---- Dược ---------------------------------------------------------------
+  'pharmacy:catalog:read': {
+    basePermission: 'pharmacy:catalog:read',
+    description: 'Xem danh mục thuốc',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'pharmacy:catalog:write': {
+    basePermission: 'pharmacy:catalog:write',
+    description: 'Thêm hoạt chất / biệt dược',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'pharmacy:location:write': {
+    basePermission: 'pharmacy:location:write',
+    description: 'Tạo kho / quầy / tủ trực',
+    criteria: ['locationType'],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'pharmacy:stock:read': {
+    basePermission: 'pharmacy:stock:read',
+    description: 'Xem tồn kho của một vị trí',
+    criteria: ['locationType'],
+    hiddenFields: ['unitCost'],
+    readonlyFields: [],
+  },
+  'pharmacy:stock:receive': {
+    basePermission: 'pharmacy:stock:receive',
+    description: 'Nhập kho theo lô',
+    criteria: ['locationType'],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'pharmacy:stock:dispense': {
+    basePermission: 'pharmacy:stock:dispense',
+    description: 'Cấp phát thuốc theo FEFO cho một đợt khám',
+    criteria: ['locationType'],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
 } as const satisfies Readonly<Record<string, ActionSpec>>;
 
 export type PolicyAction = keyof typeof ACCESS_POLICY_CATALOG;
@@ -112,6 +202,8 @@ export interface AccessCriteria {
   readonly encounterStatus?: readonly string[];
   /** "system|code" hoặc "system|*" (mọi mã trong hệ mã). */
   readonly codes?: readonly string[];
+  /** Loại vị trí kho (dược). */
+  readonly locationType?: readonly string[];
 }
 
 export interface AccessRule {
@@ -223,6 +315,9 @@ export function validateAccessRules(raw: unknown): AccessRule[] {
           case 'codes':
             out.codes = stringList(v, cp, (s) => CODE_TOKEN_RE.test(s), "must be 'system|code' or 'system|*'");
             break;
+          case 'locationType':
+            out.locationType = stringList(v, cp, (s) => (LOCATION_TYPES as readonly string[]).includes(s), `must be one of: ${LOCATION_TYPES.join(', ')}`);
+            break;
         }
       }
       criteria = out;
@@ -260,6 +355,7 @@ export interface AccessFacts {
   /** Dùng khi tạo đợt khám (chưa có encounter). */
   readonly encounterClass?: string;
   readonly code?: { readonly system: string; readonly code: string };
+  readonly locationType?: string;
 }
 
 export type AccessDecision =
@@ -282,6 +378,9 @@ function criteriaMatch(c: AccessCriteria | undefined, f: AccessFacts): boolean {
   if (c.encounterStatus) {
     const st = f.encounter?.status;
     if (st === undefined || !c.encounterStatus.includes(st)) return false;
+  }
+  if (c.locationType) {
+    if (f.locationType === undefined || !c.locationType.includes(f.locationType)) return false;
   }
   if (c.codes) {
     const code = f.code;
@@ -330,6 +429,48 @@ export function decideAccess(
   }
   if (!allowed) return { allowed: false, reason: 'ACCESS_POLICY' };
   return { allowed: true, hiddenFields: hidden ?? new Set(), readonlyFields: readonly ?? new Set(), policyIds };
+}
+
+// ---------------------------------------------------------------------------
+// Dựng grants từ membership (dùng chung cho mọi service)
+// ---------------------------------------------------------------------------
+export interface MembershipLike {
+  readonly tenantId: string;
+  readonly role: Role;
+  readonly organizationId: string;
+  readonly status: string;
+  readonly validFrom: string;
+  readonly validTo: string | null;
+  readonly accessPolicyId?: AccessPolicyId | null;
+}
+
+/** Membership còn hiệu lực tại thời điểm `nowMs`. */
+export const isMembershipActive = (m: MembershipLike, nowMs: number): boolean =>
+  m.status === 'active' && Date.parse(m.validFrom) <= nowMs && (m.validTo === null || Date.parse(m.validTo) > nowMs);
+
+/**
+ * Từ các membership đã lọc (còn hiệu lực, đúng phạm vi organization) => grants.
+ * `load` chỉ được gọi khi có policy; policy khác tenant => lỗi (phòng thủ chiều sâu ngoài RLS).
+ */
+export async function buildGrants(
+  memberships: readonly MembershipLike[],
+  tenantId: string,
+  load: (ids: readonly AccessPolicyId[]) => Promise<readonly AccessPolicy[]>,
+): Promise<AccessGrant[]> {
+  const ids = [...new Set(memberships.map((m) => m.accessPolicyId).filter((id): id is AccessPolicyId => !!id))];
+  const byId = new Map<string, AccessPolicy>();
+  if (ids.length > 0) {
+    for (const p of await load(ids)) {
+      if (p.tenantId !== tenantId) {
+        throw new TenantIsolationError('RESOURCE_TENANT_MISMATCH', 'Resource belongs to a different tenant', 403);
+      }
+      byId.set(p.policyId, p);
+    }
+  }
+  return memberships.map((m) => ({
+    role: m.role,
+    policy: m.accessPolicyId ? (byId.get(m.accessPolicyId) ?? 'unavailable') : null,
+  }));
 }
 
 /** Dấu vân tay ổn định của bộ luật (ghi vào audit, không ghi nguyên văn). */

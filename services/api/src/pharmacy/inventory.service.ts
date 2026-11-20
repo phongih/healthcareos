@@ -1,12 +1,20 @@
 /**
  * HCOS-P0-ENG-001 | Slice S3 | Pharmacy Inventory Service
  * Quản lý danh mục dược, nhập kho, tồn kho theo lô và thuật toán FEFO khi xuất thuốc.
+ *
+ * Phân quyền (giống clinical, fail-closed):
+ *  - Vai trò lấy từ iam.memberships CÒN HIỆU LỰC (không tin `roles` trong JWT).
+ *  - Danh mục thuốc là của tenant: membership tại bất kỳ organization nào trong phạm vi token.
+ *  - Kho / tồn kho / nhập / xuất: membership TẠI organization sở hữu vị trí kho.
+ *  - Access policy (migration 007) trên membership chỉ thu hẹp thêm (vd. chỉ được thao tác tủ trực).
+ *  - Cấp phát: đợt khám phải cùng organization với kho và chưa bị huỷ / nhập nhầm.
  */
 import { randomUUID } from 'node:crypto';
 
 import {
   isUuid,
   TenantIsolationError,
+  type AccessPolicyId,
   type AuditSink,
   type CorrelationId,
   type ISODate,
@@ -16,8 +24,19 @@ import {
   type Role,
   type TenantContext,
   type TenantScopedDb,
+  type Membership,
+  type User,
   type UserId,
 } from '../../../../packages/domain/src/s0-contracts';
+import {
+  ACCESS_POLICY_CATALOG,
+  buildGrants,
+  decideAccess,
+  isMembershipActive,
+  type AccessDecision,
+  type AccessPolicy,
+  type PolicyAction,
+} from '../../../../packages/security/src/access-policy';
 import { type EncounterId } from '../../../../packages/domain/src/s1-contracts';
 import {
   asBalanceId,
@@ -118,7 +137,37 @@ export interface AvailableBatchBalance {
   readonly version: number;
 }
 
+/** Một dòng tồn kho tại vị trí (lô + thuốc). */
+export interface StockLine {
+  readonly batchId: BatchId;
+  readonly batchNumber: string;
+  readonly expiryDate: ISODate;
+  readonly medicationId: MedicationId;
+  readonly brandName: string;
+  readonly quantityOnHand: number;
+  readonly quantityReserved: number;
+  /** null khi access policy che `unitCost`. */
+  readonly unitCost: number | null;
+}
+
+export interface EncounterRef {
+  readonly organizationId: OrganizationId;
+  readonly patientId: string;
+  readonly status: string;
+}
+
 export interface PharmacyRepository {
+  // Principal (vai trò từ DB + policy)
+  findUserBySubject(subject: string): Promise<User | null>;
+  listMemberships(userId: UserId): Promise<Membership[]>;
+  findAccessPolicies(ids: readonly AccessPolicyId[]): Promise<AccessPolicy[]>;
+  findEncounterRef(id: EncounterId): Promise<EncounterRef | null>;
+
+  // Đọc
+  listMedications(q: { readonly activeOnly: boolean; readonly limit: number }): Promise<Medication[]>;
+  listStockLocations(organizationId: OrganizationId): Promise<StockLocation[]>;
+  listStockAtLocation(locationId: StockLocationId): Promise<StockLine[]>;
+
   // Substances & Medications
   insertSubstance(s: Substance): Promise<void>;
   findSubstanceByCode(code: string): Promise<Substance | null>;
@@ -180,17 +229,32 @@ export interface PharmacyServiceDeps {
 // Authorization
 // ---------------------------------------------------------------------------
 type Permission =
+  | 'pharmacy:catalog:read'
   | 'pharmacy:catalog:write'
   | 'pharmacy:location:write'
+  | 'pharmacy:stock:read'
   | 'pharmacy:stock:receive'
   | 'pharmacy:stock:dispense';
 
 const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
+  'pharmacy:catalog:read': ['pharmacist', 'pharmacy_admin', 'doctor', 'clinic_staff'],
   'pharmacy:catalog:write': ['pharmacist', 'pharmacy_admin'],
   'pharmacy:location:write': ['pharmacy_admin'],
+  'pharmacy:stock:read': ['pharmacist', 'pharmacy_admin'],
   'pharmacy:stock:receive': ['pharmacist', 'pharmacy_admin'],
   'pharmacy:stock:dispense': ['pharmacist'],
 };
+
+type PharmacyAction = Extract<PolicyAction, `pharmacy:${string}`>;
+type AllowedDecision = Extract<AccessDecision, { allowed: true }>;
+
+/** Phạm vi organization của thao tác: cả tenant (trong phạm vi token) hoặc một organization cụ thể. */
+type Scope = { readonly kind: 'tenant' } | { readonly kind: 'organization'; readonly organizationId: OrganizationId };
+
+/** Cổng phân quyền mà mỗi thao tác PHẢI gọi đúng một lần (sau khi biết organization của tài nguyên). */
+type Gate = (scope: Scope, facts?: { readonly locationType?: string }) => Promise<{ user: User; decision: AllowedDecision }>;
+
+const MAX_LIST = 200;
 
 const MAX_QTY = 2_147_483_647; // integer của PostgreSQL
 const MAX_UNIT_COST = 99_999_999_999; // numeric(15,4)
@@ -222,6 +286,11 @@ interface Outcome<T> {
   readonly payload: Readonly<Record<string, unknown>>;
 }
 
+function requireUuid(v: unknown, what: string): string {
+  if (!isUuid(v)) throw new PharmacyError('VALIDATION', `${what} must be a UUID`);
+  return v.toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // Service Implementation
 // ---------------------------------------------------------------------------
@@ -232,9 +301,59 @@ export class PharmacyInventoryService {
     this.clock = deps.clock ?? (() => new Date());
   }
 
+  // ---- Đọc ---------------------------------------------------------------
+  /** Danh mục thuốc của tenant (tối đa 200). */
+  async listMedications(q: { readonly activeOnly?: boolean; readonly limit?: number }, ctx: TenantContext): Promise<Medication[]> {
+    return this.exec(ctx, 'pharmacy:catalog:read', 'pharmacy.medication.list', 'pharmacy.medication', async (repo, gate) => {
+      await gate({ kind: 'tenant' });
+      const limit = q.limit ?? 100;
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST) throw new PharmacyError('VALIDATION', `limit must be 1..${MAX_LIST}`);
+      const meds = await repo.listMedications({ activeOnly: q.activeOnly ?? true, limit });
+      for (const m of meds) assertTenant(m, ctx);
+      return { value: meds, resourceId: null, payload: { count: meds.length } };
+    });
+  }
+
+  async getMedication(id: string, ctx: TenantContext): Promise<Medication> {
+    return this.exec(ctx, 'pharmacy:catalog:read', 'pharmacy.medication.read', 'pharmacy.medication', async (repo, gate) => {
+      await gate({ kind: 'tenant' });
+      const med = await repo.findMedication(asMedicationId(requireUuid(id, 'medicationId')));
+      if (!med) throw new PharmacyError('NOT_FOUND', 'Medication not found');
+      assertTenant(med, ctx);
+      return { value: med, resourceId: med.medicationId, payload: {} };
+    });
+  }
+
+  async listStockLocations(organizationId: string, ctx: TenantContext): Promise<StockLocation[]> {
+    return this.exec(ctx, 'pharmacy:stock:read', 'pharmacy.location.list', 'pharmacy.location', async (repo, gate) => {
+      const org = requireUuid(organizationId, 'organizationId') as OrganizationId;
+      await gate({ kind: 'organization', organizationId: org });
+      const locs = (await repo.listStockLocations(org)).filter((l) => l.organizationId === org);
+      for (const l of locs) assertTenant(l, ctx);
+      return { value: locs, resourceId: null, payload: { organizationId: org, count: locs.length } };
+    });
+  }
+
+  /** Tồn kho theo lô tại một vị trí (lô hết hạn vẫn hiện để xử lý huỷ). */
+  async getStock(locationId: string, ctx: TenantContext): Promise<{ location: StockLocation; lines: StockLine[]; redacted: string[] }> {
+    return this.exec(ctx, 'pharmacy:stock:read', 'pharmacy.stock.read', 'pharmacy.location', async (repo, gate) => {
+      const loc = await this.loadLocation(repo, ctx, requireUuid(locationId, 'locationId'));
+      const { decision } = await gate({ kind: 'organization', organizationId: loc.organizationId }, { locationType: loc.type });
+      const hideCost = decision.hiddenFields.has('unitCost');
+      const lines = (await repo.listStockAtLocation(loc.locationId)).map((l) => (hideCost ? { ...l, unitCost: null } : l));
+      return {
+        value: { location: loc, lines, redacted: hideCost ? ['unitCost'] : [] },
+        resourceId: loc.locationId,
+        payload: { lineCount: lines.length, ...policyAudit(decision) },
+      };
+    });
+  }
+
+  // ---- Danh mục ----------------------------------------------------------
   /** Đăng ký hoạt chất chuẩn */
   async createSubstance(input: CreateSubstanceInput, ctx: TenantContext): Promise<Substance> {
-    return this.exec(ctx, 'pharmacy:catalog:write', 'pharmacy.substance.create', 'pharmacy.substance', async (repo) => {
+    return this.exec(ctx, 'pharmacy:catalog:write', 'pharmacy.substance.create', 'pharmacy.substance', async (repo, gate) => {
+      const { decision } = await gate({ kind: 'tenant' });
       const now = this.clock().toISOString() as ISODateTime;
       const substance: Substance = {
         tenantId: ctx.tenantId,
@@ -250,13 +369,14 @@ export class PharmacyInventoryService {
         throw new PharmacyError('CONFLICT', `Substance with code ${substance.code} already exists`);
       }
       await repo.insertSubstance(substance);
-      return { value: substance, resourceId: substance.substanceId, payload: { code: substance.code } };
+      return { value: substance, resourceId: substance.substanceId, payload: { code: substance.code, ...policyAudit(decision) } };
     });
   }
 
   /** Đăng ký biệt dược thương mại */
   async createMedication(input: CreateMedicationInput, ctx: TenantContext): Promise<Medication> {
-    return this.exec(ctx, 'pharmacy:catalog:write', 'pharmacy.medication.create', 'pharmacy.medication', async (repo) => {
+    return this.exec(ctx, 'pharmacy:catalog:write', 'pharmacy.medication.create', 'pharmacy.medication', async (repo, gate) => {
+      const { decision } = await gate({ kind: 'tenant' });
       if (input.substanceId !== undefined && !isUuid(input.substanceId)) {
         throw new PharmacyError('VALIDATION', 'substanceId must be a UUID');
       }
@@ -280,23 +400,24 @@ export class PharmacyInventoryService {
       return {
         value: medication,
         resourceId: medication.medicationId,
-        payload: { substanceId: medication.substanceId ?? null },
+        payload: { substanceId: medication.substanceId ?? null, ...policyAudit(decision) },
       };
     });
   }
 
-  /** Tạo vị trí kho / quầy / tủ trực; tổ chức phải thuộc phạm vi của người gọi (FK ghép chặn khác tenant). */
+  /** Tạo vị trí kho / quầy / tủ trực TẠI organization mà người gọi có vai trò pharmacy_admin. */
   async createStockLocation(input: CreateStockLocationInput, ctx: TenantContext): Promise<StockLocation> {
-    return this.exec(ctx, 'pharmacy:location:write', 'pharmacy.location.create', 'pharmacy.location', async (repo) => {
-      if (!isUuid(input.organizationId)) throw new PharmacyError('VALIDATION', 'organizationId must be a UUID');
-      if (!ctx.allowedOrganizationIds.includes(input.organizationId as OrganizationId)) {
-        throw new PharmacyError('FORBIDDEN', 'Organization is outside the caller scope');
+    return this.exec(ctx, 'pharmacy:location:write', 'pharmacy.location.create', 'pharmacy.location', async (repo, gate) => {
+      const org = requireUuid(input.organizationId, 'organizationId') as OrganizationId;
+      if (!(LOCATION_TYPES as readonly string[]).includes(input.type)) {
+        throw new PharmacyError('VALIDATION', `type must be one of: ${LOCATION_TYPES.join(', ')}`);
       }
+      const { decision } = await gate({ kind: 'organization', organizationId: org }, { locationType: input.type });
       const now = this.clock().toISOString() as ISODateTime;
       const loc: StockLocation = {
         tenantId: ctx.tenantId,
         locationId: asStockLocationId(randomUUID()),
-        organizationId: input.organizationId as OrganizationId,
+        organizationId: org,
         name: requireText(input.name, 'name'),
         type: input.type,
         isActive: true,
@@ -307,18 +428,23 @@ export class PharmacyInventoryService {
       return {
         value: loc,
         resourceId: loc.locationId,
-        payload: { organizationId: loc.organizationId, type: loc.type },
+        payload: { organizationId: loc.organizationId, type: loc.type, ...policyAudit(decision) },
       };
     });
   }
 
+  // ---- Nhập / xuất -------------------------------------------------------
   /** Nhập kho theo lô (Receipt) */
   async receiveStock(input: ReceiveStockInput, ctx: TenantContext): Promise<{ batch: Batch; movement: StockMovement }> {
-    return this.exec(ctx, 'pharmacy:stock:receive', 'pharmacy.stock.receive', 'pharmacy.batch', async (repo) => {
-      const quantity = requireQuantity(input.quantity, 'Quantity received');
+    return this.exec(ctx, 'pharmacy:stock:receive', 'pharmacy.stock.receive', 'pharmacy.batch', async (repo, gate) => {
       if (!isUuid(input.medicationId) || !isUuid(input.locationId)) {
         throw new PharmacyError('VALIDATION', 'medicationId and locationId must be UUIDs');
       }
+      const loc = await this.loadLocation(repo, ctx, input.locationId);
+      const { user, decision } = await gate({ kind: 'organization', organizationId: loc.organizationId }, { locationType: loc.type });
+      if (!loc.isActive) throw new PharmacyError('VALIDATION', 'Stock location is inactive', { reason: 'INACTIVE_LOCATION' });
+
+      const quantity = requireQuantity(input.quantity, 'Quantity received');
       const batchNumber = requireText(input.batchNumber, 'batchNumber', 64);
       const expiryDate = requireDate(input.expiryDate, 'expiryDate');
       const manufacturingDate =
@@ -337,15 +463,11 @@ export class PharmacyInventoryService {
         throw new PharmacyError('EXPIRED_BATCH', `Batch ${batchNumber} is expired or expires today`, { expiryDate });
       }
       const medicationId = asMedicationId(input.medicationId);
-      const locationId = asStockLocationId(input.locationId);
+      const locationId = loc.locationId;
 
       const med = await repo.findMedication(medicationId);
       if (!med) throw new PharmacyError('NOT_FOUND', `Medication ${input.medicationId} not found`);
       if (!med.isActive) throw new PharmacyError('VALIDATION', 'Medication is inactive', { reason: 'INACTIVE_MEDICATION' });
-
-      const loc = await repo.findStockLocation(locationId);
-      if (!loc) throw new PharmacyError('NOT_FOUND', `Stock location ${input.locationId} not found`);
-      if (!loc.isActive) throw new PharmacyError('VALIDATION', 'Stock location is inactive', { reason: 'INACTIVE_LOCATION' });
 
       // 1. Quản lý Batch: lô đã có thì thuộc tính phải khớp (không âm thầm bỏ qua hạn dùng/giá mới)
       let batch = await repo.findBatch(medicationId, batchNumber);
@@ -386,7 +508,7 @@ export class PharmacyInventoryService {
         quantity,
         movementType: 'receipt',
         reason: input.reason ?? 'Direct warehouse receipt',
-        performedBy: ctx.userId ?? undefined,
+        performedBy: user.userId,
         occurredAt: now,
       };
       await repo.insertStockMovement(movement);
@@ -394,7 +516,7 @@ export class PharmacyInventoryService {
       return {
         value: { batch, movement },
         resourceId: batch.batchId,
-        payload: { medicationId, locationId, batchNumber, quantity },
+        payload: { medicationId, locationId, batchNumber, quantity, ...policyAudit(decision) },
       };
     });
   }
@@ -407,23 +529,33 @@ export class PharmacyInventoryService {
     input: DispenseMedicationInput,
     ctx: TenantContext,
   ): Promise<FefoAllocationPlan> {
-    return this.exec(ctx, 'pharmacy:stock:dispense', 'pharmacy.stock.dispense', 'pharmacy.medication', async (repo) => {
-      const quantity = requireQuantity(input.quantity, 'Quantity to dispense');
+    return this.exec(ctx, 'pharmacy:stock:dispense', 'pharmacy.stock.dispense', 'pharmacy.medication', async (repo, gate) => {
       if (!isUuid(input.medicationId) || !isUuid(input.locationId) || !isUuid(input.encounterId)) {
         throw new PharmacyError('VALIDATION', 'medicationId, locationId and encounterId must be UUIDs');
       }
+      const loc = await this.loadLocation(repo, ctx, input.locationId);
+      const { user, decision } = await gate({ kind: 'organization', organizationId: loc.organizationId }, { locationType: loc.type });
+      const quantity = requireQuantity(input.quantity, 'Quantity to dispense');
 
       const now = this.clock().toISOString() as ISODateTime;
       const medicationId = asMedicationId(input.medicationId);
-      const locationId = asStockLocationId(input.locationId);
+      const locationId = loc.locationId;
 
-      const loc = await repo.findStockLocation(locationId);
-      if (!loc) {
-        throw new PharmacyError('NOT_FOUND', `Stock location ${input.locationId} not found`);
-      }
       if (!loc.isActive) throw new PharmacyError('VALIDATION', 'Stock location is inactive', { reason: 'INACTIVE_LOCATION' });
       if (loc.type === 'quarantine') {
         throw new PharmacyError('VALIDATION', 'Cannot dispense from a quarantine location', { reason: 'QUARANTINE_LOCATION' });
+      }
+
+      // Đợt khám: cùng tenant (RLS), cùng organization với kho, không bị huỷ / nhập nhầm.
+      const enc = await repo.findEncounterRef(input.encounterId.toLowerCase() as EncounterId);
+      if (!enc) throw new PharmacyError('VALIDATION', 'Encounter not found', { reason: 'REFERENCE_NOT_FOUND' });
+      if (enc.organizationId !== loc.organizationId) {
+        throw new PharmacyError('VALIDATION', 'Encounter belongs to a different organization than the stock location', {
+          reason: 'ENCOUNTER_ORG_MISMATCH',
+        });
+      }
+      if (enc.status === 'cancelled' || enc.status === 'entered_in_error') {
+        throw new PharmacyError('VALIDATION', `Encounter is ${enc.status}`, { reason: 'ENCOUNTER_NOT_ACTIVE' });
       }
 
       const med = await repo.findMedication(medicationId);
@@ -474,9 +606,9 @@ export class PharmacyInventoryService {
           batchId: asBatchId(batch.batchId),
           quantity: take,
           movementType: 'dispense',
-          encounterId: input.encounterId as EncounterId,
+          encounterId: input.encounterId.toLowerCase() as EncounterId,
           reason: input.reason ?? 'Prescription fulfillment',
-          performedBy: ctx.userId ?? undefined,
+          performedBy: user.userId,
           occurredAt: now,
         };
         await repo.insertStockMovement(movement);
@@ -506,38 +638,97 @@ export class PharmacyInventoryService {
           encounterId: input.encounterId,
           quantity,
           batches: allocatedItems.map((i) => ({ batchId: i.batchId, quantity: i.allocatedQuantity })),
+          ...policyAudit(decision),
         },
       };
+    });
+  }
+
+  /** Các lần cấp phát của một đợt khám (để đối chiếu / in phiếu). */
+  async listDispensesByEncounter(encounterId: string, ctx: TenantContext): Promise<StockMovement[]> {
+    return this.exec(ctx, 'pharmacy:stock:read', 'pharmacy.dispense.list', 'pharmacy.movement', async (repo, gate) => {
+      const enc = await repo.findEncounterRef(requireUuid(encounterId, 'encounterId') as EncounterId);
+      if (!enc) throw new PharmacyError('NOT_FOUND', 'Encounter not found');
+      await gate({ kind: 'organization', organizationId: enc.organizationId });
+      const moves = (await repo.listStockMovementsByEncounter(encounterId.toLowerCase() as EncounterId)).filter((m) => m.movementType === 'dispense');
+      for (const m of moves) assertTenant(m, ctx);
+      return { value: moves, resourceId: encounterId, payload: { count: moves.length } };
     });
   }
 
   // -------------------------------------------------------------------------
   // Nội bộ: phân quyền + giao dịch + audit (thành công: cùng giao dịch; từ chối/lỗi: ghi riêng)
   // -------------------------------------------------------------------------
+  private async loadLocation(repo: PharmacyRepository, ctx: TenantContext, id: string): Promise<StockLocation> {
+    const loc = await repo.findStockLocation(asStockLocationId(id));
+    if (!loc) throw new PharmacyError('NOT_FOUND', `Stock location ${id} not found`);
+    assertTenant(loc, ctx);
+    return loc;
+  }
+
   private async exec<T>(
     ctx: TenantContext,
-    perm: Permission,
-    action: string,
+    action: PharmacyAction,
+    auditAction: string,
     resourceType: string,
-    work: (repo: PharmacyRepository) => Promise<Outcome<T>>,
+    work: (repo: PharmacyRepository, gate: Gate) => Promise<Outcome<T>>,
   ): Promise<T> {
+    let auditOrg: OrganizationId | null = ctx.activeOrganizationId;
+    let actor: string = ctx.userSubject;
     try {
-      if (!PERMISSIONS[perm].some((r) => ctx.roles.includes(r))) {
-        throw new PharmacyError('FORBIDDEN', `Missing permission ${perm}`);
-      }
       return await this.deps.uow.run(ctx, async (repo) => {
-        const out = await work(repo);
-        await repo.appendAudit(this.event(ctx, action, resourceType, out.resourceId, 'success', out.payload));
+        const user = await repo.findUserBySubject(ctx.userSubject);
+        if (!user || user.status !== 'active') throw new PharmacyError('FORBIDDEN', 'Caller is not an active user');
+        assertTenant(user, ctx);
+        actor = user.userId;
+        const now = this.clock().getTime();
+        const active = (await repo.listMemberships(user.userId)).filter((m) => isMembershipActive(m, now));
+        const perm = ACCESS_POLICY_CATALOG[action].basePermission as Permission;
+        const roles = PERMISSIONS[perm];
+
+        // Chặn sớm: không có vai trò phù hợp ở bất kỳ organization nào trong phạm vi => 403 trước mọi truy vấn khác.
+        if (!active.some((m) => roles.includes(m.role) && ctx.allowedOrganizationIds.includes(m.organizationId))) {
+          throw new PharmacyError('FORBIDDEN', `Missing permission ${perm}`);
+        }
+
+        let called = false;
+        const gate: Gate = async (scope, facts = {}) => {
+          if (called) throw new Error('authorization gate invoked twice');
+          called = true;
+          let eligible: Membership[];
+          if (scope.kind === 'organization') {
+            if (!ctx.allowedOrganizationIds.includes(scope.organizationId)) {
+              throw new PharmacyError('FORBIDDEN', 'Organization is outside the caller scope');
+            }
+            auditOrg = scope.organizationId;
+            eligible = active.filter((m) => m.organizationId === scope.organizationId);
+          } else {
+            eligible = active.filter((m) => ctx.allowedOrganizationIds.includes(m.organizationId));
+          }
+          const grants = await buildGrants(eligible, ctx.tenantId, (ids) => repo.findAccessPolicies(ids));
+          const d = decideAccess(grants, action, roles, { callerUserId: user.userId, ...facts });
+          if (!d.allowed) {
+            if (d.reason === 'ROLE') throw new PharmacyError('FORBIDDEN', `Missing permission ${perm}`);
+            throw new PharmacyError('FORBIDDEN', `Access policy does not permit ${action}`, { reason: 'ACCESS_POLICY' });
+          }
+          return { user, decision: d };
+        };
+
+        const out = await work(repo, gate);
+        if (!called) throw new Error(`authorization gate was not invoked for ${auditAction}`);
+        await repo.appendAudit(this.event(ctx, actor, auditOrg, auditAction, resourceType, out.resourceId, 'success', out.payload));
         return out.value;
       });
     } catch (e) {
-      await this.auditFailure(ctx, action, resourceType, e);
+      await this.auditFailure(ctx, actor, auditOrg, auditAction, resourceType, e);
       throw e;
     }
   }
 
   private event(
     ctx: TenantContext,
+    actor: string,
+    organizationId: OrganizationId | null,
     action: string,
     resourceType: string,
     resourceId: string | null,
@@ -546,8 +737,8 @@ export class PharmacyInventoryService {
   ): NewAuditEvent {
     return {
       tenantId: ctx.tenantId,
-      actor: { type: 'user', id: ctx.userId ?? ctx.userSubject },
-      organizationId: ctx.activeOrganizationId,
+      actor: { type: 'user', id: actor },
+      organizationId,
       action,
       resourceType,
       resourceId,
@@ -561,7 +752,14 @@ export class PharmacyInventoryService {
     };
   }
 
-  private async auditFailure(ctx: TenantContext, action: string, resourceType: string, e: unknown): Promise<void> {
+  private async auditFailure(
+    ctx: TenantContext,
+    actor: string,
+    organizationId: OrganizationId | null,
+    action: string,
+    resourceType: string,
+    e: unknown,
+  ): Promise<void> {
     let code = 'INTERNAL';
     let outcome: NewAuditEvent['outcome'] = 'failure';
     if (e instanceof PharmacyError) {
@@ -571,12 +769,28 @@ export class PharmacyInventoryService {
       code = e.code;
       outcome = 'denied';
     }
+    const reason = e instanceof PharmacyError && typeof e.details?.['reason'] === 'string' ? e.details['reason'] : undefined;
     try {
-      await this.deps.audit.record(this.event(ctx, action, resourceType, null, outcome, { code }));
+      await this.deps.audit.record(
+        this.event(ctx, actor, organizationId, action, resourceType, null, outcome, { code, ...(reason ? { reason } : {}) }),
+      );
     } catch {
       /* audit lỗi không được thay đổi kết quả gốc */
     }
   }
+}
+
+const LOCATION_TYPES = ['main_warehouse', 'dispensary_counter', 'ward_cabinet', 'quarantine'] as const;
+
+function assertTenant(r: { readonly tenantId: string }, ctx: TenantContext): void {
+  if (r.tenantId !== ctx.tenantId) {
+    throw new TenantIsolationError('RESOURCE_TENANT_MISMATCH', 'Resource belongs to a different tenant', 403);
+  }
+}
+
+function policyAudit(d: AllowedDecision): Record<string, unknown> {
+  if (d.policyIds.length === 0) return {};
+  return { accessPolicyIds: d.policyIds, ...(d.hiddenFields.size > 0 ? { redacted: [...d.hiddenFields].sort() } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +800,14 @@ import {
   withTenantTransaction,
   type PgPoolLike,
 } from '../../../../packages/security/src/tenant-context';
+import {
+  ACCESS_POLICY_COLS,
+  MEMBERSHIP_COLS,
+  USER_COLS,
+  mapAccessPolicy,
+  mapMembership,
+  mapUser,
+} from '../clinical/encounter.service';
 
 export interface PgClientLike {
   query<T = unknown>(sql: string, params?: readonly unknown[]): Promise<{ rows: T[] }>;
@@ -593,6 +815,100 @@ export interface PgClientLike {
 
 export class PgPharmacyRepository implements PharmacyRepository {
   constructor(private readonly db: PgClientLike) {}
+
+  // ---- Principal ----------------------------------------------------------
+  // Tenant = tenant của transaction (RLS); thêm điều kiện tường minh để không phụ thuộc riêng vào RLS.
+  async findUserBySubject(subject: string): Promise<User | null> {
+    const r = await this.db.query(
+      `SELECT ${USER_COLS} FROM iam.users WHERE tenant_id = platform.current_tenant_id() AND external_subject = $1`,
+      [subject],
+    );
+    return r.rows[0] ? mapUser(r.rows[0]) : null;
+  }
+
+  async listMemberships(userId: UserId): Promise<Membership[]> {
+    const r = await this.db.query(
+      `SELECT ${MEMBERSHIP_COLS} FROM iam.memberships WHERE tenant_id = platform.current_tenant_id() AND user_id = $1`,
+      [userId],
+    );
+    return r.rows.map(mapMembership);
+  }
+
+  async findAccessPolicies(ids: readonly AccessPolicyId[]): Promise<AccessPolicy[]> {
+    if (ids.length === 0) return [];
+    const r = await this.db.query(
+      `SELECT ${ACCESS_POLICY_COLS} FROM iam.access_policies
+        WHERE tenant_id = platform.current_tenant_id() AND policy_id = ANY($1::uuid[])`,
+      [`{${ids.join(',')}}`],
+    );
+    return r.rows.map(mapAccessPolicy).filter((p): p is AccessPolicy => p !== null);
+  }
+
+  async findEncounterRef(id: EncounterId): Promise<EncounterRef | null> {
+    const r = await this.db.query<{ organization_id: string; patient_id: string; status: string }>(
+      `SELECT organization_id, patient_id, status FROM clinical.encounters
+        WHERE tenant_id = platform.current_tenant_id() AND encounter_id = $1`,
+      [id],
+    );
+    const row = r.rows[0];
+    return row ? { organizationId: row.organization_id as OrganizationId, patientId: row.patient_id, status: row.status } : null;
+  }
+
+  // ---- Đọc ----------------------------------------------------------------
+  async listMedications(q: { readonly activeOnly: boolean; readonly limit: number }): Promise<Medication[]> {
+    const r = await this.db.query<{ medication_id: string }>(
+      `SELECT medication_id FROM pharmacy.medications
+        WHERE tenant_id = platform.current_tenant_id() AND ($1::boolean = false OR is_active)
+        ORDER BY brand_name, medication_id LIMIT $2`,
+      [q.activeOnly, q.limit],
+    );
+    const out: Medication[] = [];
+    for (const row of r.rows) {
+      const m = await this.findMedication(asMedicationId(row.medication_id));
+      if (m) out.push(m);
+    }
+    return out;
+  }
+
+  async listStockLocations(organizationId: OrganizationId): Promise<StockLocation[]> {
+    const r = await this.db.query<{ location_id: string }>(
+      `SELECT location_id FROM pharmacy.stock_locations
+        WHERE tenant_id = platform.current_tenant_id() AND organization_id = $1 ORDER BY name, location_id`,
+      [organizationId],
+    );
+    const out: StockLocation[] = [];
+    for (const row of r.rows) {
+      const l = await this.findStockLocation(asStockLocationId(row.location_id));
+      if (l) out.push(l);
+    }
+    return out;
+  }
+
+  async listStockAtLocation(locationId: StockLocationId): Promise<StockLine[]> {
+    const r = await this.db.query<{
+      batch_id: string; batch_number: string; expiry_date: string; medication_id: string; brand_name: string;
+      quantity_on_hand: number; quantity_reserved: number; unit_cost: string;
+    }>(
+      `SELECT b.batch_id, bt.batch_number, bt.expiry_date::text AS expiry_date, bt.medication_id, m.brand_name,
+              b.quantity_on_hand, b.quantity_reserved, bt.unit_cost
+         FROM pharmacy.inventory_balances b
+         JOIN pharmacy.batches bt ON bt.tenant_id = b.tenant_id AND bt.batch_id = b.batch_id
+         JOIN pharmacy.medications m ON m.tenant_id = bt.tenant_id AND m.medication_id = bt.medication_id
+        WHERE b.tenant_id = platform.current_tenant_id() AND b.location_id = $1 AND b.quantity_on_hand > 0
+        ORDER BY m.brand_name, bt.expiry_date, bt.batch_id`,
+      [locationId],
+    );
+    return r.rows.map((x) => ({
+      batchId: asBatchId(x.batch_id),
+      batchNumber: x.batch_number,
+      expiryDate: x.expiry_date as ISODate,
+      medicationId: asMedicationId(x.medication_id),
+      brandName: x.brand_name,
+      quantityOnHand: Number(x.quantity_on_hand),
+      quantityReserved: Number(x.quantity_reserved),
+      unitCost: Number(x.unit_cost),
+    }));
+  }
 
   async insertSubstance(s: Substance): Promise<void> {
     await this.db.query(

@@ -78,8 +78,10 @@ INSERT INTO iam.users(user_id, tenant_id, external_subject, display_name) VALUES
   ('${U.pharmB}', '${TB}', 'sub-${U.pharmB}', 'Pharmacist B');
 INSERT INTO iam.memberships(tenant_id, user_id, organization_id, role) VALUES
   ('${TA}', '${U.pharmA}', '${OA}', 'pharmacist'),
+  ('${TA}', '${U.pharmA}', '${OA}', 'pharmacy_admin'),
   ('${TA}', '${U.docA}', '${OA}', 'doctor'),
-  ('${TB}', '${U.pharmB}', '${OB}', 'pharmacist');
+  ('${TB}', '${U.pharmB}', '${OB}', 'pharmacist'),
+  ('${TB}', '${U.pharmB}', '${OB}', 'pharmacy_admin');
 INSERT INTO patient.persons(person_id, tenant_id, given_name, family_name) VALUES
   ('${PA}', '${TA}', 'Hoa', 'Pham'), ('${PB}', '${TB}', 'Nam', 'Vu');
 INSERT INTO patient.patients(patient_id, tenant_id, person_id, organization_id, mrn) VALUES
