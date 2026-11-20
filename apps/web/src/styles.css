@@ -199,3 +199,41 @@ svg.qr { display: block; margin: 8px auto 0; max-width: 70vw; height: auto; imag
 @media print { svg.qr { width: 160px; } }
 .badge.match-strong { background: var(--ok-bg); border-color: var(--ok-line); color: #14532d; }
 .badge.match-weak { background: var(--warn-bg); border-color: var(--warn-line); color: #7a4b00; }
+
+/* ---- Thu ngân ---- */
+input.money { width: 150px; text-align: right; font-variant-numeric: tabular-nums; }
+fieldset.methods { border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; display: flex; gap: 14px; align-items: center; }
+fieldset.methods legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
+.totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.totals > div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; }
+.totals span { color: var(--muted); font-size: 13px; }
+.totals strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.totals .neg { border-color: var(--err-line); background: var(--err-bg); }
+.totals .pos { border-color: var(--warn-line); background: var(--warn-bg); }
+.totals .zero { border-color: var(--ok-line); background: var(--ok-bg); }
+td.neg { color: var(--danger); }
+td.pos { color: #92400e; }
+tr.strike td { text-decoration: line-through; }
+table.compact { width: auto; }
+.vietqr { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.vietqr svg.qr { margin: 0; }
+.deposit { border-top: 1px dashed var(--line); padding-top: 8px; }
+.print-receipt { border: 1px solid #9ca3af; border-radius: 8px; padding: 14px 20px; min-width: 320px; max-width: 460px; }
+.print-receipt h3 { text-align: center; margin: 4px 0; font-size: 18px; letter-spacing: 1px; }
+.print-receipt .pr-org { font-weight: 600; }
+.print-receipt .pr-no { text-align: center; color: #374151; font-size: 13px; }
+.print-receipt dl { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 10px 0; }
+.print-receipt dt { color: #4b5563; }
+.print-receipt dd { margin: 0; }
+.print-receipt .pr-cancelled { color: var(--danger); font-weight: 700; text-align: center; }
+.print-receipt .pr-sign { display: flex; justify-content: space-around; text-align: center; margin: 14px 0 40px; font-weight: 600; }
+.print-receipt .pr-note { font-size: 11px; color: #6b7280; text-align: center; }
+@media print {
+  .print-receipt, .print-receipt * { visibility: visible; }
+  .print-receipt { position: absolute; left: 0; top: 0; border: 0; }
+}
+@media print {
+  body[data-print='ticket'] .print-receipt, body[data-print='ticket'] .print-receipt * { visibility: hidden; }
+  body[data-print='receipt'] .print-ticket, body[data-print='receipt'] .print-ticket * { visibility: hidden; }
+}
+fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }

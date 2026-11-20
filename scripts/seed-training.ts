@@ -29,6 +29,7 @@ import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/s
 import { BookingService, PgBookingUnitOfWork, PublicBookingService, periodOpen, vnNow } from '../services/api/src/clinical/booking.service';
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
 import type { RateLimiter } from '../services/api/src/http/booking-routes';
+import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -138,6 +139,7 @@ const handler = createApiHandler({
   queueBoard: new PgQueueBoard(pool),
   bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
   publicBooking: new PublicBookingService({ pool, audit }),
+  finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
   // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
   rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
@@ -500,6 +502,37 @@ async function seedBooking(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 2d. Thu ngân: tạm ứng mặc định 500.000đ, bảng giá dịch vụ mẫu (giá giả để thực tập).
+//     KHÔNG cài tài khoản nhận chuyển khoản: số tài khoản bịa có thể trùng tài khoản thật của người khác.
+// ---------------------------------------------------------------------------
+const PRICE_LIST: ReadonlyArray<[string, string, string, number]> = [
+  ['KB-NOI', 'Khám Nội', 'exam', 150_000],
+  ['KB-NHI', 'Khám Nhi', 'exam', 150_000],
+  ['XN-CTM', 'Tổng phân tích tế bào máu ngoại vi', 'lab', 90_000],
+  ['XN-GLU', 'Định lượng glucose máu', 'lab', 40_000],
+  ['XN-NT', 'Tổng phân tích nước tiểu', 'lab', 60_000],
+  ['SA-BUNG', 'Siêu âm ổ bụng', 'imaging', 200_000],
+  ['XQ-NGUC', 'Chụp X-quang ngực thẳng', 'imaging', 120_000],
+  ['TT-ECG', 'Điện tim thường', 'procedure', 80_000],
+  ['TT-KHIDUNG', 'Khí dung', 'procedure', 50_000],
+];
+
+async function seedFinance(): Promise<void> {
+  const QL = 'tt.quanly1';
+  const st = (await call<{ version: number; depositDefault: number }>(QL, 'GET', `/api/finance/settings?organization=${ORG}`)).data;
+  if (st.version === 0) {
+    await call(QL, 'POST', '/api/finance/settings', { organizationId: ORG, depositDefault: 500_000, bank: null }, { 'if-match': 'W/"0"' });
+    bump('cài đặt thu ngân');
+  }
+  const have = new Set((await call<{ items: Array<{ code: string }> }>(QL, 'GET', `/api/finance/price-items?organization=${ORG}`)).data.items.map((i) => i.code));
+  for (const [code, name, category, unitPrice] of PRICE_LIST) {
+    if (have.has(code)) continue;
+    await call(QL, 'POST', '/api/finance/price-items', { organizationId: ORG, code, name, category, unitPrice });
+    bump('bảng giá');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3. Access policy cho điều dưỡng (quản lý)
 // ---------------------------------------------------------------------------
 async function seedPolicy(): Promise<void> {
@@ -538,6 +571,7 @@ try {
   await seedPolicy();
   await seedQueue();
   await seedBooking();
+  await seedFinance();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);
 } catch (e) {

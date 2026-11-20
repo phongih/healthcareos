@@ -11,9 +11,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { api, ApiError } from '../lib/api';
 import { CCCD_SYSTEM, fmtDateTime, type FhirPatient } from '../lib/fhir';
+import { fmtVnd } from '../lib/money';
 import { QrCode } from '../lib/qr-view';
 import { useSession } from '../lib/session';
-import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
+import { Card, ErrorBox, Field, Notice, printOnly, useAction, useIntentKey, useLoad } from '../lib/ui';
+import { FinanceError, PrintReceipt, ReceiptFields, receiptBody, useMyShift, useSettings, type Receipt, type ReceiptDraft } from './finance';
 import { PRIORITY_LABEL, useServicePoints, type ServicePoint } from './queue';
 
 declare const __HCOS_ENV_LABEL__: string;
@@ -552,8 +554,38 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
   const [mrn, setMrn] = useState('');
   const [reason, setReason] = useState(suggested);
   const [ticket, setTicket] = useState<IssuedTicket | null>(null);
+  // Thu tạm ứng cùng lúc check-in (tuỳ chọn; số tiền mặc định do quản lý cài, thường 500.000đ).
+  const { orgId: org, me } = useSession();
+  const orgName = me.memberships.find((m) => m.organization.organizationId === org)?.organization.name ?? '';
+  const settings = useSettings();
+  const shift = useMyShift();
+  const financeDenied = settings.error instanceof ApiError && settings.error.status === 403;
+  const [depositOn, setDepositOn] = useState(false);
+  const [draft, setDraft] = useState<ReceiptDraft>({ kind: 'deposit', method: 'cash', amount: null, reference: '', payerName: '' });
+  useEffect(() => {
+    if (settings.data) setDraft((d) => (d.amount === null ? { ...d, amount: settings.data!.depositDefault || null } : d));
+  }, [settings.data]);
+  const [depKey] = useIntentKey([draft.method, draft.amount, draft.reference, draft.payerName]);
+  const [checkedIn, setCheckedIn] = useState<{ patientId: string; mrn: string } | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const chosenMrn = choice === 'new' ? mrn.trim() : (found.candidates.find((c) => c.patientId === choice)?.mrn ?? '');
+
+  const collect = useAction(async (patientId: string) => {
+    const body = receiptBody(draft);
+    if (!body) throw new Error('Nhập số tiền tạm ứng.');
+    const r = await api<{ receipt: Receipt }>('POST', '/api/finance/receipts', {
+      headers: { 'idempotency-key': depKey }, body: { organizationId: org, patientId, ...body },
+    });
+    setReceipt(r.data.receipt);
+    shift.reload();
+  });
 
   const go = useAction(async () => {
+    if (depositOn) {
+      const body = receiptBody(draft);
+      if (!body) throw new Error('Nhập số tiền tạm ứng (hoặc bỏ chọn "Thu tạm ứng").');
+      if (body.method !== 'cash' && !body.reference) throw new Error('Chuyển khoản / thẻ cần mã tham chiếu.');
+    }
     let patientId = choice;
     if (choice === 'new') {
       const body: FhirPatient = {
@@ -569,10 +601,14 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
         managingOrganization: { reference: `Organization/${orgId}` },
       };
       patientId = (await api<FhirPatient>('POST', '/fhir/Patient', { body })).data.id!;
+      setChoice(patientId); // check-in lỗi rồi thử lại => không tạo hồ sơ lần hai
     }
     const r = await api<{ ticket: IssuedTicket }>('POST', `/api/bookings/${b.bookingId}/check-in`, { body: { patientId, priorityReason: reason || null } });
     setTicket(r.data.ticket);
+    setCheckedIn({ patientId, mrn: chosenMrn });
     onDone();
+    // Tạm ứng là phiếu riêng: lỗi (vd. chuyển khoản chưa về) không làm mất số đã cấp; thử lại dùng cùng Idempotency-Key.
+    if (depositOn) void collect.run(patientId);
   });
   const e = go.error;
   const dup = e instanceof ApiError && e.status === 409 && !e.detail;
@@ -589,8 +625,19 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
           <div className="pt-name">{b.familyName} {b.givenName}</div>
           <div className="pt-time">{fmtDateTime(ticket.issuedAt)}</div>
         </div>
+        {receipt && <PrintReceipt r={receipt} patient={{ mrn: checkedIn?.mrn ?? '', name: `${b.familyName} ${b.givenName}` }} orgName={orgName} />}
         <div className="stack">
-          <button onClick={() => window.print()}>In phiếu</button>
+          <button onClick={() => printOnly('ticket')}>In phiếu số</button>
+          {receipt && <button onClick={() => printOnly('receipt')}>In phiếu thu tạm ứng</button>}
+          {depositOn && !receipt && (
+            <>
+              {collect.busy && <span className="muted">Đang lập phiếu thu tạm ứng…</span>}
+              <FinanceError error={collect.error} />
+              {collect.error != null && checkedIn && (
+                <button className="secondary" disabled={collect.busy} onClick={() => void collect.run(checkedIn.patientId)}>Thu lại tạm ứng</button>
+              )}
+            </>
+          )}
           <button className="link" onClick={onClose}>Xong</button>
         </div>
       </div>
@@ -659,10 +706,25 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
               </select>
             </Field>
             <button type="submit" disabled={go.busy || !choice}>
-              {go.busy ? 'Đang xử lý…' : `Check-in & cấp số ${b.servicePointCode}`}
+              {go.busy ? 'Đang xử lý…' : `Check-in & cấp số ${b.servicePointCode}${depositOn && draft.amount ? ' + thu tạm ứng' : ''}`}
             </button>
             <button type="button" className="link" onClick={onClose}>Đóng</button>
           </div>
+          {!financeDenied && (
+            <div className="deposit">
+              {shift.data === null ? (
+                <p className="muted small">Thu tạm ứng: bạn chưa mở ca thu ngân (mở ở tab <a href="#/finance">Thu ngân</a>).</p>
+              ) : shift.data ? (
+                <>
+                  <label className="radio">
+                    <input type="checkbox" checked={depositOn} onChange={(ev) => setDepositOn(ev.target.checked)} />
+                    <span>Thu tạm ứng {draft.amount ? <strong>{fmtVnd(draft.amount)}</strong> : null} cùng lúc check-in</span>
+                  </label>
+                  {depositOn && <ReceiptFields draft={draft} set={setDraft} settings={settings.data} mrn={chosenMrn || 'BN'} fixedKind />}
+                </>
+              ) : null}
+            </div>
+          )}
           {queued ? (
             <Notice kind="warn">Bệnh nhân này đã có số đang chờ hôm nay. Xem tab Hàng đợi (huỷ số cũ nếu cần).</Notice>
           ) : dup ? (

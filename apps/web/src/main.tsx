@@ -8,6 +8,7 @@ import { ErrorBox } from './lib/ui';
 import { AdminScreen } from './screens/admin';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
+import { CaseScreen, FinanceScreen, ShiftScreen } from './screens/finance';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
 import { BoardScreen, QueueScreen } from './screens/queue';
@@ -22,6 +23,9 @@ type Route =
   | { name: 'pharmacy' }
   | { name: 'queue' }
   | { name: 'bookings' }
+  | { name: 'finance' }
+  | { name: 'financeCase'; id: string }
+  | { name: 'financeShift'; id: string }
   | { name: 'admin' }
   | { name: 'home' };
 
@@ -34,6 +38,9 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/pharmacy')) return { name: 'pharmacy' };
   if (hash.startsWith('#/queue')) return { name: 'queue' };
   if (hash.startsWith('#/bookings')) return { name: 'bookings' };
+  if ((m = new RegExp(`^#/finance/cases/(${UUID})$`).exec(hash))) return { name: 'financeCase', id: m[1]! };
+  if ((m = new RegExp(`^#/finance/shifts/(${UUID})$`).exec(hash))) return { name: 'financeShift', id: m[1]! };
+  if (hash.startsWith('#/finance')) return { name: 'finance' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   return { name: 'home' };
 }
@@ -60,6 +67,7 @@ function Shell({ me }: { me: Me }) {
     can.patients(roles) && { hash: '#/patients', label: 'Bệnh nhân', active: ['patients', 'patient', 'encounter'].includes(route.name) },
     can.queue(roles) && { hash: '#/queue', label: 'Hàng đợi', active: route.name === 'queue' },
     can.bookings(roles) && { hash: '#/bookings', label: 'Lịch hẹn', active: route.name === 'bookings' },
+    can.finance(roles) && { hash: '#/finance', label: 'Thu ngân', active: route.name.startsWith('finance') },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -119,6 +127,12 @@ function Shell({ me }: { me: Me }) {
           <QueueScreen />
         ) : route.name === 'bookings' ? (
           <BookingsScreen />
+        ) : route.name === 'finance' ? (
+          <FinanceScreen />
+        ) : route.name === 'financeCase' ? (
+          <CaseScreen id={route.id} />
+        ) : route.name === 'financeShift' ? (
+          <ShiftScreen id={route.id} />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
         ) : route.name === 'admin' ? (

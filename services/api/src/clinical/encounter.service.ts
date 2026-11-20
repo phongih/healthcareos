@@ -1011,6 +1011,9 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   bookings_code_uk: 'CODE_COLLISION',
   booking_portals_slug_uk: 'SLUG_TAKEN',
   booking_portals_org_uk: 'PORTAL_EXISTS',
+  price_items_code_uk: 'PRICE_CODE_TAKEN',
+  shifts_one_open_per_user_uk: 'SHIFT_ALREADY_OPEN',
+  cases_one_open_per_patient_uk: 'CASE_ALREADY_OPEN',
 };
 
 export function translatePgError(e: unknown): never {

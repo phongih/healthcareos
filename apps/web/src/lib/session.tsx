@@ -65,5 +65,6 @@ export const can = {
   admin: (r: ReadonlySet<Role>) => r.has('tenant_admin'),
   queue: (r: ReadonlySet<Role>) => ['doctor', 'clinic_staff', 'clinic_admin', 'tenant_admin'].some((x) => r.has(x as Role)),
   issueTicket: (r: ReadonlySet<Role>) => r.has('clinic_staff') || r.has('clinic_admin'),
+  finance: (r: ReadonlySet<Role>) => ['clinic_staff', 'cashier', 'clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   bookings: (r: ReadonlySet<Role>) => ['clinic_staff', 'clinic_admin', 'tenant_admin'].some((x) => r.has(x as Role)),
 };

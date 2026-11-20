@@ -115,3 +115,14 @@ export function useIntentKey(deps: unknown[]): [string, () => void] {
   useEffect(() => setKey(newIdempotencyKey()), deps);
   return [key, () => setKey(newIdempotencyKey())];
 }
+
+/** In chỉ một loại phiếu khi trên màn hình có nhiều phiếu (phiếu số, phiếu thu): CSS ẩn loại còn lại theo body[data-print]. */
+export function printOnly(kind: 'ticket' | 'receipt'): void {
+  document.body.dataset['print'] = kind;
+  const done = () => {
+    delete document.body.dataset['print'];
+    removeEventListener('afterprint', done);
+  };
+  addEventListener('afterprint', done);
+  window.print();
+}
