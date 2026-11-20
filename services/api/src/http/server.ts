@@ -19,6 +19,7 @@ import {
   type TenantContextOptions,
 } from '../../../../packages/security/src/tenant-context';
 import type { ReadinessProbe } from '../../../../packages/security/src/pg-readiness';
+import { buildBookingRoutes, handlePublicBooking, RateLimiter, type BookingApi, type PublicBookingApi } from './booking-routes';
 import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from './clinical-routes';
 import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
 import { buildPharmacyRoutes, type PharmacyApi } from './pharmacy-routes';
@@ -55,6 +56,12 @@ export interface ApiDeps {
   readonly queue?: QueueApi;
   /** Tuỳ chọn: màn hình gọi số công khai GET /api/public/queue-board (header X-Display-Key), KHÔNG cần đăng nhập. */
   readonly queueBoard?: { read(key: string): Promise<unknown | null> };
+  /** Tuỳ chọn: route lịch hẹn cho nhân viên (/api/bookings*, /api/booking-portal*, sức chứa phòng). */
+  readonly bookings?: BookingApi;
+  /** Tuỳ chọn: cổng đặt lịch công khai /api/public/booking/<slug>/*, KHÔNG cần đăng nhập (giới hạn tần suất theo IP). */
+  readonly publicBooking?: PublicBookingApi;
+  /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
+  readonly rateLimiter?: RateLimiter;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
   readonly readiness?: ReadinessProbe;
   readonly logger?: ApiLogger;
@@ -72,7 +79,9 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.pharmacy ? buildPharmacyRoutes(deps.pharmacy) : []),
     ...(deps.prescriptions ? buildPrescriptionRoutes(deps.prescriptions) : []),
     ...(deps.queue ? buildQueueRoutes(deps.queue) : []),
+    ...(deps.bookings ? buildBookingRoutes(deps.bookings) : []),
   ];
+  const limiter = deps.rateLimiter ?? new RateLimiter();
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
   const logger: ApiLogger = deps.logger ?? { error: (m, meta) => console.error(m, JSON.stringify(meta)) };
 
@@ -114,6 +123,15 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
         logger.error('queue board failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' });
         sendJson(res, 503, operationOutcome('transient', 'Temporarily unavailable'), FHIR_JSON, noStore);
       }
+      return;
+    }
+
+    // Cổng đặt lịch công khai (không đăng nhập): chỉ ghi lịch hẹn, không bao giờ trả hồ sơ bệnh nhân.
+    if (deps.publicBooking && url.pathname.startsWith('/api/public/booking/')) {
+      await handlePublicBooking(req, res, url, {
+        api: deps.publicBooking, limiter, baseHeaders,
+        onError: (e) => logger.error('public booking failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' }),
+      });
       return;
     }
 

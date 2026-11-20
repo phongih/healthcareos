@@ -159,3 +159,39 @@ h3 { font-size: 15px; margin: 12px 0 6px; }
 .board-error { background: #7f1d1d; padding: 8px 14px; border-radius: 8px; margin-top: 10px; }
 .board-speak { position: fixed; right: 16px; bottom: 16px; opacity: 0.6; }
 @keyframes blink { 50% { opacity: 0.35; } }
+
+/* ---- Đặt lịch online (công khai, ưu tiên điện thoại) ---- */
+.pub { min-height: 100vh; background: var(--bg); }
+.pub-head { background: var(--brand); color: var(--brand-ink); padding: 14px 16px; }
+.pub-head h1 { margin: 0 auto; max-width: 720px; font-size: 20px; }
+.pub-main { max-width: 720px; padding: 16px 12px 48px; }
+.pub-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.pub-card h2 { font-size: 16px; margin: 0 0 10px; }
+.pub-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+button.choice { background: #fff; color: var(--ink); border: 1px solid var(--line); display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 130px; padding: 8px 12px; text-align: left; }
+button.choice small { color: var(--muted); font-size: 12px; }
+button.choice.on { border-color: var(--brand); background: #e6f4f3; box-shadow: inset 0 0 0 1px var(--brand); }
+button.choice:disabled { opacity: 0.5; }
+.pub-days { display: grid; gap: 10px; }
+.pub-day-name { font-weight: 600; margin-bottom: 4px; }
+.pub-code { font-size: 40px; font-weight: 800; letter-spacing: 3px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--brand); margin: 8px 0; }
+.pub-done { text-align: center; }
+.pub-done .row { justify-content: center; }
+.pub-result { border-top: 1px solid var(--line); padding-top: 10px; }
+.pub-submit { width: 100%; font-size: 17px; padding: 12px; margin-top: 8px; }
+.consent { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45; margin-top: 10px; }
+.consent input { margin-top: 3px; flex: none; }
+.hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+input.code-input { text-transform: uppercase; letter-spacing: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; width: 150px; }
+.checkin { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.checkin .kv > div { display: flex; flex-direction: column; gap: 2px; }
+.checkin .kv .muted { font-size: 12px; }
+.checkin fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+label.radio { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.small { font-size: 12px; }
+.cap-name { min-width: 220px; }
+@media print {
+  .pub-done, .pub-done * { visibility: visible; }
+  .pub-done { position: absolute; left: 0; top: 0; border: 0; }
+  .pub-done button, .pub-done .muted { display: none; }
+}

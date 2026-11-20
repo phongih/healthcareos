@@ -13,7 +13,7 @@ import { fmtDateTime } from '../lib/fhir';
 import { useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, navigate, useAction, useLoad } from '../lib/ui';
 
-export interface ServicePoint { servicePointId: string; code: string; name: string; isActive: boolean; version: number }
+export interface ServicePoint { servicePointId: string; code: string; name: string; isActive: boolean; bookingCapacity: number; version: number }
 interface Ticket {
   ticketId: string; servicePointId: string; patientId: string; ticketNo: number; displayNo: string; servicePointCode: string; servicePointName: string;
   priorityReason: string | null; priorityRank: number; status: string; calledCount: number; calledAt: string | null; calledByUserId: string | null;

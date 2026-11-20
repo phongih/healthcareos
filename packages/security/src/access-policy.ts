@@ -134,6 +134,13 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'booking:read': {
+    basePermission: 'booking:read',
+    description: 'Xem lịch hẹn khám đặt online và tra theo mã đặt lịch',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',

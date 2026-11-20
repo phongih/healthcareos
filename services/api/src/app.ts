@@ -10,6 +10,7 @@ import { PgAuditSink } from '../../../packages/security/src/pg-audit-sink';
 import { assertSafeDatabaseRole, PgReadinessProbe } from '../../../packages/security/src/pg-readiness';
 import { PgTenantStatusLookup } from '../../../packages/security/src/pg-tenant-status';
 import type { PgPoolLike } from '../../../packages/security/src/tenant-context';
+import { BookingService, PgBookingUnitOfWork, PublicBookingService } from './clinical/booking.service';
 import { ClinicalEncounterService, PgClinicalUnitOfWork } from './clinical/encounter.service';
 import { loadConfig } from './config';
 import { createApiServer } from './http/server';
@@ -62,6 +63,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
       queue: new QueueService({ uow: new PgQueueUnitOfWork(pool), audit }),
       queueBoard: new PgQueueBoard(pool),
+      bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
+      publicBooking: new PublicBookingService({ pool, audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),

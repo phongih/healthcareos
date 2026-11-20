@@ -10,6 +10,7 @@
  *
  * Chạy lại an toàn: phần nào đã có (theo MRN, tên thuốc, tên kho, tên policy) thì bỏ qua.
  * Dữ liệu giả có dấu hiệu nhận biết: MRN bắt đầu "TT", CCCD bắt đầu "099" (không phải mã tỉnh), SĐT đầu "0120" (đầu số đã thu hồi).
+ * Lịch hẹn online giả dùng SĐT đầu "01209".
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -25,7 +26,9 @@ import { createApiHandler } from '../services/api/src/http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from '../services/api/src/iam/access-policy.service';
 import { PgPharmacyUnitOfWork, PharmacyInventoryService } from '../services/api/src/pharmacy/inventory.service';
 import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/src/clinical/prescription.service';
+import { BookingService, PgBookingUnitOfWork, PublicBookingService, periodOpen, vnNow } from '../services/api/src/clinical/booking.service';
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
+import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -133,6 +136,10 @@ const handler = createApiHandler({
   prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
   queue: new QueueService({ uow: new PgQueueUnitOfWork(pool), audit }),
   queueBoard: new PgQueueBoard(pool),
+  bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
+  publicBooking: new PublicBookingService({ pool, audit }),
+  // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
+  rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
 const server = createServer((req, res) => void handler(req, res));
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -424,6 +431,75 @@ async function seedQueue(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 2c. Đặt lịch online: sức chứa mỗi buổi, đường dẫn cổng, vài lịch hẹn để lễ tân tập check-in
+// ---------------------------------------------------------------------------
+const BOOKING_SLUG = process.env['TT_BOOKING_SLUG'] ?? 'thuc-tap';
+const BOOKING_CAPACITY = 10;
+/** Lịch hẹn của người đã có hồ sơ (tập chọn hồ sơ cũ) — chọn bệnh nhân không nằm trong hàng đợi mẫu. */
+const BOOKING_EXISTING_MRNS = ['TT00011', 'TT00012'];
+const BOOKING_NEW = [
+  { familyName: 'Trịnh Văn', givenName: 'Toàn', birthDate: '1988-04-12', sex: 'male', reason: 'Đau đầu, chóng mặt 3 ngày' },
+  { familyName: 'Lâm Thị', givenName: 'Hoa', birthDate: '1946-09-30', sex: 'female', reason: 'Tái khám huyết áp' },
+  { familyName: 'Mai Gia', givenName: 'Bảo', birthDate: '2022-01-15', sex: 'male', reason: 'Sốt 1 ngày, quấy khóc' },
+];
+
+async function seedBooking(): Promise<void> {
+  const QL = 'tt.quanly1';
+  const LT = 'tt.letan1';
+  const sps = (await call<{ servicePoints: Array<{ servicePointId: string; code: string; bookingCapacity: number; version: number }> }>(QL, 'GET', `/api/service-points?organization=${ORG}`)).data.servicePoints;
+  for (const sp of sps.filter((x) => ROOMS.some(([c]) => c === x.code) && x.bookingCapacity === 0)) {
+    await call(QL, 'POST', `/api/service-points/${sp.servicePointId}/booking-capacity`, { capacity: BOOKING_CAPACITY }, { 'if-match': `W/"${sp.version}"` });
+    bump('sức chứa đặt lịch');
+  }
+  const portal = (await call<{ portal: { slug: string; isActive: boolean } | null }>(QL, 'GET', `/api/booking-portal?organization=${ORG}`)).data.portal;
+  const slug = portal?.slug ?? (await call<{ slug: string }>(QL, 'POST', '/api/booking-portal', { organizationId: ORG, slug: BOOKING_SLUG })).data.slug;
+  if (!portal) bump('cổng đặt lịch');
+  console.log(`Trang đặt lịch online (công khai): ${process.env['TT_PUBLIC_ORIGIN'] ?? 'https://smart.id.vn'}/app/#/book/${slug}`);
+
+  // Buổi gần nhất còn nhận lịch (hôm nay nếu còn kịp, nếu không thì ngày làm việc kế tiếp).
+  const now = new Date();
+  let date = vnNow(now).date;
+  let period: 'morning' | 'afternoon' | null = null;
+  for (let d = 0; d < 8 && !period; d++) {
+    const t = new Date(`${vnNow(now).date}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + d);
+    date = t.toISOString().slice(0, 10);
+    period = periodOpen(date, 'morning', now) ? 'morning' : periodOpen(date, 'afternoon', now) ? 'afternoon' : null;
+  }
+  if (!period) return;
+  const existing = (await call<{ bookings: Array<{ phone: string }> }>(LT, 'GET', `/api/bookings?organization=${ORG}&date=${date}`)).data.bookings;
+  if (existing.some((b) => b.phone.startsWith('01209'))) {
+    bump('lịch hẹn đã có (bỏ qua)');
+    return;
+  }
+  const people: Array<{ familyName: string; givenName: string; birthDate: string; sex: string; reason: string; nationalId?: string }> = [];
+  for (const mrn of BOOKING_EXISTING_MRNS) {
+    const pt = (await call<{ entry?: Array<{ resource: { name?: Array<{ family?: string; given?: string[] }>; birthDate?: string; gender?: string } }> }>(
+      LT, 'GET', `/fhir/Patient?organization=${ORG}&mrn=${mrn}&_count=1`)).data.entry?.[0]?.resource;
+    const n = pt?.name?.[0];
+    if (!pt?.birthDate || !n?.family || !n.given?.length) continue;
+    people.push({ familyName: n.family, givenName: n.given.join(' '), birthDate: pt.birthDate, sex: pt.gender ?? 'unknown', reason: 'Tái khám (đặt online)' });
+  }
+  people.push(...BOOKING_NEW);
+  const opts = (await (await fetch(`${BASE}/api/public/booking/${slug}/options`)).json()) as { consentVersion: string; rooms: Array<{ servicePointId: string; code: string }> };
+  const codes: string[] = [];
+  for (const [i, p] of people.entries()) {
+    const room = opts.rooms[i % opts.rooms.length];
+    if (!room) break;
+    const r = await fetch(`${BASE}/api/public/booking/${slug}/bookings`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...p, servicePointId: room.servicePointId, visitDate: date, period, phone: `01209${String(10000 + i).slice(-5)}`, consent: true, consentVersion: opts.consentVersion }),
+    });
+    const text = await r.text();
+    if (!r.ok) throw new HttpError(r.status, text);
+    codes.push(`${(JSON.parse(text) as { code: string }).code} (${room.code}, ${p.familyName} ${p.givenName})`);
+    bump('lịch hẹn online');
+  }
+  console.log(`Lịch hẹn mẫu ${period === 'morning' ? 'sáng' : 'chiều'} ${date} — mã để tập check-in (dữ liệu giả):`);
+  for (const c of codes) console.log(`  ${c}`);
+}
+
+// ---------------------------------------------------------------------------
 // 3. Access policy cho điều dưỡng (quản lý)
 // ---------------------------------------------------------------------------
 async function seedPolicy(): Promise<void> {
@@ -461,6 +537,7 @@ try {
   await seedPendingPrescriptions(medId);
   await seedPolicy();
   await seedQueue();
+  await seedBooking();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);
 } catch (e) {
