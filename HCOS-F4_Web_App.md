@@ -25,6 +25,7 @@ Nối tiếp HCOS-F3. Không có migration mới. Phần kê đơn thêm sau, �
 | `GET /api/me` | Người dùng và các membership còn hiệu lực, kèm tên và loại organization. Không cần quyền admin. |
 | `GET /api/memberships?organization=<uuid>` | Chỉ tenant_admin; có ghi audit; tối đa 500 dòng. |
 | `GET /fhir/Encounter?patient=<id>` | Bundle searchset, sắp theo period_start giảm dần. |
+| `GET /api/worklist?organization=<id>` | Danh sách đang khám: đợt `in_progress` của cơ sở (tối đa 200, cũ nhất trước), có MRN, họ tên, lý do khám, bác sĩ. Cần quyền đọc hồ sơ; từng đợt khám còn qua `encounter:read` (lọc hoặc che lý do theo policy). Không trả CCCD hay liên lạc. Có audit `encounter.worklist`. |
 
 Về `GET /fhir/Encounter?patient=<id>`:
 - Cần quyền `patient:read` tại organization của bệnh nhân.

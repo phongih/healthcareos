@@ -46,6 +46,7 @@ export type ClinicalApi = Pick<
   ClinicalEncounterService,
   'registerPatient' | 'getPatient' | 'searchPatients' | 'createEncounter' | 'addCondition' | 'recordObservation' | 'closeEncounter' | 'getEncounterChart'
   | 'listEncountersForPatient'
+  | 'listOpenEncounters'
 >;
 
 export interface RouteInput {
@@ -220,6 +221,18 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
         const hidden = new Set(r.redactedEncounterIds);
         const resources = r.encounters.map((e) => labelRedacted(toFhirEncounter(e), hidden.has(e.encounterId) ? ['encounter.reasonText'] : []));
         return fhir(200, bundle('searchset', resources, hidden.size > 0 ? ['encounter.reasonText'] : []));
+      },
+    },
+    {
+      // Danh sách đang khám (worklist) của một cơ sở: JSON thường, không phải FHIR search (không có tham số tìm kiếm tự do).
+      method: 'GET',
+      pattern: ['api', 'worklist'],
+      handler: async (input) => {
+        const q = input.url.searchParams;
+        for (const k of q.keys()) if (k !== 'organization') throw new HttpError(400, 'not-supported', `Unsupported parameter '${k}'`);
+        const org = q.get('organization');
+        if (!org || !isUuid(org) || q.getAll('organization').length > 1) throw new HttpError(400, 'required', "Requires a valid 'organization' parameter");
+        return { status: 200, body: await api.listOpenEncounters(org, input.ctx), contentType: PLAIN_JSON };
       },
     },
     {

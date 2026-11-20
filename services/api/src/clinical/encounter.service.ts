@@ -128,6 +128,8 @@ export interface ClinicalRepository {
   findEncounter(id: EncounterId): Promise<Encounter | null>;
   /** Đợt khám của một patient, mới nhất trước. */
   listEncountersByPatient(patientId: PatientId, limit: number): Promise<Encounter[]>;
+  /** Đợt khám đang mở (in_progress) của một organization, cũ nhất trước, kèm MRN/tên bệnh nhân và tên bác sĩ phụ trách. */
+  listOpenEncounterSummaries(organizationId: OrganizationId, limit: number): Promise<OpenEncounterRow[]>;
   /** Cập nhật có điều kiện version; trả null nếu version không khớp / không tìm thấy. */
   updateEncounter(next: Encounter, expectedVersion: number): Promise<Encounter | null>;
   insertCondition(c: Condition): Promise<void>;
@@ -195,6 +197,32 @@ interface AuditMeta {
   readonly patientId?: PatientId;
   readonly organizationId?: OrganizationId;
 }
+
+export interface OpenEncounterRow {
+  readonly encounter: Encounter;
+  readonly mrn: string;
+  readonly familyName: string;
+  readonly givenName: string;
+  readonly practitionerName: string | null;
+}
+
+/** Một dòng trong danh sách đang khám (worklist). Không chứa định danh / liên lạc của bệnh nhân. */
+export interface WorklistItem {
+  readonly encounterId: EncounterId;
+  readonly patientId: PatientId;
+  readonly mrn: string;
+  readonly familyName: string;
+  readonly givenName: string;
+  readonly encounterClass: Encounter['encounterClass'];
+  readonly periodStart: string;
+  /** null khi không có hoặc bị policy che (xem reasonRedacted). */
+  readonly reasonText: string | null;
+  readonly reasonRedacted: boolean;
+  readonly practitionerUserId: UserId;
+  readonly practitionerName: string | null;
+}
+
+const WORKLIST_LIMIT = 200;
 
 export interface EncounterChart extends Redaction {
   readonly encounter: Encounter;
@@ -596,6 +624,62 @@ export class ClinicalEncounterService {
         this.event(ctx, { ...meta, organizationId: patient.organizationId }, 'success', user, { self: isSelf, count: out.length, filtered }),
       );
       return { encounters: out, filtered, redactedEncounterIds: redacted };
+    });
+  }
+
+  /**
+   * Danh sách đang khám của một organization (tối đa 200 đợt in_progress, cũ nhất trước) để bác sĩ / điều dưỡng bắt đầu ca
+   * mà không phải nhớ MRN. Cần quyền đọc hồ sơ tại organization; từng đợt khám còn phải qua `encounter:read`
+   * (đợt nào policy không cho xem thì bị lọc bỏ, `filtered` cho biết số bị lọc). Lý do khám bị che nếu policy che.
+   * Chỉ trả MRN + họ tên (không trả CCCD, ngày sinh, liên lạc).
+   */
+  async listOpenEncounters(
+    organizationId: string,
+    ctx: TenantContext = requireTenantContext(),
+  ): Promise<{ items: WorklistItem[]; filtered: number }> {
+    const meta: AuditMeta = { action: 'encounter.worklist', resourceType: 'Encounter' };
+    return this.tx(ctx, meta, async (repo) => {
+      if (!isUuid(organizationId)) throw new ClinicalError('VALIDATION', 'organization must be a UUID');
+      const org = organizationId.toLowerCase() as OrganizationId;
+      assertOrganizationAllowed(org, ctx);
+      const principal = await this.principal(repo, ctx, org);
+      const decision = this.decide(principal, 'patient:read', {});
+      const rows = await repo.listOpenEncounterSummaries(org, WORKLIST_LIMIT);
+      const items: WorklistItem[] = [];
+      let filtered = 0;
+      for (const r of rows) {
+        const e = r.encounter;
+        assertSameTenant(e, ctx);
+        if (e.organizationId !== org || e.status !== 'in_progress') continue; // phòng thủ chiều sâu
+        let d: AllowedDecision;
+        try {
+          d = this.decide(principal, 'encounter:read', {}, e);
+        } catch (err) {
+          if (err instanceof ClinicalError && err.code === 'FORBIDDEN') {
+            filtered++;
+            continue;
+          }
+          throw err;
+        }
+        const hideReason = d.hiddenFields.has('encounter.reasonText');
+        items.push({
+          encounterId: e.encounterId,
+          patientId: e.patientId,
+          mrn: r.mrn,
+          familyName: r.familyName,
+          givenName: r.givenName,
+          encounterClass: e.encounterClass,
+          periodStart: e.periodStart,
+          reasonText: hideReason ? null : e.reasonText,
+          reasonRedacted: hideReason,
+          practitionerUserId: e.practitionerUserId,
+          practitionerName: r.practitionerName,
+        });
+      }
+      await repo.appendAudit(
+        this.event(ctx, { ...meta, organizationId: org }, 'success', principal.user, { count: items.length, filtered, ...policyAudit(decision) }),
+      );
+      return { items, filtered };
     });
   }
 
@@ -1135,6 +1219,27 @@ export class PgClinicalRepository implements ClinicalRepository {
       [this.t, patientId, limit],
     );
     return r.rows.map(mapEncounter);
+  }
+
+  async listOpenEncounterSummaries(organizationId: OrganizationId, limit: number): Promise<OpenEncounterRow[]> {
+    const cols = ENCOUNTER_COLS.split(', ').map((c) => `e.${c}`).join(', ');
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT ${cols}, pt.mrn, ps.family_name, ps.given_name, u.display_name AS practitioner_name
+         FROM clinical.encounters e
+         JOIN patient.patients pt ON pt.tenant_id = e.tenant_id AND pt.patient_id = e.patient_id
+         JOIN patient.persons ps ON ps.tenant_id = pt.tenant_id AND ps.person_id = pt.person_id
+         LEFT JOIN iam.users u ON u.tenant_id = e.tenant_id AND u.user_id = e.practitioner_user_id
+        WHERE e.tenant_id = $1 AND e.organization_id = $2 AND e.status = 'in_progress'
+        ORDER BY e.period_start, e.encounter_id LIMIT $3`,
+      [this.t, organizationId, limit],
+    );
+    return r.rows.map((x: Record<string, unknown>) => ({
+      encounter: mapEncounter(x),
+      mrn: x['mrn'] as string,
+      familyName: x['family_name'] as string,
+      givenName: x['given_name'] as string,
+      practitionerName: (x['practitioner_name'] as string | null) ?? null,
+    }));
   }
 
   async updateEncounter(next: Encounter, expectedVersion: number): Promise<Encounter | null> {

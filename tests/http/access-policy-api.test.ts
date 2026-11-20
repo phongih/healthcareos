@@ -55,6 +55,7 @@ const clinical: ClinicalApi = {
   async closeEncounter() { throw new Error('unused'); },
   async getEncounterChart() { return { encounter, conditions: [], observations: [], redacted: ['conditions', 'encounter.reasonText'] }; },
   async listEncountersForPatient() { return { encounters: [encounter], filtered: 1, redactedEncounterIds: [ENC] }; },
+  async listOpenEncounters() { return { items: [], filtered: 0 }; },
 };
 
 const policiesApi: AccessPolicyApi = {

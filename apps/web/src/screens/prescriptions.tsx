@@ -114,7 +114,7 @@ export function EncounterPrescriptions({ encounterId, open, isPractitioner }: { 
             {p.prescription.status === 'active' &&
               p.prescriber.userId === me.user.userId &&
               p.items.every((i) => i.quantityDispensed === 0) && (
-                <button className="link danger" onClick={() => void cancel.run(p)} disabled={cancel.busy}>
+                <button className="link danger spaced" onClick={() => void cancel.run(p)} disabled={cancel.busy}>
                   Huỷ đơn
                 </button>
               )}

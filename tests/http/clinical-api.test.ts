@@ -80,6 +80,10 @@ const fake: ClinicalApi = {
     rec('closeEncounter', { id, version }, ctx); await maybeFail();
     return encounter({ status: 'finished', periodEnd: T0, version: version + 1 });
   },
+  async listOpenEncounters(org, ctx) {
+    rec('listOpenEncounters', org, ctx); await maybeFail();
+    return { items: [], filtered: 0 };
+  },
   async listEncountersForPatient(id, ctx) {
     rec('listEncountersForPatient', id, ctx); await maybeFail();
     return { encounters: [encounter()], filtered: 0, redactedEncounterIds: [] };
@@ -345,5 +349,17 @@ describe('S2 / optimistic concurrency via If-Match', () => {
     const r = await call('POST', `/fhir/Encounter/${ENC}/$close`, { headers: { 'if-match': '"3"' } });
     expect(r.status).toBe(412);
     expect(r.text).not.toContain(ENC);
+  });
+});
+
+describe('GET /api/worklist', () => {
+  it('cần đúng một organization hợp lệ; tham số lạ => 400', async () => {
+    const ok = await call('GET', `/api/worklist?organization=${OA}`);
+    expect(ok.status).toBe(200);
+    expect(ok.json).toEqual({ items: [], filtered: 0 });
+    expect(calls.at(-1)).toMatchObject({ fn: 'listOpenEncounters', arg: OA });
+    expect((await call('GET', '/api/worklist')).status).toBe(400);
+    expect((await call('GET', '/api/worklist?organization=abc')).status).toBe(400);
+    expect((await call('GET', `/api/worklist?organization=${OA}&all=1`)).status).toBe(400);
   });
 });
