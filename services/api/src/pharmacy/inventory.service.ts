@@ -9,7 +9,7 @@
  *  - Access policy (migration 007) trên membership chỉ thu hẹp thêm (vd. chỉ được thao tác tủ trực).
  *  - Cấp phát: đợt khám phải cùng organization với kho và chưa bị huỷ / nhập nhầm.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   isUuid,
@@ -156,7 +156,23 @@ export interface EncounterRef {
   readonly status: string;
 }
 
+export interface IdempotencyClaim {
+  readonly actorUserId: UserId;
+  readonly scope: string;
+  readonly key: string;
+  readonly requestHash: string;
+}
+
+export type IdempotencyClaimResult =
+  | { readonly kind: 'claimed' }
+  | { readonly kind: 'existing'; readonly requestHash: string; readonly response: unknown | null };
+
 export interface PharmacyRepository {
+  // Idempotency (migration 008): giữ khoá trong CÙNG transaction với thao tác.
+  /** INSERT ... ON CONFLICT DO NOTHING; nếu đã có (đã commit) => trả bản ghi hiện có. */
+  claimIdempotencyKey(c: IdempotencyClaim): Promise<IdempotencyClaimResult>;
+  completeIdempotencyKey(c: Omit<IdempotencyClaim, 'requestHash'>, response: unknown): Promise<void>;
+
   // Principal (vai trò từ DB + policy)
   findUserBySubject(subject: string): Promise<User | null>;
   listMemberships(userId: UserId): Promise<Membership[]>;
@@ -284,6 +300,31 @@ interface Outcome<T> {
   readonly value: T;
   readonly resourceId: string | null;
   readonly payload: Readonly<Record<string, unknown>>;
+}
+
+/** Khoá do client sinh (khuyến nghị UUID v4) — một khoá cho MỘT ý định nhập / cấp phát. */
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
+
+export interface Once<T> {
+  readonly value: T;
+  /** true = trả lại kết quả đã lưu của lần gửi trước, KHÔNG thực hiện lại. */
+  readonly replayed: boolean;
+}
+
+interface IdempotencyOptions {
+  readonly key: string;
+  readonly request: unknown;
+}
+
+/** sha256 của JSON chuẩn hoá (khoá sắp xếp) — so khớp "cùng một yêu cầu". */
+function requestHash(v: unknown): string {
+  const norm = (x: unknown): unknown =>
+    Array.isArray(x)
+      ? x.map(norm)
+      : x !== null && typeof x === 'object'
+        ? Object.fromEntries(Object.keys(x as object).sort().filter((k) => (x as Record<string, unknown>)[k] !== undefined).map((k) => [k, norm((x as Record<string, unknown>)[k])]))
+        : x;
+  return createHash('sha256').update(JSON.stringify(norm(v))).digest('hex');
 }
 
 function requireUuid(v: unknown, what: string): string {
@@ -436,7 +477,20 @@ export class PharmacyInventoryService {
   // ---- Nhập / xuất -------------------------------------------------------
   /** Nhập kho theo lô (Receipt) */
   async receiveStock(input: ReceiveStockInput, ctx: TenantContext): Promise<{ batch: Batch; movement: StockMovement }> {
-    return this.exec(ctx, 'pharmacy:stock:receive', 'pharmacy.stock.receive', 'pharmacy.batch', async (repo, gate) => {
+    return (await this.receive(input, ctx)).value;
+  }
+
+  /** Nhập kho có khoá idempotency: gửi lại cùng khoá + cùng nội dung => trả kết quả cũ, không cộng kho lần nữa. */
+  async receiveStockOnce(
+    input: ReceiveStockInput,
+    idempotencyKey: string,
+    ctx: TenantContext,
+  ): Promise<Once<{ batch: Batch; movement: StockMovement }>> {
+    return this.receive(input, ctx, { key: idempotencyKey, request: input });
+  }
+
+  private async receive(input: ReceiveStockInput, ctx: TenantContext, idem?: IdempotencyOptions) {
+    return this.run(ctx, 'pharmacy:stock:receive', 'pharmacy.stock.receive', 'pharmacy.batch', idem, async (repo, gate) => {
       if (!isUuid(input.medicationId) || !isUuid(input.locationId)) {
         throw new PharmacyError('VALIDATION', 'medicationId and locationId must be UUIDs');
       }
@@ -529,7 +583,16 @@ export class PharmacyInventoryService {
     input: DispenseMedicationInput,
     ctx: TenantContext,
   ): Promise<FefoAllocationPlan> {
-    return this.exec(ctx, 'pharmacy:stock:dispense', 'pharmacy.stock.dispense', 'pharmacy.medication', async (repo, gate) => {
+    return (await this.dispense(input, ctx)).value;
+  }
+
+  /** Cấp phát có khoá idempotency: gửi lại sau timeout KHÔNG trừ kho lần hai. */
+  async dispenseMedicationOnce(input: DispenseMedicationInput, idempotencyKey: string, ctx: TenantContext): Promise<Once<FefoAllocationPlan>> {
+    return this.dispense(input, ctx, { key: idempotencyKey, request: input });
+  }
+
+  private async dispense(input: DispenseMedicationInput, ctx: TenantContext, idem?: IdempotencyOptions) {
+    return this.run(ctx, 'pharmacy:stock:dispense', 'pharmacy.stock.dispense', 'pharmacy.medication', idem, async (repo, gate) => {
       if (!isUuid(input.medicationId) || !isUuid(input.locationId) || !isUuid(input.encounterId)) {
         throw new PharmacyError('VALIDATION', 'medicationId, locationId and encounterId must be UUIDs');
       }
@@ -673,6 +736,20 @@ export class PharmacyInventoryService {
     resourceType: string,
     work: (repo: PharmacyRepository, gate: Gate) => Promise<Outcome<T>>,
   ): Promise<T> {
+    return (await this.run(ctx, action, auditAction, resourceType, undefined, work)).value;
+  }
+
+  private async run<T>(
+    ctx: TenantContext,
+    action: PharmacyAction,
+    auditAction: string,
+    resourceType: string,
+    idem: IdempotencyOptions | undefined,
+    work: (repo: PharmacyRepository, gate: Gate) => Promise<Outcome<T>>,
+  ): Promise<Once<T>> {
+    if (idem !== undefined && (typeof idem.key !== 'string' || !IDEMPOTENCY_KEY_RE.test(idem.key))) {
+      throw new PharmacyError('VALIDATION', 'Idempotency-Key must be 8-128 characters of [A-Za-z0-9._:-]', { reason: 'INVALID_IDEMPOTENCY_KEY' });
+    }
     let auditOrg: OrganizationId | null = ctx.activeOrganizationId;
     let actor: string = ctx.userSubject;
     try {
@@ -689,6 +766,27 @@ export class PharmacyInventoryService {
         // Chặn sớm: không có vai trò phù hợp ở bất kỳ organization nào trong phạm vi => 403 trước mọi truy vấn khác.
         if (!active.some((m) => roles.includes(m.role) && ctx.allowedOrganizationIds.includes(m.organizationId))) {
           throw new PharmacyError('FORBIDDEN', `Missing permission ${perm}`);
+        }
+
+        // Idempotency: giữ khoá TRƯỚC khi làm việc, trong cùng transaction. Bản ghi đã commit => trả lại kết quả cũ.
+        let claim: IdempotencyClaim | null = null;
+        if (idem) {
+          claim = { actorUserId: user.userId, scope: auditAction, key: idem.key, requestHash: requestHash(idem.request) };
+          const r = await repo.claimIdempotencyKey(claim);
+          if (r.kind === 'existing') {
+            if (r.requestHash !== claim.requestHash) {
+              throw new PharmacyError('VALIDATION', 'Idempotency-Key was already used with a different request', {
+                reason: 'IDEMPOTENCY_KEY_REUSED',
+              });
+            }
+            if (r.response === null) {
+              throw new PharmacyError('CONFLICT', 'A request with this Idempotency-Key is still in progress', { reason: 'IDEMPOTENCY_IN_PROGRESS' });
+            }
+            await repo.appendAudit(
+              this.event(ctx, actor, auditOrg, auditAction, resourceType, null, 'success', { idempotentReplay: true, idempotencyKey: idem.key }),
+            );
+            return { value: r.response as T, replayed: true };
+          }
         }
 
         let called = false;
@@ -716,8 +814,17 @@ export class PharmacyInventoryService {
 
         const out = await work(repo, gate);
         if (!called) throw new Error(`authorization gate was not invoked for ${auditAction}`);
-        await repo.appendAudit(this.event(ctx, actor, auditOrg, auditAction, resourceType, out.resourceId, 'success', out.payload));
-        return out.value;
+        if (claim) {
+          // Lưu đúng JSON mà client nhận để lần gửi lại trả y hệt.
+          await repo.completeIdempotencyKey(claim, JSON.parse(JSON.stringify(out.value)));
+        }
+        await repo.appendAudit(
+          this.event(ctx, actor, auditOrg, auditAction, resourceType, out.resourceId, 'success', {
+            ...out.payload,
+            ...(idem ? { idempotencyKey: idem.key } : {}),
+          }),
+        );
+        return { value: out.value, replayed: false };
       });
     } catch (e) {
       await this.auditFailure(ctx, actor, auditOrg, auditAction, resourceType, e);
@@ -815,6 +922,35 @@ export interface PgClientLike {
 
 export class PgPharmacyRepository implements PharmacyRepository {
   constructor(private readonly db: PgClientLike) {}
+
+  // ---- Idempotency --------------------------------------------------------
+  async claimIdempotencyKey(c: IdempotencyClaim): Promise<IdempotencyClaimResult> {
+    const ins = await this.db.query<{ ok: number }>(
+      `INSERT INTO platform.idempotency_keys (tenant_id, actor_user_id, scope, idem_key, request_hash)
+       VALUES (platform.current_tenant_id(), $1, $2, $3, $4)
+       ON CONFLICT (tenant_id, actor_user_id, scope, idem_key) DO NOTHING
+       RETURNING 1 AS ok`,
+      [c.actorUserId, c.scope, c.key, c.requestHash],
+    );
+    if (ins.rows.length > 0) return { kind: 'claimed' };
+    const r = await this.db.query<{ request_hash: string; response: unknown }>(
+      `SELECT request_hash, response FROM platform.idempotency_keys
+        WHERE tenant_id = platform.current_tenant_id() AND actor_user_id = $1 AND scope = $2 AND idem_key = $3`,
+      [c.actorUserId, c.scope, c.key],
+    );
+    const row = r.rows[0];
+    if (!row) throw new PharmacyError('CONFLICT', 'Idempotency key could not be claimed', { reason: 'IDEMPOTENCY_IN_PROGRESS' });
+    const response = typeof row.response === 'string' ? JSON.parse(row.response) : (row.response ?? null);
+    return { kind: 'existing', requestHash: row.request_hash, response };
+  }
+
+  async completeIdempotencyKey(c: Omit<IdempotencyClaim, 'requestHash'>, response: unknown): Promise<void> {
+    await this.db.query(
+      `UPDATE platform.idempotency_keys SET response = $4::jsonb, completed_at = now()
+        WHERE tenant_id = platform.current_tenant_id() AND actor_user_id = $1 AND scope = $2 AND idem_key = $3`,
+      [c.actorUserId, c.scope, c.key, JSON.stringify(response)],
+    );
+  }
 
   // ---- Principal ----------------------------------------------------------
   // Tenant = tenant của transaction (RLS); thêm điều kiện tường minh để không phụ thuộc riêng vào RLS.

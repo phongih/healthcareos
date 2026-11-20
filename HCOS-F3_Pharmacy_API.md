@@ -54,8 +54,24 @@ Trước đây mọi lỗi dược đều thành 500.
 - Các thao tác tạo, định danh, merge, unmerge và `POST /fhir/Patient` đều đi qua policy (chỉ thu hẹp).
 - Audit ghi `accessPolicyIds`. Audit từ chối ghi `reason: ACCESS_POLICY`.
 
+## 4. Chống gửi trùng (migration 008)
+`POST /api/pharmacy/receipts` và `POST /api/pharmacy/dispenses` **bắt buộc** header `Idempotency-Key`. Thiếu header thì trả 428. Khoá dài 8–128 ký tự `[A-Za-z0-9._:-]`, khuyến nghị dùng UUID v4, mỗi ý định nhập hoặc cấp phát dùng một khoá.
+
+| Tình huống | Kết quả |
+|---|---|
+| Lần đầu | thực hiện, lưu kết quả **trong cùng transaction** với thao tác kho |
+| Gửi lại cùng khoá + cùng body | trả lại đúng kết quả cũ (cùng status 201) kèm `Idempotent-Replayed: true`; **không** đụng tới kho; audit ghi `idempotentReplay` |
+| Gửi đồng thời cùng khoá | PostgreSQL bắt lần sau chờ lần trước commit, rồi trả kết quả đã lưu (test: 8 request song song thì đúng 1 lần trừ kho) |
+| Cùng khoá, body khác | 422 `IDEMPOTENCY_KEY_REUSED` |
+| Lần trước lỗi (hết hàng, sai dữ liệu…) | khoá rollback cùng thao tác, nên gửi lại sẽ **thực hiện lại** |
+| Người dùng khác dùng trùng khoá | yêu cầu độc lập: không gian khoá theo (tenant, người gọi, loại thao tác) |
+
+- Body được so khớp qua sha256 của JSON chuẩn hoá (không phụ thuộc thứ tự khoá).
+- Bảng `platform.idempotency_keys` có RLS FORCE theo tenant và FK người gọi. `request_hash` và `response` bất biến sau khi hoàn tất. Không có quyền DELETE.
+- Replay chỉ kiểm vai trò ở mức tenant, không kiểm lại policy theo kho: người gọi chỉ nhận lại kết quả của **chính mình** và không có thay đổi dữ liệu nào.
+- Chưa có job dọn khoá cũ (index `created_at` đã sẵn). Khi thêm, nên giữ ít nhất 24 giờ.
+
 ## Giới hạn đã biết
-- **Chưa có idempotency cho `POST /api/pharmacy/dispenses` và `/receipts`**: client gửi lại sau timeout sẽ trừ hoặc cộng kho hai lần. Cần thêm `Idempotency-Key` trước khi dùng thật.
 - Chưa có chuyển kho, điều chỉnh hay huỷ (loại `transfer`, `adjustment`, `disposal` đã có trong schema nhưng chưa có API). Chưa có FHIR MedicationDispense.
 - `listMedications` và `listStockLocations` đọc từng dòng (N+1). Ổn ở quy mô PoC (≤ 200 dòng).
 - `pharmacy:catalog:read` cho phép tất cả vai trò lâm sàng xem danh mục. Danh mục không chứa PHI.

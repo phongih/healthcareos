@@ -8,11 +8,15 @@
  *   GET  /api/pharmacy/locations?organization=<uuid>                vị trí kho của organization
  *   POST /api/pharmacy/locations                                    tạo kho / quầy / tủ trực
  *   GET  /api/pharmacy/locations/:id/stock                          tồn kho theo lô
- *   POST /api/pharmacy/receipts                                     nhập kho theo lô
- *   POST /api/pharmacy/dispenses                                    cấp phát FEFO cho một đợt khám
+ *   POST /api/pharmacy/receipts                                     nhập kho theo lô         (Idempotency-Key bắt buộc)
+ *   POST /api/pharmacy/dispenses                                    cấp phát FEFO cho đợt khám (Idempotency-Key bắt buộc)
  *   GET  /api/pharmacy/dispenses?encounter=<uuid>                   các lần cấp phát của đợt khám
  *
  * Body chỉ lấy khoá đã biết; sai kiểu => 422 trước khi vào service.
+ *
+ * Idempotency (nhập / cấp phát): thiếu header => 428. Gửi lại cùng khoá + cùng body => trả lại đúng kết quả cũ
+ * (cùng status) kèm `Idempotent-Replayed: true`, không đụng tới kho. Cùng khoá, body khác => 422 IDEMPOTENCY_KEY_REUSED.
+ * Lần gửi trước bị lỗi thì khoá không được lưu: gửi lại sẽ thực hiện lại.
  */
 import { isUuid } from '../../../../packages/domain/src/s0-contracts';
 import { toFhirMedication } from '../../../../packages/domain/src/s3-pharmacy-contracts';
@@ -27,8 +31,16 @@ import { FHIR_JSON, HttpError, PLAIN_JSON } from './http-kernel';
 export type PharmacyApi = Pick<
   PharmacyInventoryService,
   | 'listMedications' | 'getMedication' | 'createMedication' | 'createSubstance' | 'listStockLocations' | 'createStockLocation'
-  | 'getStock' | 'receiveStock' | 'dispenseMedication' | 'listDispensesByEncounter'
+  | 'getStock' | 'receiveStockOnce' | 'dispenseMedicationOnce' | 'listDispensesByEncounter'
 >;
+
+function idempotencyKey(input: Parameters<Route['handler']>[0]): string {
+  const raw = input.req.headers['idempotency-key'];
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (v === undefined || v === '') throw new HttpError(428, 'required', 'Idempotency-Key header is required for this operation');
+  return v;
+}
+const replayHeaders = (replayed: boolean): Record<string, string> => (replayed ? { 'idempotent-replayed': 'true' } : {});
 
 const json = (status: number, body: unknown, headers?: Record<string, string>): RouteResult =>
   ({ status, body, contentType: PLAIN_JSON, ...(headers ? { headers } : {}) });
@@ -142,8 +154,9 @@ export function buildPharmacyRoutes(api: PharmacyApi): readonly Route[] {
       method: 'POST',
       pattern: ['api', 'pharmacy', 'receipts'],
       handler: async (input) => {
+        const key = idempotencyKey(input);
         const o = await obj(input);
-        const r = await api.receiveStock(
+        const r = await api.receiveStockOnce(
           {
             medicationId: str(o, 'medicationId', 36, true),
             locationId: str(o, 'locationId', 36, true),
@@ -153,17 +166,19 @@ export function buildPharmacyRoutes(api: PharmacyApi): readonly Route[] {
             quantity: num(o, 'quantity'),
             ...optional(o, ['manufacturingDate', 10], ['reason', 500]),
           },
+          key,
           input.ctx,
         );
-        return json(201, r);
+        return json(201, r.value, replayHeaders(r.replayed));
       },
     },
     {
       method: 'POST',
       pattern: ['api', 'pharmacy', 'dispenses'],
       handler: async (input) => {
+        const key = idempotencyKey(input);
         const o = await obj(input);
-        const plan = await api.dispenseMedication(
+        const plan = await api.dispenseMedicationOnce(
           {
             medicationId: str(o, 'medicationId', 36, true),
             locationId: str(o, 'locationId', 36, true),
@@ -171,9 +186,10 @@ export function buildPharmacyRoutes(api: PharmacyApi): readonly Route[] {
             quantity: num(o, 'quantity'),
             ...optional(o, ['reason', 500]),
           },
+          key,
           input.ctx,
         );
-        return json(201, plan);
+        return json(201, plan.value, replayHeaders(plan.replayed));
       },
     },
     {
