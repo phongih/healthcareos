@@ -8,6 +8,7 @@ import {
 } from '../lib/fhir';
 import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, navigate, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
+import { IssueTicket } from './queue';
 
 type Mode = 'mrn' | 'cccd' | 'name';
 
@@ -298,6 +299,7 @@ export function PatientDetail({ id }: { id: string }) {
           </dl>
         </Card>
       )}
+      {p && can.issueTicket(roles) && <IssueTicket patientId={p.id!} patientName={patientName(p)} birthDate={p.birthDate} />}
       {p && can.openEncounter(roles) && <OpenEncounter patient={p} />}
       <Card title="Các đợt khám">
         <ErrorBox error={encs.error} />

@@ -40,18 +40,32 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 - 14 thuốc thông dụng; hai kho là "Kho tổng" và "Quầy cấp phát thực tập".
 - Ở quầy, mỗi thuốc có 1 lô cận hạn (20–75 ngày) và 1 lô hạn xa. Vì vậy cấp phát sẽ lấy lô cận hạn trước (FEFO).
 
+- **Hàng đợi:** có 2 phòng `N1` và `N2`, và **8 số đang chờ hôm nay** (bệnh nhân `TT00001`–`TT00004`, `TT00006`–`TT00009`).
+  - Số thứ tự tính theo ngày. Muốn có số chờ mới cho ngày hôm sau, quản trị chạy lại `setup-training.sh`.
+  - Đường dẫn **màn hình TV** được in một lần lúc tạo. Mất đường dẫn thì quản lý tạo cái mới ở tab Hàng đợi → Cài đặt.
+
 ## Bài tập theo vai trò
 **Lễ tân** (`tt.letan1`)
 1. Tìm bệnh nhân `TT00012` theo MRN. Sau đó tìm lại người đó theo họ tên và ngày sinh.
 2. Đăng ký một bệnh nhân mới với MRN `TT9xxxx` tự đặt và CCCD `099…`.
 3. Đăng ký lại đúng người vừa tạo, xem cảnh báo trùng hiện ra thế nào.
+4. Ở hồ sơ bệnh nhân `TT00012`, thẻ **Cấp số khám**: chọn phòng `N1` rồi **Cấp số** và **In phiếu**.
+   - Thử cấp thêm số cho cùng người đó: hệ thống báo bệnh nhân đã có số.
+   - Với bệnh nhân từ đủ 75 tuổi hoặc dưới 6 tuổi, hệ thống tự gợi ý ưu tiên. Thử chọn ưu tiên "Cấp cứu" cho một người khác.
+5. Tab **Hàng đợi**: số nào bác sĩ đánh dấu **Vắng mặt** thì bấm **Đưa lại hàng chờ**. Thử **Huỷ số** một người.
 
 **Điều dưỡng** (`tt.dieuduong1`)
 1. Mở bệnh nhân `TT00005`. Thấy CCCD bị che (nhãn "đã che").
 2. Thử tìm bệnh nhân theo CCCD: hệ thống từ chối, đúng như policy.
 3. Vào đợt khám đang mở, ghi nhiệt độ và SpO₂.
 
-**Bác sĩ** (`tt.bacsi1`, `tt.bacsi2`)
+**Bác sĩ — gọi số** (`tt.bacsi1`, `tt.bacsi2`)
+1. Tab **Hàng đợi**, chọn phòng (mỗi bác sĩ một phòng, vd. `tt.bacsi1` → `N1`, `tt.bacsi2` → `N2`).
+2. Bấm **Gọi số tiếp theo**. Để ý số ưu tiên được gọi trước. Nếu đang mở màn hình TV, số vừa gọi sẽ nhấp nháy ở đó.
+3. Bấm **Gọi lại** một lần, rồi **Bắt đầu khám**: hệ thống tạo đợt khám và mở thẳng màn đợt khám.
+4. Gọi số tiếp theo rồi bấm **Vắng mặt**, để lễ tân tập đưa số đó lại hàng chờ.
+
+**Bác sĩ — khám và kê đơn** (`tt.bacsi1`, `tt.bacsi2`)
 1. Màn **Bệnh nhân** có thẻ **Đang khám** (mặc định "Của tôi"), liệt kê các đợt khám chưa kết thúc mà bạn phụ trách. Bấm vào một bệnh nhân để mở đợt khám, rồi xem các sinh hiệu điều dưỡng đã ghi.
    - Chỉ bác sĩ phụ trách mới kê đơn được, và chỉ khi đợt khám chưa kết thúc. Nếu không kê được, màn hình sẽ ghi lý do.
    - Phần lớn đợt khám trong dữ liệu giả đã kết thúc, nên không kê đơn được. Nếu muốn, bác sĩ có thể tự mở đợt khám mới cho bất kỳ bệnh nhân nào.
@@ -79,6 +93,7 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 3. Thêm một thuốc mới vào danh mục.
 
 **Quản lý** (`tt.quanly1`)
+0. Tab **Hàng đợi → Cài đặt hàng đợi**: xem 2 phòng; thêm phòng `NHI` "Phòng khám Nhi"; tạo một **đường dẫn màn hình** mới rồi mở nó ở tab khác, để làm màn hình TV.
 1. Mở tab Quản trị, xem policy của điều dưỡng và lịch sử phiên bản.
 2. Sửa policy, ví dụ giới hạn điều dưỡng chỉ được ghi nhiệt độ và SpO₂, rồi đăng nhập lại bằng `tt.dieuduong1` để kiểm tra.
 3. Gỡ policy khỏi điều dưỡng rồi gán lại.

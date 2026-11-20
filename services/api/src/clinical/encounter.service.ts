@@ -1005,6 +1005,8 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   patients_pkey: 'ID_COLLISION',
   conditions_encounter_code_uk: 'DUPLICATE_CONDITION',
   prescription_items_medication_uk: 'DUPLICATE_MEDICATION',
+  queue_tickets_one_active_uk: 'PATIENT_ALREADY_QUEUED',
+  service_points_code_uk: 'SERVICE_POINT_CODE_TAKEN',
 };
 
 export function translatePgError(e: unknown): never {

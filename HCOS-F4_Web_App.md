@@ -1,6 +1,6 @@
 # HCOS-F4 — Ứng dụng web tối thiểu (`/app`)
 
-Nối tiếp HCOS-F3. Không có migration mới. Phần kê đơn thêm sau, ở HCOS-F5 (`HCOS-F5_Prescriptions.md`).
+Nối tiếp HCOS-F3. Không có migration mới. Phần kê đơn thêm sau, ở HCOS-F5 (`HCOS-F5_Prescriptions.md`); hàng đợi số thứ tự và màn hình TV ở HCOS-F6 (`HCOS-F6_Visit_Queue.md`).
 
 **Trạng thái kiểm chứng trên sandbox:**
 - Backend: tsc strict sạch; toàn bộ unit suite và 9 integration suite (PG 16) xanh.

@@ -23,6 +23,7 @@ import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from '.
 import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
 import { buildPharmacyRoutes, type PharmacyApi } from './pharmacy-routes';
 import { buildPrescriptionRoutes, type PrescriptionApi } from './prescription-routes';
+import { buildQueueRoutes, type QueueApi } from './queue-routes';
 import { buildRegistryRoutes, type RegistryApi } from './registry-routes';
 import {
   FHIR_JSON,
@@ -50,6 +51,10 @@ export interface ApiDeps {
   readonly pharmacy?: PharmacyApi;
   /** Tuỳ chọn: bật các route đơn thuốc (/api/prescriptions*). */
   readonly prescriptions?: PrescriptionApi;
+  /** Tuỳ chọn: bật các route hàng đợi khám (/api/service-points*, /api/queue*). */
+  readonly queue?: QueueApi;
+  /** Tuỳ chọn: màn hình gọi số công khai GET /api/public/queue-board (header X-Display-Key), KHÔNG cần đăng nhập. */
+  readonly queueBoard?: { read(key: string): Promise<unknown | null> };
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
   readonly readiness?: ReadinessProbe;
   readonly logger?: ApiLogger;
@@ -66,6 +71,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.accessPolicies ? buildAccessPolicyRoutes(deps.accessPolicies) : []),
     ...(deps.pharmacy ? buildPharmacyRoutes(deps.pharmacy) : []),
     ...(deps.prescriptions ? buildPrescriptionRoutes(deps.prescriptions) : []),
+    ...(deps.queue ? buildQueueRoutes(deps.queue) : []),
   ];
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
   const logger: ApiLogger = deps.logger ?? { error: (m, meta) => console.error(m, JSON.stringify(meta)) };
@@ -92,6 +98,22 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     if (url.pathname === '/readyz' && method === 'GET') {
       const ready = deps.readiness ? await deps.readiness.check().catch(() => false) : false;
       sendJson(res, ready ? 200 : 503, { status: ready ? 'ready' : 'unavailable' }, PLAIN_JSON, { ...baseHeaders, 'cache-control': 'no-store' });
+      return;
+    }
+
+    // Màn hình gọi số công khai: chỉ số thứ tự + phòng (không có dữ liệu bệnh nhân), xác thực bằng khoá hiển thị.
+    if (url.pathname === '/api/public/queue-board' && method === 'GET' && deps.queueBoard) {
+      const raw = req.headers['x-display-key'];
+      const key = Array.isArray(raw) ? raw[0] : raw;
+      const noStore = { ...baseHeaders, 'cache-control': 'no-store' };
+      try {
+        const board = key ? await deps.queueBoard.read(key) : null;
+        if (!board) sendJson(res, 404, operationOutcome('not-found', 'Display not found'), FHIR_JSON, noStore);
+        else sendJson(res, 200, board, PLAIN_JSON, noStore);
+      } catch (e) {
+        logger.error('queue board failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' });
+        sendJson(res, 503, operationOutcome('transient', 'Temporarily unavailable'), FHIR_JSON, noStore);
+      }
       return;
     }
 
