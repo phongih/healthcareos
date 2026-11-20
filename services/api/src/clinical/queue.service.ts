@@ -66,6 +66,8 @@ export interface ServicePoint {
   readonly code: string;
   readonly name: string;
   readonly isActive: boolean;
+  /** Số chỗ đặt online mỗi buổi (HCOS-F7); 0 = không nhận đặt lịch online. */
+  readonly bookingCapacity: number;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly version: number;
@@ -248,7 +250,7 @@ export class QueueService {
       this.decide(p, 'queue:manage');
       const now = this.now();
       const sp: ServicePoint = {
-        tenantId: ctx.tenantId, servicePointId: this.newId(), organizationId: org, code, name, isActive: true, createdAt: now, updatedAt: now, version: 1,
+        tenantId: ctx.tenantId, servicePointId: this.newId(), organizationId: org, code, name, isActive: true, bookingCapacity: 0, createdAt: now, updatedAt: now, version: 1,
       };
       await repo.insertServicePoint(sp);
       await repo.appendAudit(this.event(ctx, { ...meta, resourceId: sp.servicePointId, organizationId: org }, 'success', p.user, { code }));
@@ -597,7 +599,7 @@ export class QueueService {
 // ===========================================================================
 // PostgreSQL adapter
 // ===========================================================================
-const SP_COLS = 'service_point_id, tenant_id, organization_id, code, name, is_active, created_at, updated_at, version';
+const SP_COLS = 'service_point_id, tenant_id, organization_id, code, name, is_active, booking_capacity, created_at, updated_at, version';
 const T_COLS =
   'ticket_id, tenant_id, organization_id, service_point_id, patient_id, queue_date::text AS queue_date, ticket_no, priority_reason, priority_rank, status, ' +
   'called_count, called_at, called_by_user_id, encounter_id, issued_by_user_id, issued_at, updated_at, version';
@@ -606,7 +608,7 @@ const T_COLS =
 const bool = (v: unknown): boolean => v === true || v === 't';
 const mapSp = (r: any): ServicePoint => ({
   tenantId: r.tenant_id, servicePointId: r.service_point_id, organizationId: r.organization_id, code: r.code, name: r.name,
-  isActive: bool(r.is_active), createdAt: iso(r.created_at), updatedAt: iso(r.updated_at), version: num(r.version),
+  isActive: bool(r.is_active), bookingCapacity: num(r.booking_capacity ?? 0), createdAt: iso(r.created_at), updatedAt: iso(r.updated_at), version: num(r.version),
 });
 const mapTicket = (r: any): QueueTicket => ({
   tenantId: r.tenant_id, ticketId: r.ticket_id, organizationId: r.organization_id, servicePointId: r.service_point_id, patientId: r.patient_id,

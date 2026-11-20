@@ -43,6 +43,10 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 - **Hàng đợi:** có 2 phòng `N1` và `N2`, và **8 số đang chờ hôm nay** (bệnh nhân `TT00001`–`TT00004`, `TT00006`–`TT00009`).
   - Số thứ tự tính theo ngày. Muốn có số chờ mới cho ngày hôm sau, quản trị chạy lại `setup-training.sh`.
   - Đường dẫn **màn hình TV** được in một lần lúc tạo. Mất đường dẫn thì quản lý tạo cái mới ở tab Hàng đợi → Cài đặt.
+- **Đặt lịch online:** phòng `N1`, `N2` nhận **10 chỗ mỗi buổi**. Trang đặt lịch công khai: `https://smart.id.vn/app/#/book/thuc-tap` (không cần đăng nhập, mở được trên điện thoại).
+  - Có **5 lịch hẹn mẫu** ở buổi gần nhất còn nhận lịch (SĐT giả đầu `01209`); 2 người trùng hồ sơ cũ `TT00011`, `TT00012`, 3 người mới.
+  - Mã đặt lịch mẫu được in ra khi chạy `setup-training.sh` (chỉ dữ liệu giả). Quên mã thì check-in từ danh sách trong ngày.
+  - Chỉ check-in được **đúng ngày khám**. Nếu lịch mẫu rơi vào ngày mai, hôm nay hãy tự đặt một lịch buổi chiều (trước 16:00) để tập.
 
 ## Bài tập theo vai trò
 **Lễ tân** (`tt.letan1`)
@@ -53,6 +57,11 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
    - Thử cấp thêm số cho cùng người đó: hệ thống báo bệnh nhân đã có số.
    - Với bệnh nhân từ đủ 75 tuổi hoặc dưới 6 tuổi, hệ thống tự gợi ý ưu tiên. Thử chọn ưu tiên "Cấp cứu" cho một người khác.
 5. Tab **Hàng đợi**: số nào bác sĩ đánh dấu **Vắng mặt** thì bấm **Đưa lại hàng chờ**. Thử **Huỷ số** một người.
+6. **Đặt lịch online** — vào vai người bệnh trên điện thoại: mở trang đặt lịch, đặt một lịch hôm nay (buổi còn mở) với SĐT `01209xxxxx` tự đặt, ghi lại mã.
+   - Đặt thêm lịch cùng SĐT, cùng ngày: hệ thống báo đã có lịch.
+   - Vào **Tra cứu / huỷ lịch**: thử SĐT sai (không thấy), rồi SĐT đúng.
+7. Tab **Lịch hẹn**: nhập mã vừa đặt → xem hồ sơ cũ có thể trùng → chọn hồ sơ (hoặc tạo hồ sơ mới, nhập MRN `TT9xxxx`) → **Check-in & cấp số** → **In phiếu**. Kiểm tra số mới ở tab Hàng đợi.
+   - Thử **Huỷ** một lịch khác trên danh sách: số chỗ của buổi đó tăng lại trên trang đặt lịch.
 
 **Điều dưỡng** (`tt.dieuduong1`)
 1. Mở bệnh nhân `TT00005`. Thấy CCCD bị che (nhãn "đã che").
@@ -94,6 +103,7 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 
 **Quản lý** (`tt.quanly1`)
 0. Tab **Hàng đợi → Cài đặt hàng đợi**: xem 2 phòng; thêm phòng `NHI` "Phòng khám Nhi"; tạo một **đường dẫn màn hình** mới rồi mở nó ở tab khác, để làm màn hình TV.
+0b. Tab **Lịch hẹn → Cài đặt đặt lịch online**: đặt số chỗ cho phòng `NHI` (vd. 5) và xem phòng xuất hiện trên trang đặt lịch; thử **Tạm ngừng** đường dẫn rồi mở trang đặt lịch (báo tạm ngừng), sau đó **Mở lại**.
 1. Mở tab Quản trị, xem policy của điều dưỡng và lịch sử phiên bản.
 2. Sửa policy, ví dụ giới hạn điều dưỡng chỉ được ghi nhiệt độ và SpO₂, rồi đăng nhập lại bằng `tt.dieuduong1` để kiểm tra.
 3. Gỡ policy khỏi điều dưỡng rồi gán lại.

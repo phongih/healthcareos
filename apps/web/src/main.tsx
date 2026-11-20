@@ -6,6 +6,7 @@ import { claims, initAuth, login, logout } from './lib/auth';
 import { can, organizationsOf, ROLE_LABEL, rolesAt, SessionContext, type Me, type Session } from './lib/session';
 import { ErrorBox } from './lib/ui';
 import { AdminScreen } from './screens/admin';
+import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
@@ -20,6 +21,7 @@ type Route =
   | { name: 'encounter'; id: string }
   | { name: 'pharmacy' }
   | { name: 'queue' }
+  | { name: 'bookings' }
   | { name: 'admin' }
   | { name: 'home' };
 
@@ -31,6 +33,7 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/patients')) return { name: 'patients' };
   if (hash.startsWith('#/pharmacy')) return { name: 'pharmacy' };
   if (hash.startsWith('#/queue')) return { name: 'queue' };
+  if (hash.startsWith('#/bookings')) return { name: 'bookings' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   return { name: 'home' };
 }
@@ -56,6 +59,7 @@ function Shell({ me }: { me: Me }) {
   const tabs = [
     can.patients(roles) && { hash: '#/patients', label: 'Bệnh nhân', active: ['patients', 'patient', 'encounter'].includes(route.name) },
     can.queue(roles) && { hash: '#/queue', label: 'Hàng đợi', active: route.name === 'queue' },
+    can.bookings(roles) && { hash: '#/bookings', label: 'Lịch hẹn', active: route.name === 'bookings' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -113,6 +117,8 @@ function Shell({ me }: { me: Me }) {
           <EncounterScreen id={route.id} />
         ) : route.name === 'queue' ? (
           <QueueScreen />
+        ) : route.name === 'bookings' ? (
+          <BookingsScreen />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
         ) : route.name === 'admin' ? (
@@ -146,6 +152,21 @@ function App() {
   return <Shell me={state.me} />;
 }
 
-// Màn hình TV gọi số: không đăng nhập; khoá hiển thị nằm trong fragment (#) nên không bao giờ gửi lên máy chủ trong URL.
-const board = /^#\/board\/([A-Za-z0-9_-]{43})$/.exec(location.hash);
-createRoot(document.getElementById('root')!).render(board ? <BoardScreen displayKey={board[1]!} /> : <App />);
+/** Các trang KHÔNG đăng nhập: chọn theo hash trước khi khởi tạo đăng nhập (đổi hash giữa chừng => tải lại trang). */
+function Root() {
+  const hash = useHash();
+  // Màn hình TV gọi số: khoá hiển thị nằm trong fragment (#) nên không bao giờ gửi lên máy chủ trong URL.
+  const board = /^#\/board\/([A-Za-z0-9_-]{43})$/.exec(hash);
+  if (board) return <BoardScreen displayKey={board[1]!} />;
+  // Cổng đặt lịch khám online.
+  const book = /^#\/book\/([a-z0-9][a-z0-9-]{2,39})(\/tra-cuu)?\/?$/.exec(hash);
+  if (book) return book[2] ? <PublicLookupScreen slug={book[1]!} /> : <PublicBookingScreen slug={book[1]!} />;
+  return <App />;
+}
+const PUBLIC_RE = /^#\/(board|book)\//;
+const startedPublic = PUBLIC_RE.test(location.hash);
+addEventListener('hashchange', () => {
+  // Rời trang công khai sang ứng dụng (hoặc ngược lại) => tải lại để luồng đăng nhập chạy sạch.
+  if (PUBLIC_RE.test(location.hash) !== startedPublic) location.reload();
+});
+createRoot(document.getElementById('root')!).render(<Root />);

@@ -1007,6 +1007,10 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   prescription_items_medication_uk: 'DUPLICATE_MEDICATION',
   queue_tickets_one_active_uk: 'PATIENT_ALREADY_QUEUED',
   service_points_code_uk: 'SERVICE_POINT_CODE_TAKEN',
+  bookings_one_per_phone_day_uk: 'PHONE_ALREADY_BOOKED',
+  bookings_code_uk: 'CODE_COLLISION',
+  booking_portals_slug_uk: 'SLUG_TAKEN',
+  booking_portals_org_uk: 'PORTAL_EXISTS',
 };
 
 export function translatePgError(e: unknown): never {
