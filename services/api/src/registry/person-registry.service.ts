@@ -13,6 +13,8 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { LEGACY_MRN_RE, MrnError, resolveMrn } from './mrn';
+
 import {
   asPersonId,
   asPatientId,
@@ -164,6 +166,8 @@ export interface RegistryRepository {
   movePatientsBack(fromPersonId: PersonId, toPersonId: PersonId, ids: readonly PatientId[]): Promise<PatientId[]>;
   repointUsersBack(fromPersonId: PersonId, toPersonId: PersonId, ids: readonly UserId[]): Promise<UserId[]>;
   insertPatient(p: Patient): Promise<void>;
+  /** HCOS-F13: MRN cho hồ sơ mới (tự sinh hoặc mã cũ khi cơ sở cho phép). */
+  resolveMrn(organizationId: OrganizationId, raw: string | null | undefined, at: Date): Promise<{ mrn: string; generated: boolean }>;
   enqueueOutbox(tenantId: TenantId, ev: OutboxDraft): Promise<void>;
   appendAudit(ev: NewAuditEvent): Promise<void>;
 }
@@ -222,7 +226,15 @@ interface Draft {
 }
 
 const SEXES: readonly string[] = ['male', 'female', 'other', 'unknown'];
-const MRN_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/;
+/** MrnError (module mrn.ts, không phụ thuộc ClinicalError) => ClinicalError. */
+async function mrnCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof MrnError) throw new ClinicalError(e.kind, e.message, { reason: e.reason });
+    throw e;
+  }
+}
 const MAX_IDENTIFIERS = 10;
 const MAX_CANDIDATES = 20;
 
@@ -746,7 +758,9 @@ export class PersonRegistryService {
   ): Promise<{ person: Person; patient: Patient; identifiers: readonly Identifier[]; possibleDuplicates: readonly DuplicateCandidate[] }> {
     const meta: AuditMeta = { action: 'patient.register', resourceType: 'Patient', organizationId: input.organizationId };
     return this.tx(ctx, meta, async (repo) => {
-      if (!MRN_RE.test(input.mrn)) throw new ClinicalError('VALIDATION', 'Invalid MRN format');
+      if (input.mrn !== undefined && input.mrn !== null && input.mrn.trim() !== '' && !LEGACY_MRN_RE.test(input.mrn.trim())) {
+        throw new ClinicalError('VALIDATION', 'Invalid MRN format');
+      }
       assertOrganizationAllowed(input.organizationId, ctx);
       const principal = await this.principalAt(repo, ctx, input.organizationId);
       this.authorize(principal, 'person:create');
@@ -758,12 +772,13 @@ export class PersonRegistryService {
       const created = await this.createPersonWithin(repo, ctx, principal, { action: 'person.create', resourceType: 'Person' }, input.person);
 
       const now = this.now();
+      const assigned = await mrnCall(() => repo.resolveMrn(input.organizationId, input.mrn, new Date(now)));
       const patient: Patient = {
         tenantId: ctx.tenantId,
         patientId: asPatientId(this.newId()),
         personId: created.person.personId,
         organizationId: input.organizationId,
-        mrn: input.mrn,
+        mrn: assigned.mrn,
         status: 'active',
         registeredAt: now,
         createdAt: now,
@@ -780,6 +795,7 @@ export class PersonRegistryService {
       await repo.appendAudit(
         this.event(ctx, { ...meta, resourceId: patient.patientId, patientId: patient.patientId, personId: patient.personId }, 'success', principal.user, {
           identifierCount: created.identifiers.length,
+          mrnGenerated: assigned.generated,
         }),
       );
       return { person: created.person, patient, identifiers: created.identifiers, possibleDuplicates: created.possibleDuplicates };
@@ -1315,6 +1331,10 @@ export class PgRegistryRepository implements RegistryRepository {
       [this.t, fromPersonId, toPersonId, pgUuidArray(ids)],
     );
     return r.rows.map((x) => x.user_id).sort();
+  }
+
+  resolveMrn(organizationId: OrganizationId, raw: string | null | undefined, at: Date): Promise<{ mrn: string; generated: boolean }> {
+    return resolveMrn(this.db, this.t, organizationId, raw, at);
   }
 
   async insertPatient(p: Patient): Promise<void> {

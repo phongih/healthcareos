@@ -108,8 +108,8 @@ function patientFromFhir(r: FhirPatient) {
       throw new FhirMappingError('Identifier.type.text must be one of: mrn, ' + ID_TYPES.join(', '));
     }
   }
-  if (mrn === undefined) throw new FhirMappingError('An MRN identifier (type.text = mrn) is required');
-  return { organizationId, mrn, person: { ...draft, identifiers } satisfies NewPersonInput };
+  // Không có MRN => hệ thống tự sinh (HCOS-F13).
+  return { organizationId, ...(mrn !== undefined ? { mrn } : {}), person: { ...draft, identifiers } satisfies NewPersonInput };
 }
 
 export function buildRegistryRoutes(api: RegistryApi): readonly Route[] {

@@ -111,6 +111,8 @@ run('G0+G1 / PostgreSQL integration (real RLS, triggers, service)', () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
     for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
+    // HCOS-F13: các test này dùng MRN gõ sẵn => coi như cơ sở đã chuyển dữ liệu cũ (cho nhập mã cũ).
+    su(`INSERT INTO patient.mrn_settings (tenant_id, organization_id, allow_legacy) SELECT tenant_id, organization_id, true FROM iam.organizations ON CONFLICT DO NOTHING`);
     sink = new Sink();
     svc = new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(psqlPool({ database: DB })), audit: sink });
   });

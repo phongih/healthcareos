@@ -218,6 +218,13 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'patient:configure': {
+    basePermission: 'patient:configure',
+    description: 'Cài đặt mã bệnh nhân của cơ sở: tiền tố mã tự sinh, cho / không cho nhập mã cũ',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',

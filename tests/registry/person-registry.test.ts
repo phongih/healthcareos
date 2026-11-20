@@ -6,6 +6,7 @@
  *         unique person+org, kiểm tra version, merge guard) + rollback transaction.
  * Ràng buộc ở tầng PostgreSQL thật được kiểm ở tests/integration/registry-pg.integration.test.ts.
  */
+import { formatAutoMrn } from '../../services/api/src/registry/mrn';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -245,6 +246,11 @@ class MemRepo implements RegistryRepository {
     const hit = this.vis(this.s.users).filter((u) => u.personId === from && ids.includes(u.userId));
     hit.forEach((u) => { u.personId = to; });
     return hit.map((u) => u.userId).sort();
+  }
+  private mrnSeq = 0;
+  /** HCOS-F13: giả lập CSDL — không nhập => tự sinh; có nhập => coi như cơ sở cho phép mã cũ. */
+  async resolveMrn(_org: unknown, raw: string | null | undefined) {
+    return raw ? { mrn: raw, generated: false } : { mrn: formatAutoMrn('BN', 26, ++this.mrnSeq), generated: true };
   }
   async insertPatient(p: Patient) {
     this.maybeFail('insertPatient');

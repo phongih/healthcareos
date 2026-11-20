@@ -6,6 +6,7 @@ import {
   CCCD_SYSTEM, classLabel, cccdOf, ENCOUNTER_CLASSES, entries, fmtDate, fmtDateTime, idOf, isRedacted, mrnOf, patientName, phoneOf,
   STATUS_LABEL, type Bundle, type FhirEncounter, type FhirPatient,
 } from '../lib/fhir';
+import { MrnField, MrnSettingsCard } from '../lib/mrn';
 import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, navigate, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
 import { IssueTicket } from './queue';
@@ -53,8 +54,8 @@ export function PatientsScreen() {
             </select>
           </Field>
           {mode === 'mrn' && (
-            <Field label="MRN">
-              <input required value={q.mrn} onChange={(e) => setQ({ ...q, mrn: e.target.value })} autoFocus />
+            <Field label="MRN" hint="Gõ hoặc quét mã; thiếu gạch / chữ thường vẫn được">
+              <input required value={q.mrn} placeholder="vd. BN26-000123-5" onChange={(e) => setQ({ ...q, mrn: e.target.value })} autoFocus />
             </Field>
           )}
           {mode === 'cccd' && (
@@ -109,6 +110,7 @@ export function PatientsScreen() {
         )}
       </Card>
       {showRegister && <RegisterPatient onDone={(id) => navigate(`#/patients/${id}`)} />}
+      {(roles.has('clinic_admin') || roles.has('tenant_admin')) && <MrnSettingsCard />}
     </div>
   );
 }
@@ -207,7 +209,8 @@ function RegisterPatient({ onDone }: { onDone: (patientId: string) => void }) {
       ...(f.birthDate ? { birthDate: f.birthDate } : {}),
       ...(f.phone.trim() ? { telecom: [{ system: 'phone', value: f.phone.trim() }] } : {}),
       identifier: [
-        { type: { text: 'mrn' }, system: `urn:hcos:mrn:${orgId}`, value: f.mrn.trim() },
+        // Bỏ trống => hệ thống tự sinh mã (HCOS-F13).
+        ...(f.mrn.trim() ? [{ type: { text: 'mrn' }, system: `urn:hcos:mrn:${orgId}`, value: f.mrn.trim() }] : []),
         ...(f.cccd.trim() ? [{ type: { text: 'national_id' }, system: CCCD_SYSTEM, value: f.cccd.trim() }] : []),
       ],
       managingOrganization: { reference: `Organization/${orgId}` },
@@ -249,9 +252,7 @@ function RegisterPatient({ onDone }: { onDone: (patientId: string) => void }) {
         <Field label="CCCD">
           <input inputMode="numeric" value={f.cccd} onChange={set('cccd')} />
         </Field>
-        <Field label="Mã bệnh nhân (MRN) *" hint="Duy nhất trong cơ sở">
-          <input required pattern="[A-Za-z0-9][A-Za-z0-9_.\/\-]{0,63}" value={f.mrn} onChange={set('mrn')} />
-        </Field>
+        <MrnField value={f.mrn} onChange={(v) => setF({ ...f, mrn: v })} />
         <div className="actions">
           <button type="submit" disabled={save.busy}>
             {save.busy ? 'Đang lưu…' : 'Đăng ký'}

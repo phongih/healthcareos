@@ -99,6 +99,8 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
     for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
+    // HCOS-F13: các test này dùng MRN gõ sẵn => coi như cơ sở đã chuyển dữ liệu cũ (cho nhập mã cũ).
+    su(`INSERT INTO patient.mrn_settings (tenant_id, organization_id, allow_legacy) SELECT tenant_id, organization_id, true FROM iam.organizations ON CONFLICT DO NOTHING`);
 
     const kp = await generateKeyPair('RS256');
     privateKey = kp.privateKey;
@@ -460,8 +462,9 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     const broken = { resourceType: 'Patient', managingOrganization: { reference: `Organization/${OA}` } };
     expect((await http('POST', '/fhir/Patient', T.pharm(), broken, FHIR_CT)).status).toBe(403);
     expect((await http('POST', '/fhir/Patient', T.nurse(), broken, FHIR_CT)).status).toBe(422);
+    // HCOS-F13: thiếu MRN không còn là lỗi (hệ thống tự sinh); yêu cầu này bị chặn vì trùng người đã có => vẫn không ghi gì.
     const noMrn = fhirPatient({ mrn: 'x' }); (noMrn.identifier as object[]).shift();
-    expect((await http('POST', '/fhir/Patient', T.nurse(), noMrn, FHIR_CT)).status).toBe(422);
+    expect((await http('POST', '/fhir/Patient', T.nurse(), noMrn, FHIR_CT)).status).toBe(409);
     expect((await http('POST', '/fhir/Patient', T.nurse(), { ...fhirPatient({ mrn: 'MRN-F5' }), resourceType: 'Observation' }, FHIR_CT)).status).toBe(422);
     expect((await http('POST', '/fhir/Patient', T.nurse(), { ...fhirPatient({ mrn: 'MRN-F5' }), managingOrganization: { reference: 'Organization/nope' } }, FHIR_CT)).status).toBe(422);
     expect((await http('POST', '/fhir/Patient', T.nurse(), { ...fhirPatient({ mrn: 'MRN-F5' }), birthDate: '31/12/2000' }, FHIR_CT)).status).toBe(422);

@@ -19,6 +19,8 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { LEGACY_MRN_RE, MrnError, normalizeMrnQuery, resolveMrn } from '../registry/mrn';
+
 import {
   asPatientId,
   isUuid,
@@ -120,6 +122,8 @@ export interface ClinicalRepository {
   searchPatients(q: PatientSearchQuery): Promise<Patient[]>;
   /** Ném ClinicalError('CONFLICT', ..., { reason }) khi vi phạm unique. */
   insertPatient(patient: Patient): Promise<void>;
+  /** HCOS-F13: MRN cho hồ sơ mới (tự sinh hoặc mã cũ khi cơ sở cho phép). */
+  resolveMrn(organizationId: OrganizationId, raw: string | null | undefined, at: Date): Promise<{ mrn: string; generated: boolean }>;
   findUserBySubject(subject: string): Promise<User | null>;
   listMemberships(userId: UserId): Promise<Membership[]>;
   /** Tải các policy theo id (trong tenant hiện tại). Id không tìm thấy thì không có trong kết quả. */
@@ -239,10 +243,19 @@ export interface PatientView extends Redaction {
 export interface RegisterPatientInput {
   readonly personId: PersonId;
   readonly organizationId: OrganizationId;
-  readonly mrn: string;
+  /** Bỏ trống => CSDL cấp mã tự sinh (HCOS-F13); có giá trị => mã cũ, chỉ khi cơ sở cho phép. */
+  readonly mrn?: string | null;
 }
 
-const MRN_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/;
+/** MrnError (module mrn.ts) => ClinicalError. */
+async function mrnCall<T>(fn: () => Promise<T> | T): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof MrnError) throw new ClinicalError(e.kind, e.message, { reason: e.reason });
+    throw e;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Service
@@ -264,7 +277,9 @@ export class ClinicalEncounterService {
   async registerPatient(input: RegisterPatientInput, ctx: TenantContext = requireTenantContext()): Promise<Patient> {
     const meta: AuditMeta = { action: 'patient.register', resourceType: 'Patient', organizationId: input.organizationId };
     return this.tx(ctx, meta, async (repo) => {
-      if (!MRN_RE.test(input.mrn)) throw new ClinicalError('VALIDATION', 'Invalid MRN format');
+      if (input.mrn !== undefined && input.mrn !== null && input.mrn.trim() !== '' && !LEGACY_MRN_RE.test(input.mrn.trim())) {
+        throw new ClinicalError('VALIDATION', 'Invalid MRN format');
+      }
       assertOrganizationAllowed(input.organizationId, ctx);
       const principal = await this.principal(repo, ctx, input.organizationId);
       const decision = this.decide(principal, 'patient:register', {});
@@ -277,12 +292,13 @@ export class ClinicalEncounterService {
       }
 
       const now = this.now();
+      const assigned = await mrnCall(() => repo.resolveMrn(input.organizationId, input.mrn, new Date(now)));
       const patient: Patient = {
         tenantId: ctx.tenantId,
         patientId: asPatientId(this.newId()),
         personId: person.personId,
         organizationId: input.organizationId,
-        mrn: input.mrn,
+        mrn: assigned.mrn,
         status: 'active',
         registeredAt: now,
         createdAt: now,
@@ -744,8 +760,8 @@ export class ClinicalEncounterService {
       const criteria: string[] = [];
       let mrn: string | null = null;
       if (input.mrn !== undefined) {
-        if (!MRN_RE.test(input.mrn)) throw new ClinicalError('VALIDATION', 'Invalid MRN format');
-        mrn = input.mrn;
+        const raw = input.mrn;
+        mrn = await mrnCall(() => normalizeMrnQuery(raw));
         criteria.push('mrn');
       }
       let identifier: PatientSearchQuery['identifier'] = null;
@@ -1162,6 +1178,10 @@ export class PgClinicalRepository implements ClinicalRepository {
       ],
     );
     return r.rows.map(mapPatient);
+  }
+
+  resolveMrn(organizationId: OrganizationId, raw: string | null | undefined, at: Date): Promise<{ mrn: string; generated: boolean }> {
+    return resolveMrn(this.db, this.t, organizationId, raw, at);
   }
 
   async insertPatient(p: Patient): Promise<void> {

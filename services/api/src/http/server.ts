@@ -23,6 +23,7 @@ import { buildBookingRoutes, handlePublicBooking, RateLimiter, type BookingApi, 
 import { buildFinanceRoutes, type FinanceApi } from './finance-routes';
 import { buildDecisionRoutes, type DecisionApi } from './decision-routes';
 import { buildIntegrationRoutes, type IntegrationApi } from './integration-routes';
+import { buildMrnRoutes, type MrnApi } from './mrn-routes';
 import { buildForecastRoutes, type ForecastApi } from './forecast-routes';
 import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from './clinical-routes';
 import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
@@ -72,6 +73,8 @@ export interface ApiDeps {
   readonly decision?: DecisionApi;
   /** Tuỳ chọn: tích hợp (/api/integrations/*). */
   readonly integrations?: IntegrationApi;
+  /** Tuỳ chọn: cài đặt mã bệnh nhân (/api/patient-mrn/*). */
+  readonly mrn?: MrnApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
   readonly rateLimiter?: RateLimiter;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
@@ -96,6 +99,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.forecast ? buildForecastRoutes(deps.forecast) : []),
     ...(deps.decision ? buildDecisionRoutes(deps.decision) : []),
     ...(deps.integrations ? buildIntegrationRoutes(deps.integrations) : []),
+    ...(deps.mrn ? buildMrnRoutes(deps.mrn) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
