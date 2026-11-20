@@ -18,10 +18,10 @@ const POLL_MS = 60_000;
 export const PRIORITY_LABEL: Record<number, string> = { 1: 'P1 khẩn', 2: 'P2 cao', 3: 'P3 theo dõi' };
 const SUGGESTION_TEXT: Record<string, string> = { applied: 'đã áp dụng', dismissed: 'đã bỏ qua', pending: 'chờ' };
 
-export function NotificationBell() {
+export function NotificationBell({ inline = false }: { inline?: boolean } = {}) {
   const { orgId } = useSession();
   const [items, setItems] = useState<InboxItem[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(inline);
   const [all, setAll] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function NotificationBell() {
       const r = await api<{ link: string | null }>('POST', `/api/notifications/${it.notificationId}`, { body: { action }, headers: { 'if-match': `W/"${it.version}"` } });
       await load();
       if (action === 'apply' && r.data.link) {
-        setOpen(false);
+        if (!inline) setOpen(false);
         navigate(r.data.link);
       }
     } catch (e) {
@@ -64,27 +64,8 @@ export function NotificationBell() {
 
   const openItems = items.filter((i) => i.status === 'open');
   const urgent = openItems.some((i) => i.priority === 1);
-  return (
-    <div className="bell">
-      {/* Bấm ra ngoài => đóng. */}
-      {open && <div className="bell-backdrop" onClick={() => setOpen(false)} />}
-      <button
-        type="button"
-        className={`bell-btn${urgent ? ' urgent' : ''}`}
-        aria-label={`Thông báo: ${openItems.length} chưa xử lý`}
-        aria-expanded={open}
-        onClick={() => {
-          setOpen((o) => !o);
-          if (!open) void load();
-        }}
-      >
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-          <path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3a1.5 1.5 0 0 0-3 0v1.16A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z" />
-        </svg>
-        {openItems.length > 0 && <span className="bell-count">{openItems.length > 99 ? '99+' : openItems.length}</span>}
-      </button>
-      {open && (
-        <div className="bell-panel" role="dialog" aria-label="Hộp thông báo">
+  const panel = (
+        <div className={inline ? "bell-panel inline" : "bell-panel"} role={inline ? undefined : "dialog"} aria-label="Hộp thông báo">
           <div className="bell-head">
             <strong>Thông báo</strong>
             <label className="small">
@@ -142,7 +123,38 @@ export function NotificationBell() {
           )}
           <p className="small muted bell-foot">Engine chỉ báo và gợi ý; không tự sửa hồ sơ, tiền hay kho.</p>
         </div>
-      )}
+  );
+  if (inline) return panel;
+  return (
+    <div className="bell">
+      {/* Bấm ra ngoài => đóng. */}
+      {open && <div className="bell-backdrop" onClick={() => setOpen(false)} />}
+      <button
+        type="button"
+        className={`bell-btn${urgent ? ' urgent' : ''}`}
+        aria-label={`Thông báo: ${openItems.length} chưa xử lý`}
+        aria-expanded={open}
+        onClick={() => {
+          setOpen((o) => !o);
+          if (!open) void load();
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3a1.5 1.5 0 0 0-3 0v1.16A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z" />
+        </svg>
+        {openItems.length > 0 && <span className="bell-count">{openItems.length > 99 ? '99+' : openItems.length}</span>}
+      </button>
+      {open && panel}
+    </div>
+  );
+}
+
+/** Trang hộp thông báo (#/inbox) — đích của nút "Mở trong HealthcareOS" trên thẻ Teams. */
+export function InboxScreen() {
+  return (
+    <div className="stack">
+      <h2>Hộp thông báo</h2>
+      <NotificationBell inline />
     </div>
   );
 }

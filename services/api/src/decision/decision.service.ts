@@ -34,6 +34,8 @@ import { ACCESS_POLICY_CATALOG, buildGrants, decideAccess, type AccessGrant, typ
 import { assertOrganizationAllowed, assertSameTenant, requireTenantContext, withTenantTransaction, type PgPoolLike } from '../../../../packages/security/src/tenant-context';
 import { computeInventory, computeLoad, PgForecastRepository, vnDate, addDays, weekdayOf } from '../analytics/forecast.service';
 import { ClinicalError } from '../clinical/encounter.service';
+import { enqueueOutbox, organizationName, type OutboxInput } from '../integration/integration.service';
+import { decisionPayload, systemPayload } from '../integration/payloads';
 import {
   ACTIONS, DETECTOR_BY_ID, DETECTORS, matches, NOTIFY_ROLES, OPS, rolesSeeing, validateRule,
   type Condition, type DetectorSpec, type NotifyRole,
@@ -186,6 +188,14 @@ export class PgDecisionRepository extends PgForecastRepository {
   }
   get tenant(): string {
     return this.t;
+  }
+
+  /** HCOS-F12: ghi sự kiện ra outbox tích hợp (cùng transaction). */
+  enqueueIntegration(e: OutboxInput): Promise<{ eventId: string | null; deliveryIds: string[] }> {
+    return enqueueOutbox(this.db, this.t, e);
+  }
+  orgName(org: OrganizationId): Promise<string> {
+    return organizationName(this.db, this.t, org);
   }
 
   /** Khoá theo cơ sở cho cả transaction; false = đang có lần chạy khác. */
@@ -975,6 +985,7 @@ export class DecisionEngineService {
         let suppressed = 0;
         let failed = 0;
         let k = 0;
+        let orgName: string | undefined;
         for (const [detector, rs] of byDetector) {
           const t0 = Date.now();
           let cands: Candidate[];
@@ -999,6 +1010,14 @@ export class DecisionEngineService {
                 await repo.insertAction(org, eventId, a, null, 'done', null, now);
               }
               created.push({ eventId, ruleName: rule.name, title: c.title, priority: rule.priority });
+              orgName ??= await repo.orgName(org);
+              await repo.enqueueIntegration({
+                organizationId: org, type: 'decision.event', priority: rule.priority, at: now, sourceId: eventId,
+                payload: decisionPayload({
+                  title: c.title, detail: c.detail, ruleName: rule.name, detector, detectorLabel: DETECTOR_BY_ID.get(detector)?.label ?? detector,
+                  link: c.link, detectedAt: now.toISOString(), organizationName: orgName, metrics: c.metrics,
+                }),
+              });
             }
             if (d.capped > 0) detail.push({ detector, ms: 0, candidates: 0, error: `CAPPED:${rule.ruleId}:${d.capped}` });
           }
@@ -1011,6 +1030,17 @@ export class DecisionEngineService {
           status, rulesEvaluated: rules.length, candidates, eventsCreated: created.length, suppressed, detail, errorCode: failed ? 'DETECTOR_FAILED' : null,
         };
         await repo.insertRun(org, run);
+        if (failed > 0) {
+          await repo.enqueueIntegration({
+            organizationId: org, type: 'system.alert', priority: status === 'failed' ? 1 : 2, at: finished, sourceId: runId,
+            payload: systemPayload({
+              code: status === 'failed' ? 'DECISION_RUN_FAILED' : 'DECISION_RUN_PARTIAL',
+              title: status === 'failed' ? 'Decision Engine chạy lỗi: không bộ phát hiện nào chạy được' : `Decision Engine chạy một phần: ${failed} bộ phát hiện lỗi`,
+              detail: detail.filter((x) => x.error && !x.error.startsWith('CAPPED')).map((x) => `${x.detector}: ${x.error}`).join(', ').slice(0, 400) || null,
+              link: '#/decision', organizationName: orgName ?? (await repo.orgName(org)),
+            }),
+          });
+        }
         // Lịch chạy mỗi vài phút: chỉ ghi audit khi có sự kiện hoặc lỗi, để không làm phình chuỗi audit.
         if (trigger === 'manual' || created.length > 0 || failed > 0) {
           await repo.appendAudit({
@@ -1025,12 +1055,17 @@ export class DecisionEngineService {
       // Ghi lần chạy lỗi trong transaction riêng (transaction chính đã rollback).
       const code = errorCode(e);
       try {
-        await this.deps.uow.run(ctx, (repo) =>
-          repo.insertRun(org, {
-            runId, trigger, triggeredBy: user?.userId ?? null, startedAt: started.toISOString(), finishedAt: new Date(Math.max(this.clock().getTime(), started.getTime())).toISOString(),
+        await this.deps.uow.run(ctx, async (repo) => {
+          const fin = new Date(Math.max(this.clock().getTime(), started.getTime()));
+          await repo.insertRun(org, {
+            runId, trigger, triggeredBy: user?.userId ?? null, startedAt: started.toISOString(), finishedAt: fin.toISOString(),
             status: 'failed', rulesEvaluated: 0, candidates: 0, eventsCreated: 0, suppressed: 0, detail: [], errorCode: code,
-          }),
-        );
+          });
+          await repo.enqueueIntegration({
+            organizationId: org, type: 'system.alert', priority: 1, at: fin, sourceId: runId,
+            payload: systemPayload({ code: 'DECISION_RUN_FAILED', title: 'Decision Engine chạy lỗi', detail: `Mã lỗi: ${code}`, link: '#/decision', organizationName: await repo.orgName(org) }),
+          });
+        });
       } catch {
         /* bỏ qua */
       }

@@ -16,6 +16,9 @@ import { loadConfig } from './config';
 import { FinanceService, PgFinanceUnitOfWork } from './finance/finance.service';
 import { ForecastService, PgForecastUnitOfWork } from './analytics/forecast.service';
 import { DecisionEngineService, DecisionScheduler, PgDecisionUnitOfWork } from './decision/decision.service';
+import { IntegrationDispatcher, IntegrationService, PgIntegrationUnitOfWork } from './integration/integration.service';
+import { SecretBox } from './integration/secrets';
+import { httpTransport } from './integration/transport';
 import { createApiServer } from './http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from './iam/access-policy.service';
 import { PgPharmacyUnitOfWork, PharmacyInventoryService } from './pharmacy/inventory.service';
@@ -55,6 +58,11 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       uow: new PgDecisionUnitOfWork(pool), audit, intervalMinutes: cfg.decisionIntervalSec > 0 ? Math.round(cfg.decisionIntervalSec / 60) : null,
     });
     const scheduler = new DecisionScheduler({ pool, engine: decision, intervalMs: cfg.decisionIntervalSec * 1000, log });
+    const integrations = new IntegrationService({
+      uow: new PgIntegrationUnitOfWork(pool), audit, box: cfg.integrationKey ? new SecretBox(cfg.integrationKey) : null, transport: httpTransport(), publicBaseUrl: cfg.publicBaseUrl,
+    });
+    // Không có khoá => không giải mã được URL => không chạy bộ giao.
+    const dispatcher = new IntegrationDispatcher({ pool, service: integrations, intervalMs: cfg.integrationKey ? cfg.integrationDispatchSec * 1000 : 0, log });
     const server = createApiServer({
       tenant: {
         issuer: cfg.issuer,
@@ -75,6 +83,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
       forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
       decision,
+      integrations,
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),
@@ -91,13 +100,13 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     const addr = server.address() as { port: number } | null;
     const port = addr?.port ?? cfg.port;
     scheduler.start();
+    dispatcher.start();
 
     let stopping: Promise<void> | undefined;
     const stop = (): Promise<void> =>
       (stopping ??= new Promise<void>((resolve) => {
         server.close(() => {
-          scheduler
-            .stop()
+          Promise.all([scheduler.stop(), dispatcher.stop()])
             .catch(() => undefined)
             .then(() => pgPool.end())
             .then(() => resolve(), () => resolve());
@@ -105,7 +114,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         server.closeIdleConnections();
       }));
 
-    log({ level: 'info', msg: 'hcos-api listening', port, decisionIntervalSec: cfg.decisionIntervalSec });
+    log({ level: 'info', msg: 'hcos-api listening', port, decisionIntervalSec: cfg.decisionIntervalSec, integrations: cfg.integrationKey ? 'enabled' : 'disabled (HCOS_INTEGRATION_KEY not set)' });
     return { server, port, stop };
   } catch (e) {
     await pgPool.end().catch(() => undefined);
