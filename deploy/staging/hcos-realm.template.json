@@ -93,12 +93,13 @@
       "serviceAccountsEnabled": false,
       "redirectUris": [
         "https://smart.id.vn/callback",
+        "https://smart.id.vn/app/callback",
         "http://127.0.0.1:9999/callback"
       ],
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://smart.id.vn/"
+        "post.logout.redirect.uris": "https://smart.id.vn/##https://smart.id.vn/app/"
       }
     }
   ],

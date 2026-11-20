@@ -20,6 +20,31 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
 
+  # Ứng dụng web: typecheck với @types/react thật và build bundle. Chưa có lockfile thì dùng npm install và giữ lockfile làm artifact để commit.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: if [ -s package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Bundle has no inline script and references hashed assets
+        run: |
+          grep -Eq 'src="app-[0-9a-f]{12}\.js"' dist/index.html
+          ! grep -Eq '<script>|<style>' dist/index.html
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-package-lock
+          path: apps/web/package-lock.json
+          if-no-files-found: ignore
+
   # Gate G0/G1: RLS, trigger bất biến, FK ghép, audit append-only trên PostgreSQL thật.
   integration-postgres:
     runs-on: ubuntu-latest

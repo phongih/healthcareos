@@ -229,6 +229,9 @@ class MemoryRepo implements ClinicalRepository {
   async findEncounter(id: Encounter['encounterId']) {
     return this.vis(this.s.encounters).find((e) => e.encounterId === id) ?? null;
   }
+  async listEncountersByPatient(patientId: Patient['patientId'], limit: number) {
+    return this.vis(this.s.encounters).filter((e) => e.patientId === patientId).sort((a, b) => b.periodStart.localeCompare(a.periodStart)).slice(0, limit);
+  }
   async updateEncounter(next: Encounter, expectedVersion: number) {
     const cur = this.vis(this.s.encounters).find((e) => e.encounterId === next.encounterId);
     if (!cur || cur.version !== expectedVersion) return null;

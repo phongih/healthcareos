@@ -54,6 +54,7 @@ const clinical: ClinicalApi = {
   async recordObservation() { throw new Error('unused'); },
   async closeEncounter() { throw new Error('unused'); },
   async getEncounterChart() { return { encounter, conditions: [], observations: [], redacted: ['conditions', 'encounter.reasonText'] }; },
+  async listEncountersForPatient() { return { encounters: [encounter], filtered: 1, redactedEncounterIds: [ENC] }; },
 };
 
 const policiesApi: AccessPolicyApi = {
@@ -70,6 +71,11 @@ const policiesApi: AccessPolicyApi = {
     return { tenantId: TA, membershipId: id, userId: USER, organizationId: OA, role: 'clinic_staff', status: 'active', validFrom: T0, validTo: null, accessPolicyId: pid, createdAt: T0, updatedAt: T0, version: v + 1 } as Membership;
   },
   validateRules(raw) { return validateAccessRules(raw); },
+  async whoAmI(ctx) {
+    await hit('whoAmI', ctx);
+    return { user: { userId: USER, displayName: 'Admin', email: null }, memberships: [{ membershipId: MEM, organization: { organizationId: OA, name: 'PK A', type: 'clinic' }, role: 'tenant_admin', accessPolicyId: null }] };
+  },
+  async listMemberships(org, ctx) { await hit('listMemberships', org, ctx); return []; },
 };
 
 let base: string;
@@ -171,4 +177,20 @@ describe('route quản trị /api/access-policies', () => {
     expect(f.status).toBe(403);
     expect(JSON.stringify(f.json)).not.toContain('iam:access_policy');
   });
+
+  it('/api/me và /api/memberships?organization=', async () => {
+    expect((await call('GET', '/api/me')).json.memberships[0].role).toBe('tenant_admin');
+    expect((await call('GET', '/api/memberships')).status).toBe(400);
+    expect((await call('GET', `/api/memberships?organization=${OA}`)).json).toEqual({ memberships: [] });
+    expect(calls.at(-1)).toMatchObject({ fn: 'listMemberships', args: [OA] });
+  });
+
+  it('GET /fhir/Encounter?patient=: Bundle searchset, gắn REDACTED cho đợt bị che; thiếu patient => 400', async () => {
+    const r = await call('GET', `/fhir/Encounter?patient=${PAT}`);
+    expect(r.json).toMatchObject({ resourceType: 'Bundle', type: 'searchset', total: 1, meta: { security: [{ code: 'REDACTED' }] } });
+    expect(r.json.entry[0].resource.meta.security[0].code).toBe('REDACTED');
+    expect((await call('GET', '/fhir/Encounter')).status).toBe(400);
+    expect((await call('GET', `/fhir/Encounter?patient=${PAT}&status=x`)).status).toBe(400);
+  });
 });
+

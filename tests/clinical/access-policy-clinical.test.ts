@@ -122,6 +122,7 @@ class Repo implements ClinicalRepository {
   async findAccessPolicies(ids: readonly AccessPolicyId[]) { return this.s.policies.filter((p) => ids.includes(p.policyId)); }
   async insertEncounter(e: Encounter) { this.s.encounters.push(e); }
   async findEncounter(id: EncounterId) { return this.s.encounters.find((e) => e.encounterId === id) ?? null; }
+  async listEncountersByPatient(patientId: Patient['patientId'], limit: number) { return this.s.encounters.filter((e) => e.patientId === patientId).slice(0, limit); }
   async updateEncounter(next: Encounter, v: number) {
     const cur = this.s.encounters.find((e) => e.encounterId === next.encounterId);
     if (!cur || cur.version !== v) return null;
@@ -329,3 +330,29 @@ describe('kết hợp và fail-closed', () => {
     expect(JSON.stringify((e as ClinicalError).details)).not.toContain('practitioner');
   });
 });
+
+describe('danh sách đợt khám của bệnh nhân', () => {
+  it('bác sĩ không policy thấy tất cả; bác sĩ chỉ-xem-của-mình chỉ thấy đợt của mình (đợt khác bị lọc, không báo lỗi)', async () => {
+    const all = await svc.listEncountersForPatient(PAT, ctxFor(U.plainDoc));
+    expect(all.encounters).toHaveLength(3);
+    expect(all.filtered).toBe(0);
+    const mine = await svc.listEncountersForPatient(PAT, ctxFor(U.doc));
+    expect(mine.encounters.map((e) => e.encounterId).sort()).toEqual([ENC_DOC, ENC_DONE].sort());
+    expect(mine.filtered).toBe(1);
+    expect(state.audit.at(-1)?.payload).toMatchObject({ count: 2, filtered: 1 });
+  });
+
+  it('điều dưỡng: chỉ đợt đang mở, lý do khám bị che', async () => {
+    const r = await svc.listEncountersForPatient(PAT, ctxFor(U.nurse));
+    expect(r.encounters.map((e) => e.status)).toEqual(['in_progress', 'in_progress']);
+    expect(r.encounters.every((e) => e.reasonText === null)).toBe(true);
+    expect(r.redactedEncounterIds.sort()).toEqual([ENC_DOC, ENC_DOC2].sort());
+  });
+
+  it('không có quyền đọc hồ sơ => 403; bệnh nhân xem của chính mình thấy đủ', async () => {
+    await expect(svc.listEncountersForPatient(PAT, ctxFor(U.broken))).rejects.toMatchObject(policyDenied);
+    const self = await svc.listEncountersForPatient(PAT, ctxFor(U.patient));
+    expect(self.encounters).toHaveLength(3);
+  });
+});
+

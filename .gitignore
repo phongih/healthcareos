@@ -4,3 +4,5 @@ coverage/
 *.log
 .env
 .env.*
+apps/web/dist/
+deploy/staging/web-dist/

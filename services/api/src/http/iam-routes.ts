@@ -9,8 +9,10 @@
  *   POST /api/access-policies/:id/revise           sửa {description?, rules?}         (If-Match bắt buộc)
  *   POST /api/access-policies/:id/retire           ngừng dùng (409 nếu còn membership)  (If-Match bắt buộc)
  *   POST /api/memberships/:id/access-policy        gắn {policyId} hoặc gỡ {policyId:null} (If-Match = version membership)
+ *   GET  /api/memberships?organization=<uuid>      membership của organization (tenant_admin)
+ *   GET  /api/me                                   người đang đăng nhập + vai trò từ DB (mọi user active; để UI dựng menu)
  */
-import { isUuid, type AccessPolicyId, type MembershipId } from '../../../../packages/domain/src/s0-contracts';
+import { asOrganizationId, isUuid, type AccessPolicyId, type MembershipId } from '../../../../packages/domain/src/s0-contracts';
 import { ACCESS_POLICY_CATALOG, AccessPolicyValidationError } from '../../../../packages/security/src/access-policy';
 import { ClinicalError } from '../clinical/encounter.service';
 import type { AccessPolicyService } from '../iam/access-policy.service';
@@ -19,7 +21,7 @@ import { HttpError, PLAIN_JSON } from './http-kernel';
 
 export type AccessPolicyApi = Pick<
   AccessPolicyService,
-  'listPolicies' | 'getPolicy' | 'createPolicy' | 'revisePolicy' | 'retirePolicy' | 'assignPolicy' | 'validateRules'
+  'listPolicies' | 'getPolicy' | 'createPolicy' | 'revisePolicy' | 'retirePolicy' | 'assignPolicy' | 'validateRules' | 'whoAmI' | 'listMemberships'
 >;
 
 const etag = (v: number): string => `W/"${v}"`;
@@ -55,6 +57,20 @@ const isRouteResult = (v: unknown): v is RouteResult =>
 
 export function buildAccessPolicyRoutes(api: AccessPolicyApi): readonly Route[] {
   return [
+    {
+      method: 'GET',
+      pattern: ['api', 'me'],
+      handler: async (input) => json(200, await api.whoAmI(input.ctx)),
+    },
+    {
+      method: 'GET',
+      pattern: ['api', 'memberships'],
+      handler: async (input) => {
+        const org = input.url.searchParams.get('organization');
+        if (!org || !isUuid(org)) throw new HttpError(400, 'required', "A valid 'organization' parameter is required");
+        return json(200, { memberships: await api.listMemberships(asOrganizationId(org), input.ctx) });
+      },
+    },
     {
       method: 'GET',
       pattern: ['api', 'access-policies'],
