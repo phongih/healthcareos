@@ -114,3 +114,48 @@ form.inline { gap: 6px; align-items: center; flex-wrap: nowrap; }
 form.inline .alert { margin: 0; }
 
 .spaced { margin-left: 12px; }
+
+/* ---- Hàng đợi ---- */
+button.big { font-size: 17px; padding: 10px 18px; }
+button.secondary { background: #fff; color: #0f766e; border: 1px solid #0f766e; }
+.badge.priority { background: #fef3c7; color: #92400e; }
+.badge.danger { background: #fee2e2; color: #b91c1c; }
+.calling { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid #e5e7eb; }
+.calling:first-of-type { border-top: 0; }
+.calling .grow { flex: 1; }
+.ticket-no { font-size: 28px; font-weight: 700; color: #0f766e; min-width: 110px; }
+tr.hl td { background: #ecfdf5; }
+tr.muted-row td { color: #6b7280; }
+td.actions { white-space: nowrap; }
+td.actions > * { margin-right: 8px; }
+.select-all { user-select: all; word-break: break-all; }
+h3 { font-size: 15px; margin: 12px 0 6px; }
+.print-ticket { border: 2px dashed #9ca3af; border-radius: 8px; padding: 12px 20px; text-align: center; min-width: 220px; }
+.print-ticket .pt-no { font-size: 44px; font-weight: 800; letter-spacing: 1px; }
+.print-ticket .pt-room { font-size: 18px; font-weight: 600; }
+.print-ticket .pt-priority { font-weight: 700; color: #b91c1c; margin-top: 4px; }
+.print-ticket .pt-org, .print-ticket .pt-time, .print-ticket .pt-name { color: #374151; font-size: 13px; margin-top: 4px; }
+@media print {
+  body * { visibility: hidden; }
+  .print-ticket, .print-ticket * { visibility: visible; }
+  .print-ticket { position: absolute; left: 0; top: 0; border: 0; }
+}
+
+/* ---- Màn hình TV ---- */
+.board { min-height: 100vh; background: #0b1f1d; color: #f0fdfa; padding: 16px 28px; box-sizing: border-box; font-size: 22px; }
+.board header { display: flex; justify-content: space-between; font-size: 26px; font-weight: 600; border-bottom: 1px solid #134e4a; padding-bottom: 10px; }
+.board h2 { font-size: 24px; color: #5eead4; letter-spacing: 2px; margin: 18px 0 10px; }
+.board-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 32px; }
+.board-call { display: flex; align-items: baseline; gap: 18px; padding: 10px 14px; border-radius: 10px; margin-bottom: 8px; background: #123a36; }
+.board-call.fresh { background: #f59e0b; color: #111827; animation: blink 1s step-start 6; }
+.board-no { font-size: 56px; font-weight: 800; min-width: 220px; }
+.board-room { font-size: 30px; }
+.board-prio { font-size: 18px; font-weight: 700; background: #b91c1c; color: #fff; padding: 2px 10px; border-radius: 6px; }
+.board-room-next { margin-bottom: 14px; }
+.board-room-name { color: #99f6e4; font-size: 22px; }
+.board-next span { display: inline-block; font-size: 30px; font-weight: 700; margin-right: 18px; }
+.board-next span.prio { color: #fbbf24; }
+.board-empty { color: #5eead4; opacity: 0.7; }
+.board-error { background: #7f1d1d; padding: 8px 14px; border-radius: 8px; margin-top: 10px; }
+.board-speak { position: fixed; right: 16px; bottom: 16px; opacity: 0.6; }
+@keyframes blink { 50% { opacity: 0.35; } }

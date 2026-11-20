@@ -25,6 +25,7 @@ import { createApiHandler } from '../services/api/src/http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from '../services/api/src/iam/access-policy.service';
 import { PgPharmacyUnitOfWork, PharmacyInventoryService } from '../services/api/src/pharmacy/inventory.service';
 import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/src/clinical/prescription.service';
+import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -108,7 +109,10 @@ const MEDS = [
 const NURSE_POLICY = {
   name: 'Điều dưỡng — che CCCD, chỉ ghi sinh hiệu',
   description: 'Thực tập: điều dưỡng xem hồ sơ nhưng không thấy CCCD/định danh; được đăng ký bệnh nhân và ghi sinh hiệu.',
-  rules: [{ action: 'patient:read', hiddenFields: ['identifiers'] }, { action: 'encounter:read' }, { action: 'patient:register' }, { action: 'observation:write' }],
+  rules: [
+    { action: 'patient:read', hiddenFields: ['identifiers'] }, { action: 'encounter:read' }, { action: 'patient:register' },
+    { action: 'observation:write' }, { action: 'queue:read' },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -127,6 +131,8 @@ const handler = createApiHandler({
   accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
   pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
   prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
+  queue: new QueueService({ uow: new PgQueueUnitOfWork(pool), audit }),
+  queueBoard: new PgQueueBoard(pool),
 });
 const server = createServer((req, res) => void handler(req, res));
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -376,15 +382,67 @@ async function seedPendingPrescriptions(medId: Map<string, string>): Promise<voi
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Hàng đợi: 2 phòng khám, màn hình gọi số, số chờ hôm nay để bác sĩ tập gọi số
+// ---------------------------------------------------------------------------
+const ROOMS = [['N1', 'Phòng khám Nội 1'], ['N2', 'Phòng khám Nội 2']] as const;
+/** Bệnh nhân KHÔNG có đợt khám đang mở (đợt đang mở là TT00005, TT00010, …). */
+const QUEUE_MRNS = ['TT00001', 'TT00002', 'TT00003', 'TT00004', 'TT00006', 'TT00007', 'TT00008', 'TT00009'];
+const DISPLAY_NAME = 'Màn hình sảnh chờ (thực tập)';
+
+async function seedQueue(): Promise<void> {
+  const QL = 'tt.quanly1';
+  const LT = 'tt.letan1';
+  const sps = (await call<{ servicePoints: Array<{ servicePointId: string; code: string }> }>(QL, 'GET', `/api/service-points?organization=${ORG}`)).data.servicePoints;
+  const spId = new Map(sps.map((x) => [x.code, x.servicePointId]));
+  for (const [code, name] of ROOMS) {
+    if (spId.has(code)) continue;
+    const r = await call<{ servicePointId: string }>(QL, 'POST', '/api/service-points', { organizationId: ORG, code, name });
+    spId.set(code, r.data.servicePointId);
+    bump('phòng khám');
+  }
+
+  const displays = (await call<{ displays: Array<{ name: string; isActive: boolean }> }>(QL, 'GET', `/api/queue/displays?organization=${ORG}`)).data.displays;
+  if (!displays.some((d) => d.isActive && d.name === DISPLAY_NAME)) {
+    const r = await call<{ key: string }>(QL, 'POST', '/api/queue/displays', { organizationId: ORG, name: DISPLAY_NAME });
+    bump('màn hình gọi số');
+    console.log(`Màn hình gọi số (chỉ in MỘT lần, mở trên TV): ${process.env['TT_PUBLIC_ORIGIN'] ?? 'https://smart.id.vn'}/app/#/board/${r.data.key}`);
+  }
+
+  // Số chờ hôm nay: chỉ cấp cho bệnh nhân chưa có số nào hôm nay (chạy lại trong ngày không cấp thêm).
+  const today = (await call<{ tickets: Array<{ patientId: string }> }>(LT, 'GET', `/api/queue?organization=${ORG}`)).data.tickets;
+  const has = new Set(today.map((t) => t.patientId));
+  const now = new Date();
+  for (const [i, mrn] of QUEUE_MRNS.entries()) {
+    const pt = (await call<{ entry?: Array<{ resource: { id: string; birthDate?: string } }> }>(LT, 'GET', `/fhir/Patient?organization=${ORG}&mrn=${mrn}&_count=1`)).data.entry?.[0]?.resource;
+    if (!pt) continue;
+    if (has.has(pt.id)) { bump('số thứ tự đã có (bỏ qua)'); continue; }
+    const age = pt.birthDate ? now.getFullYear() - Number(pt.birthDate.slice(0, 4)) : 40;
+    const priorityReason = age < 6 ? 'child_under_6' : age >= 75 ? 'elderly_75' : null;
+    await call(LT, 'POST', '/api/queue/tickets', { servicePointId: spId.get(ROOMS[i % 2]![0]), patientId: pt.id, priorityReason });
+    bump('số thứ tự');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3. Access policy cho điều dưỡng (quản lý)
 // ---------------------------------------------------------------------------
 async function seedPolicy(): Promise<void> {
   const QL = 'tt.quanly1';
   const policies = (await call<{ policies: Array<{ policyId: string; name: string; status: string }> }>(QL, 'GET', '/api/access-policies')).data.policies;
-  let p = policies.find((x) => x.name === NURSE_POLICY.name && x.status === 'active');
+  let p = policies.find((x) => x.name === NURSE_POLICY.name && x.status === 'active') as
+    | { policyId: string; name: string; status: string; version: number; rules: Array<{ action: string }> }
+    | undefined;
   if (!p) {
-    p = (await call<{ policyId: string; name: string; status: string }>(QL, 'POST', '/api/access-policies', NURSE_POLICY)).data;
+    p = (await call<NonNullable<typeof p>>(QL, 'POST', '/api/access-policies', NURSE_POLICY)).data;
     bump('policy');
+  } else {
+    // Policy tạo từ bản seed cũ: bổ sung các luật còn thiếu (vd. queue:read từ HCOS-F6), giữ nguyên luật đã có.
+    const have = new Set(p.rules.map((r) => r.action));
+    const missing = NURSE_POLICY.rules.filter((r) => !have.has(r.action));
+    if (missing.length > 0) {
+      await call(QL, 'POST', `/api/access-policies/${p.policyId}/revise`, { rules: [...p.rules, ...missing] }, { 'if-match': `W/"${p.version}"` });
+      bump('policy bổ sung luật');
+    }
   }
   const ms = (await call<{ memberships: Array<{ membership: { membershipId: string; userId: string; version: number; accessPolicyId: string | null } }> }>(
     QL, 'GET', `/api/memberships?organization=${ORG}`)).data.memberships;
@@ -402,6 +460,7 @@ try {
   await seedClinical(medId, counterId);
   await seedPendingPrescriptions(medId);
   await seedPolicy();
+  await seedQueue();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);
 } catch (e) {

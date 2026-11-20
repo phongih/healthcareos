@@ -9,6 +9,7 @@ import { AdminScreen } from './screens/admin';
 import { EncounterScreen } from './screens/encounter';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
+import { BoardScreen, QueueScreen } from './screens/queue';
 
 declare const __HCOS_ENV_LABEL__: string;
 const ENV_LABEL = __HCOS_ENV_LABEL__;
@@ -18,6 +19,7 @@ type Route =
   | { name: 'patient'; id: string }
   | { name: 'encounter'; id: string }
   | { name: 'pharmacy' }
+  | { name: 'queue' }
   | { name: 'admin' }
   | { name: 'home' };
 
@@ -28,6 +30,7 @@ function parseRoute(hash: string): Route {
   if ((m = new RegExp(`^#/encounters/(${UUID})$`).exec(hash))) return { name: 'encounter', id: m[1]! };
   if (hash.startsWith('#/patients')) return { name: 'patients' };
   if (hash.startsWith('#/pharmacy')) return { name: 'pharmacy' };
+  if (hash.startsWith('#/queue')) return { name: 'queue' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   return { name: 'home' };
 }
@@ -52,6 +55,7 @@ function Shell({ me }: { me: Me }) {
 
   const tabs = [
     can.patients(roles) && { hash: '#/patients', label: 'Bệnh nhân', active: ['patients', 'patient', 'encounter'].includes(route.name) },
+    can.queue(roles) && { hash: '#/queue', label: 'Hàng đợi', active: route.name === 'queue' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -107,6 +111,8 @@ function Shell({ me }: { me: Me }) {
           <PatientDetail id={route.id} />
         ) : route.name === 'encounter' ? (
           <EncounterScreen id={route.id} />
+        ) : route.name === 'queue' ? (
+          <QueueScreen />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
         ) : route.name === 'admin' ? (
@@ -140,4 +146,6 @@ function App() {
   return <Shell me={state.me} />;
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+// Màn hình TV gọi số: không đăng nhập; khoá hiển thị nằm trong fragment (#) nên không bao giờ gửi lên máy chủ trong URL.
+const board = /^#\/board\/([A-Za-z0-9_-]{43})$/.exec(location.hash);
+createRoot(document.getElementById('root')!).render(board ? <BoardScreen displayKey={board[1]!} /> : <App />);
