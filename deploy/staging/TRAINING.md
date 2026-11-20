@@ -52,8 +52,9 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 3. Vào đợt khám đang mở, ghi nhiệt độ và SpO₂.
 
 **Bác sĩ** (`tt.bacsi1`, `tt.bacsi2`)
-1. Mở đợt khám đang mở của `TT00010`, xem các sinh hiệu điều dưỡng đã ghi.
-   Chỉ bác sĩ phụ trách mới kê đơn được; nếu không thấy nút "+ Kê đơn" thì thử bằng tài khoản bác sĩ còn lại.
+1. Tìm một bệnh nhân trong số `TT00005`–`TT00025`. Ở bảng "Các đợt khám", chọn đợt **Đang khám** có cột **Bác sĩ = Bạn**, rồi xem các sinh hiệu điều dưỡng đã ghi.
+   - Chỉ bác sĩ phụ trách mới kê đơn được, và chỉ khi đợt khám chưa kết thúc. Nếu không kê được, màn hình sẽ ghi lý do.
+   - Phần lớn đợt khám trong dữ liệu giả đã kết thúc, nên không kê đơn được. Nếu muốn, bác sĩ có thể tự mở đợt khám mới cho bất kỳ bệnh nhân nào.
 2. Thêm chẩn đoán, ví dụ `J06.9` (Nhiễm trùng hô hấp trên cấp).
 3. Bấm **+ Kê đơn** và kê 2 thuốc, ví dụ:
    - Paracetamol 500, 1 viên × 2 lần/ngày × 5 ngày: số lượng tự tính ra 10;

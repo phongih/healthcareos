@@ -190,7 +190,7 @@ function RegisterPatient({ onDone }: { onDone: (patientId: string) => void }) {
 }
 
 export function PatientDetail({ id }: { id: string }) {
-  const { roles } = useSession();
+  const { roles, me } = useSession();
   const patient = useLoad(() => api<FhirPatient>('GET', `/fhir/Patient/${id}`).then((r) => r.data), [id]);
   const encs = useLoad(() => api<Bundle<FhirEncounter>>('GET', `/fhir/Encounter?patient=${id}`).then((r) => r.data), [id]);
   const p = patient.data;
@@ -232,6 +232,7 @@ export function PatientDetail({ id }: { id: string }) {
                 <th>Loại</th>
                 <th>Trạng thái</th>
                 <th>Lý do khám</th>
+                <th>Bác sĩ</th>
               </tr>
             </thead>
             <tbody>
@@ -241,6 +242,7 @@ export function PatientDetail({ id }: { id: string }) {
                   <td>{classLabel(e.class?.code)}</td>
                   <td>{STATUS_LABEL[e.status ?? ''] ?? e.status}</td>
                   <td>{isRedacted(e) ? <RedactedBadge show /> : (e.reasonCode?.[0]?.text ?? '—')}</td>
+                  <td>{idOf(e.participant?.[0]?.individual) === me.user.userId ? <strong>Bạn</strong> : <span className="muted">khác</span>}</td>
                 </tr>
               ))}
             </tbody>
