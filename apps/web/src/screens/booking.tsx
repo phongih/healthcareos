@@ -562,6 +562,8 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
   const shift = useMyShift();
   const financeDenied = settings.error instanceof ApiError && settings.error.status === 403;
   const [depositOn, setDepositOn] = useState(false);
+  // Sau check-in: lễ tân vẫn thu tạm ứng được (nút "Thu tạm ứng" trên phiếu số).
+  const [lateDeposit, setLateDeposit] = useState(false);
   const [draft, setDraft] = useState<ReceiptDraft>({ kind: 'deposit', method: 'cash', amount: null, reference: '', payerName: '' });
   useEffect(() => {
     if (settings.data) setDraft((d) => (d.amount === null ? { ...d, amount: settings.data!.depositDefault || null } : d));
@@ -577,6 +579,7 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
   const collect = useAction(async (patientId: string) => {
     const body = receiptBody(draft);
     if (!body) throw new Error('Nhập số tiền tạm ứng.');
+    if (body.method !== 'cash' && !body.reference) throw new Error('Chuyển khoản / thẻ cần mã tham chiếu.');
     const r = await api<{ receipt: Receipt }>('POST', '/api/finance/receipts', {
       headers: { 'idempotency-key': depKey }, body: { organizationId: org, patientId, ...body },
     });
@@ -640,15 +643,39 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
         <div className="stack">
           <button onClick={() => printOnly('ticket')}>In phiếu số</button>
           {receipt && <button onClick={() => printOnly('receipt')}>In phiếu thu tạm ứng</button>}
-          {depositOn && !receipt && (
+          {!receipt && !financeDenied && checkedIn && (depositOn ? (
             <>
               {collect.busy && <span className="muted">Đang lập phiếu thu tạm ứng…</span>}
               <FinanceError error={collect.error} />
-              {collect.error != null && checkedIn && (
+              {collect.error != null && (
                 <button className="secondary" disabled={collect.busy} onClick={() => void collect.run(checkedIn.patientId)}>Thu lại tạm ứng</button>
               )}
             </>
-          )}
+          ) : shift.data === null ? (
+            <p className="muted small">Thu tạm ứng: bạn chưa mở ca thu ngân (mở ở tab <a href="#/finance">Thu ngân</a>, rồi bấm "Thu tạm ứng" ở đây).{' '}
+              <button type="button" className="link" onClick={() => shift.reload()}>Kiểm tra lại</button></p>
+          ) : shift.data && !lateDeposit ? (
+            <button className="secondary" onClick={() => setLateDeposit(true)}>
+              Thu tạm ứng{draft.amount ? ` ${fmtVnd(draft.amount)}` : ''}
+            </button>
+          ) : shift.data ? (
+            <form
+              className="stack deposit"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                void collect.run(checkedIn.patientId);
+              }}
+            >
+              <ReceiptFields draft={draft} set={setDraft} settings={settings.data} mrn={checkedIn.mrn || 'BN'} fixedKind />
+              <FinanceError error={collect.error} />
+              <div className="row">
+                <button type="submit" disabled={collect.busy || !draft.amount}>
+                  {collect.busy ? 'Đang lập phiếu…' : `Lập phiếu thu tạm ứng${draft.amount ? ` ${fmtVnd(draft.amount)}` : ''}`}
+                </button>
+                <button type="button" className="link" disabled={collect.busy} onClick={() => setLateDeposit(false)}>Thôi</button>
+              </div>
+            </form>
+          ) : null)}
           <button className="link" onClick={onClose}>Xong</button>
         </div>
       </div>
