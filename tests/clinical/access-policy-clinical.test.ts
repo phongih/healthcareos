@@ -2,6 +2,7 @@
  * HCOS-P0-ENG-001 | IAM × S1 | Access policy áp vào ClinicalEncounterService (repository in-memory).
  * RLS / trigger thật nằm ở tests/integration/access-policy-pg.integration.test.ts.
  */
+import { formatAutoMrn } from '../../services/api/src/registry/mrn';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -115,6 +116,11 @@ class Repo implements ClinicalRepository {
   async listIdentifiers(personId: Person['personId']) { return this.s.identifiers.filter((i) => i.personId === personId); }
   async searchPatients(q: PatientSearchQuery) {
     return this.s.patients.filter((p) => p.organizationId === q.organizationId && (q.mrn === null || p.mrn === q.mrn));
+  }
+  private mrnSeq = 0;
+  /** HCOS-F13: giả lập CSDL — không nhập => tự sinh; có nhập => coi như cơ sở cho phép mã cũ. */
+  async resolveMrn(_org: unknown, raw: string | null | undefined) {
+    return raw ? { mrn: raw, generated: false } : { mrn: formatAutoMrn('BN', 26, ++this.mrnSeq), generated: true };
   }
   async insertPatient(p: Patient) { this.s.patients.push(p); }
   async findUserBySubject(sub: string) { return this.s.users.find((u) => u.externalSubject === sub) ?? null; }

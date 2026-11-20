@@ -339,3 +339,8 @@ input.wide { width: min(720px, 100%); }
 .text-danger { color: var(--danger); }
 tr.sub-row > td { background: #fafbfc; }
 button.small { font-size: 12px; padding: 2px 8px; }
+/* ---- HCOS-F13: mã bệnh nhân tự sinh ---- */
+.mrn-field { display: flex; flex-direction: column; gap: 4px; }
+.mrn-auto { padding: 8px 10px; background: #f0fdfa; border: 1px dashed #5eead4; border-radius: 8px; font-size: 14px; }
+.mrn-legacy { display: inline-flex; gap: 6px; align-items: center; }
+.print-ticket .pt-mrn { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; }

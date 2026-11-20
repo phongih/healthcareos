@@ -349,7 +349,8 @@ export interface UnmergeResult {
 export interface RegisterPersonPatientInput {
   readonly person: NewPersonInput;
   readonly organizationId: OrganizationId;
-  readonly mrn: string;
+  /** Bỏ trống => CSDL cấp mã tự sinh (HCOS-F13); có giá trị => mã cũ, chỉ khi cơ sở cho phép. */
+  readonly mrn?: string | null;
 }
 
 // ---------------------------------------------------------------------------

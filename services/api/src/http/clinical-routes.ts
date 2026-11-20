@@ -139,9 +139,9 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
         if (typeof personId !== 'string' || !isUuid(personId) || typeof organizationId !== 'string' || !isUuid(organizationId)) {
           throw new HttpError(422, 'invalid', 'personId and organizationId must be uuids');
         }
-        if (typeof mrn !== 'string') throw new HttpError(422, 'invalid', 'mrn must be a string');
+        if (mrn !== undefined && mrn !== null && typeof mrn !== 'string') throw new HttpError(422, 'invalid', 'mrn must be a string (omit to auto-generate)');
         const patient = await api.registerPatient(
-          { personId: asPersonId(personId), organizationId: asOrganizationId(organizationId), mrn },
+          { personId: asPersonId(personId), organizationId: asOrganizationId(organizationId), ...(typeof mrn === 'string' ? { mrn } : {}) },
           input.ctx,
         );
         return {

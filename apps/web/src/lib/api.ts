@@ -30,6 +30,15 @@ const STATUS_TEXT: Record<number, string> = {
   428: 'Thiếu điều kiện bắt buộc',
 };
 
+/** Lý do lỗi đã biết => câu tiếng Việt cho người dùng (thay thông điệp kỹ thuật). */
+const REASON_TEXT: Record<string, string> = {
+  MRN_CHECK_DIGIT: 'Mã bệnh nhân sai số kiểm tra — có thể gõ nhầm một chữ số. Kiểm tra lại mã.',
+  MRN_RESERVED_FORMAT: 'Mã cũ không được có dạng mã tự sinh (vd. BN26-000123-5). Bỏ trống để hệ thống tự cấp.',
+  LEGACY_MRN_DISABLED: 'Cơ sở không cho nhập mã cũ — bỏ trống để hệ thống tự cấp mã.',
+  MRN_TAKEN: 'Mã bệnh nhân này đã được dùng trong cơ sở.',
+  INVALID_PREFIX: 'Tiền tố phải gồm 1–4 chữ cái in hoa A–Z.',
+};
+
 export async function api<T = unknown>(
   method: 'GET' | 'POST',
   path: string,
@@ -56,8 +65,8 @@ export async function api<T = unknown>(
   if (!res.ok) {
     const issue = (data as { issue?: Array<{ diagnostics?: string; details?: { text?: string } }> } | undefined)?.issue?.[0];
     const custom = data as { error?: string; message?: string } | undefined;
-    const message = issue?.diagnostics ?? custom?.message ?? custom?.error ?? STATUS_TEXT[res.status] ?? `Lỗi ${res.status}`;
     const detail = issue?.details?.text ?? custom?.error ?? null;
+    const message = (detail ? REASON_TEXT[detail] : undefined) ?? issue?.diagnostics ?? custom?.message ?? custom?.error ?? STATUS_TEXT[res.status] ?? `Lỗi ${res.status}`;
     throw new ApiError(res.status, res.status === 403 ? STATUS_TEXT[403]! : message, detail, data);
   }
   return { status: res.status, data: data as T, headers: res.headers };

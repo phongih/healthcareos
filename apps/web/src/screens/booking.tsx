@@ -10,7 +10,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { api, ApiError } from '../lib/api';
-import { CCCD_SYSTEM, fmtDateTime, type FhirPatient } from '../lib/fhir';
+import { CCCD_SYSTEM, fmtDateTime, mrnOf, type FhirPatient } from '../lib/fhir';
+import { MrnField } from '../lib/mrn';
 import { fmtVnd } from '../lib/money';
 import { QrCode } from '../lib/qr-view';
 import { useSession } from '../lib/session';
@@ -568,7 +569,10 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
   const [depKey] = useIntentKey([draft.method, draft.amount, draft.reference, draft.payerName]);
   const [checkedIn, setCheckedIn] = useState<{ patientId: string; mrn: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const chosenMrn = choice === 'new' ? mrn.trim() : (found.candidates.find((c) => c.patientId === choice)?.mrn ?? '');
+  // Hồ sơ vừa tạo ở lần bấm trước (check-in lỗi rồi thử lại): nhớ mã do hệ thống cấp.
+  const [created, setCreated] = useState<{ patientId: string; mrn: string } | null>(null);
+  const chosenMrn =
+    created && choice === created.patientId ? created.mrn : choice === 'new' ? mrn.trim() : (found.candidates.find((c) => c.patientId === choice)?.mrn ?? '');
 
   const collect = useAction(async (patientId: string) => {
     const body = receiptBody(draft);
@@ -587,6 +591,7 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
       if (body.method !== 'cash' && !body.reference) throw new Error('Chuyển khoản / thẻ cần mã tham chiếu.');
     }
     let patientId = choice;
+    let newMrn: string | null = null;
     if (choice === 'new') {
       const body: FhirPatient = {
         resourceType: 'Patient',
@@ -595,17 +600,22 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
         birthDate: b.birthDate,
         telecom: [{ system: 'phone', value: b.phone }],
         identifier: [
-          { type: { text: 'mrn' }, system: `urn:hcos:mrn:${orgId}`, value: mrn.trim() },
+          // Bỏ trống mã => hệ thống tự sinh (HCOS-F13); chỉ gửi khi lễ tân chọn "Dùng mã cũ".
+          ...(mrn.trim() ? [{ type: { text: 'mrn' }, system: `urn:hcos:mrn:${orgId}`, value: mrn.trim() }] : []),
           ...(b.nationalId ? [{ type: { text: 'national_id' }, system: CCCD_SYSTEM, value: b.nationalId }] : []),
         ],
         managingOrganization: { reference: `Organization/${orgId}` },
       };
-      patientId = (await api<FhirPatient>('POST', '/fhir/Patient', { body })).data.id!;
+      const pt = (await api<FhirPatient>('POST', '/fhir/Patient', { body })).data;
+      patientId = pt.id!;
+      newMrn = mrnOf(pt);
+      setCreated({ patientId, mrn: newMrn });
       setChoice(patientId); // check-in lỗi rồi thử lại => không tạo hồ sơ lần hai
     }
+    const mrnNow = newMrn ?? chosenMrn;
     const r = await api<{ ticket: IssuedTicket }>('POST', `/api/bookings/${b.bookingId}/check-in`, { body: { patientId, priorityReason: reason || null } });
     setTicket(r.data.ticket);
-    setCheckedIn({ patientId, mrn: chosenMrn });
+    setCheckedIn({ patientId, mrn: mrnNow });
     onDone();
     // Tạm ứng là phiếu riêng: lỗi (vd. chuyển khoản chưa về) không làm mất số đã cấp; thử lại dùng cùng Idempotency-Key.
     if (depositOn) void collect.run(patientId);
@@ -623,6 +633,7 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
           <div className="pt-room">{ticket.servicePointName}</div>
           {ticket.priorityReason && <div className="pt-priority">ƯU TIÊN · {PRIORITY_LABEL[ticket.priorityReason]}</div>}
           <div className="pt-name">{b.familyName} {b.givenName}</div>
+          {checkedIn?.mrn && <div className="pt-mrn">Mã BN: {checkedIn.mrn}</div>}
           <div className="pt-time">{fmtDateTime(ticket.issuedAt)}</div>
         </div>
         {receipt && <PrintReceipt r={receipt} patient={{ mrn: checkedIn?.mrn ?? '', name: `${b.familyName} ${b.givenName}` }} orgName={orgName} />}
@@ -684,11 +695,7 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
               <input type="radio" name="pt" checked={choice === 'new'} onChange={() => setChoice('new')} />
               <span>Tạo hồ sơ mới từ thông tin đặt lịch</span>
             </label>
-            {choice === 'new' && (
-              <Field label="Mã bệnh nhân (MRN) *" hint="Duy nhất trong cơ sở">
-                <input required pattern="[A-Za-z0-9][A-Za-z0-9_.\/\-]{0,63}" value={mrn} onChange={(ev) => setMrn(ev.target.value)} />
-              </Field>
-            )}
+            {choice === 'new' && <MrnField value={mrn} onChange={setMrn} />}
             {found.candidates.length > 0 && !found.candidates.some(strong) && choice !== 'new' && (
               <Notice kind="warn">Chỉ trùng tên hoặc chỉ trùng SĐT — đối chiếu CCCD / giấy tờ trước khi chọn, vì nhiều người trùng tên và ngày sinh, hoặc dùng chung SĐT với người nhà.</Notice>
             )}

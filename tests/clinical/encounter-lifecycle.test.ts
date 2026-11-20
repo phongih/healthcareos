@@ -5,6 +5,7 @@
  * RLS theo tenant, transaction rollback). Các ràng buộc ở tầng PostgreSQL (trigger bất biến, history,
  * RLS thật) cần integration suite riêng trên DB thật.
  */
+import { formatAutoMrn } from '../../services/api/src/registry/mrn';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -196,6 +197,11 @@ class MemoryRepo implements ClinicalRepository {
       return true;
     });
     return hits.sort((a, b) => (a.registeredAt + a.patientId).localeCompare(b.registeredAt + b.patientId)).slice(0, q.limit).map((p) => ({ ...p }));
+  }
+  private mrnSeq = 0;
+  /** HCOS-F13: giả lập CSDL — không nhập => tự sinh; có nhập => coi như cơ sở cho phép mã cũ. */
+  async resolveMrn(_org: unknown, raw: string | null | undefined) {
+    return raw ? { mrn: raw, generated: false } : { mrn: formatAutoMrn('BN', 26, ++this.mrnSeq), generated: true };
   }
   async insertPatient(p: Patient) {
     this.writable(p.tenantId);

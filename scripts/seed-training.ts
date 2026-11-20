@@ -32,6 +32,7 @@ import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
 import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analytics/forecast.service';
 import { DecisionEngineService, PgDecisionUnitOfWork } from '../services/api/src/decision/decision.service';
+import { MrnSettingsService } from '../services/api/src/registry/mrn-settings.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ const handler = createApiHandler({
   finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
   forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
   decision: new DecisionEngineService({ uow: new PgDecisionUnitOfWork(pool), audit }),
+  mrn: new MrnSettingsService({ pool, audit }),
   // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
   rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
@@ -618,9 +620,25 @@ async function seedPolicy(): Promise<void> {
   }
 }
 
+/**
+ * HCOS-F13: bệnh nhân thực tập dùng mã cũ TT00001… (tài liệu đào tạo nhắc tới các mã này). Tạm bật "cho nhập mã cũ"
+ * trong lúc seed rồi trả lại như cũ — bệnh nhân học viên đăng ký sau đó vẫn được tự sinh mã BN26-…
+ */
+async function withLegacyMrn(fn: () => Promise<void>): Promise<void> {
+  const QL = 'tt.quanly1';
+  const s = await call<{ prefix: string; allowLegacy: boolean; version: number }>(QL, 'GET', `/api/patient-mrn/settings?organization=${ORG}`);
+  if (s.data.allowLegacy) return fn();
+  const on = await call<{ version: number }>(QL, 'POST', '/api/patient-mrn/settings', { organizationId: ORG, prefix: s.data.prefix, allowLegacy: true }, { 'if-match': `W/"${s.data.version}"` });
+  try {
+    await fn();
+  } finally {
+    await call(QL, 'POST', '/api/patient-mrn/settings', { organizationId: ORG, prefix: s.data.prefix, allowLegacy: false }, { 'if-match': `W/"${on.data.version}"` });
+  }
+}
+
 try {
   const { medId, counterId } = await seedPharmacy();
-  await seedClinical(medId, counterId);
+  await withLegacyMrn(() => seedClinical(medId, counterId));
   await seedPendingPrescriptions(medId);
   await seedPolicy();
   await seedQueue();

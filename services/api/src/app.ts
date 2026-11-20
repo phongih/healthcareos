@@ -18,6 +18,7 @@ import { ForecastService, PgForecastUnitOfWork } from './analytics/forecast.serv
 import { DecisionEngineService, DecisionScheduler, PgDecisionUnitOfWork } from './decision/decision.service';
 import { IntegrationDispatcher, IntegrationService, PgIntegrationUnitOfWork } from './integration/integration.service';
 import { SecretBox } from './integration/secrets';
+import { MrnSettingsService } from './registry/mrn-settings.service';
 import { httpTransport } from './integration/transport';
 import { createApiServer } from './http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from './iam/access-policy.service';
@@ -84,6 +85,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
       decision,
       integrations,
+      mrn: new MrnSettingsService({ pool, audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),

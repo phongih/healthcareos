@@ -93,6 +93,8 @@ run('S2 / HTTP -> service -> PostgreSQL end-to-end', () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
     for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
+    // HCOS-F13: các test này dùng MRN gõ sẵn => coi như cơ sở đã chuyển dữ liệu cũ (cho nhập mã cũ).
+    su(`INSERT INTO patient.mrn_settings (tenant_id, organization_id, allow_legacy) SELECT tenant_id, organization_id, true FROM iam.organizations ON CONFLICT DO NOTHING`);
 
     const kp = await generateKeyPair('RS256');
     privateKey = kp.privateKey;
