@@ -34,6 +34,7 @@ const finance: FinanceApi = {
   async closeShift(id, i, v) { hit('closeShift', { id, i, v }); return { version: v + 1 } as never; },
   async getShift(id) { hit('getShift', id); return { version: 2 } as never; },
   async listShifts(q) { hit('listShifts', q); return []; },
+  async report(q) { hit('report', q); return { from: q.from } as never; },
   async listCases(q) { hit('listCases', q); return []; },
   async openCase(i) { hit('openCase', i); return detail; },
   async getCase(id) { hit('getCase', id); return detail; },
@@ -115,5 +116,8 @@ describe('HTTP thu ngân', () => {
     await call('GET', `/api/finance/cases?organization=${OA}&status=open&patient=${PAT}`);
     expect(calls.at(-1)).toEqual({ fn: 'listCases', arg: { organizationId: OA, status: 'open', patientId: PAT } });
     expect((await call('GET', `/api/finance/cases?organization=${OA}&x=1`)).status).toBe(400);
+    await call('GET', `/api/finance/reports?organization=${OA}&from=2026-11-01&to=2026-11-20`);
+    expect(calls.at(-1)).toEqual({ fn: 'report', arg: { organizationId: OA, from: '2026-11-01', to: '2026-11-20' } });
+    expect((await call('GET', `/api/finance/reports?organization=${OA}`, undefined, {}, false)).status).toBe(401);
   });
 });

@@ -112,6 +112,7 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 **Quản lý** (`tt.quanly1`)
 0. Tab **Hàng đợi → Cài đặt hàng đợi**: xem 2 phòng; thêm phòng `NHI` "Phòng khám Nhi"; tạo một **đường dẫn màn hình** mới rồi mở nó ở tab khác, để làm màn hình TV.
 0c. Tab **Thu ngân → Cài đặt thu ngân**: sửa giá `KB-NOI` (chi phí đã ghi trước đó không đổi); thêm dịch vụ mới; xem **Báo cáo ca thu ngân** trong ngày (tiền phải có, đếm được, chênh lệch) và danh sách phiếu từng ca.
+0d. Tab **Báo cáo**: xem báo cáo tài chính hôm nay sau khi lễ tân tập thu ngân (thực thu, doanh thu dịch vụ, tạm ứng còn giữ, phiếu huỷ); đổi sang "7 ngày"; bấm **Xuất Excel** và mở file.
 0b. Tab **Lịch hẹn → Cài đặt đặt lịch online**: đặt số chỗ cho phòng `NHI` (vd. 5) và xem phòng xuất hiện trên trang đặt lịch; thử **Tạm ngừng** đường dẫn rồi mở trang đặt lịch (báo tạm ngừng), sau đó **Mở lại**.
 1. Mở tab Quản trị, xem policy của điều dưỡng và lịch sử phiên bản.
 2. Sửa policy, ví dụ giới hạn điều dưỡng chỉ được ghi nhiệt độ và SpO₂, rồi đăng nhập lại bằng `tt.dieuduong1` để kiểm tra.

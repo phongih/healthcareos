@@ -157,6 +157,66 @@ export interface Once<T> {
   readonly replayed: boolean;
 }
 
+
+// ---- Báo cáo tài chính (HCOS-F9) ----
+export interface CashflowDay {
+  readonly date: string;
+  readonly deposit: number;
+  readonly payment: number;
+  readonly refund: number;
+  /** Thực thu ròng = tạm ứng + thanh toán − hoàn ứng. */
+  readonly net: number;
+  readonly byMethod: Record<PaymentMethod, { in: number; out: number }>;
+  readonly receiptCount: number;
+}
+export interface ServiceRevenue {
+  readonly itemId: string;
+  readonly code: string;
+  readonly name: string;
+  readonly category: PriceCategory;
+  readonly quantity: number;
+  readonly amount: number;
+  readonly cases: number;
+}
+export interface CashierRow {
+  readonly userId: UserId;
+  readonly name: string | null;
+  readonly receiptCount: number;
+  readonly in: number;
+  readonly out: number;
+  readonly cancelledCount: number;
+  readonly cancelledAmount: number;
+  readonly voidedCharges: number;
+  readonly shifts: number;
+  readonly openShifts: number;
+  /** Tổng chênh lệch két của các ca đã đóng (âm = thiếu). */
+  readonly cashDifference: number;
+}
+export interface CancelledReceiptRow {
+  readonly receiptNo: string; readonly kind: ReceiptKind; readonly method: PaymentMethod; readonly amount: number;
+  readonly patientName: string; readonly mrn: string; readonly createdByName: string | null; readonly createdAt: string;
+  readonly cancelledByName: string | null; readonly cancelledAt: string; readonly reason: string;
+}
+export interface VoidedChargeRow {
+  readonly itemCode: string; readonly description: string; readonly quantity: number; readonly amount: number;
+  readonly patientName: string; readonly mrn: string; readonly createdByName: string | null; readonly createdAt: string;
+  readonly voidedByName: string | null; readonly voidedAt: string; readonly reason: string;
+}
+export interface FinanceReport {
+  readonly organizationId: OrganizationId;
+  readonly from: string;
+  readonly to: string;
+  readonly generatedAt: string;
+  /** Dòng tiền: phiếu HỢP LỆ lập trong khoảng (tạm ứng là tiền giữ hộ, chưa phải doanh thu). */
+  readonly cashflow: { readonly days: CashflowDay[]; readonly totals: Omit<CashflowDay, 'date'> };
+  /** Doanh thu dịch vụ: chi phí CÒN HIỆU LỰC ghi trong khoảng, theo dịch vụ và theo nhóm. */
+  readonly services: { readonly items: ServiceRevenue[]; readonly byCategory: Array<{ category: PriceCategory; quantity: number; amount: number }>; readonly total: number };
+  /** Hồ sơ đang mở tại thời điểm lập báo cáo (không phụ thuộc khoảng ngày). */
+  readonly openCases: { readonly cases: BillingCase[]; readonly depositsHeld: number; readonly receivable: number };
+  readonly cashiers: CashierRow[];
+  readonly controls: { readonly cancelledReceipts: CancelledReceiptRow[]; readonly voidedCharges: VoidedChargeRow[] };
+}
+
 // ---------------------------------------------------------------------------
 // Quyền
 // ---------------------------------------------------------------------------
@@ -513,6 +573,109 @@ export class PgFinanceRepository extends PgClinicalRepository {
       [this.t, id, by, reason],
     );
     return r.rows.length > 0;
+  }
+
+  // ---- báo cáo (HCOS-F9); ngày theo giờ Việt Nam ----
+  async reportCashflow(org: OrganizationId, from: string, to: string): Promise<Array<{ date: string; kind: ReceiptKind; method: PaymentMethod; amount: number; count: number }>> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT (created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS d, kind, method, sum(amount) AS amount, count(*) AS cnt
+         FROM finance.receipts
+        WHERE tenant_id = $1 AND organization_id = $2 AND status = 'valid'
+          AND (created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date
+        GROUP BY 1, 2, 3 ORDER BY 1`,
+      [this.t, org, from, to],
+    );
+    return r.rows.map((x) => ({ date: x['d'] as string, kind: x['kind'] as ReceiptKind, method: x['method'] as PaymentMethod, amount: n(x['amount']), count: n(x['cnt']) }));
+  }
+  async reportServices(org: OrganizationId, from: string, to: string): Promise<ServiceRevenue[]> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT i.item_id, i.code, i.name, i.category, sum(c.quantity) AS qty, sum(c.amount) AS amount, count(DISTINCT c.case_id) AS cases
+         FROM finance.charges c JOIN finance.price_items i ON i.tenant_id = c.tenant_id AND i.item_id = c.item_id
+        WHERE c.tenant_id = $1 AND c.organization_id = $2 AND c.status = 'active'
+          AND (c.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date
+        GROUP BY i.item_id, i.code, i.name, i.category ORDER BY amount DESC, i.code`,
+      [this.t, org, from, to],
+    );
+    return r.rows.map((x) => ({
+      itemId: x['item_id'] as string, code: x['code'] as string, name: x['name'] as string, category: x['category'] as PriceCategory,
+      quantity: n(x['qty']), amount: n(x['amount']), cases: n(x['cases']),
+    }));
+  }
+  async reportCashiers(org: OrganizationId, from: string, to: string): Promise<CashierRow[]> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `WITH rc AS (
+         SELECT created_by AS user_id,
+                count(*) FILTER (WHERE status = 'valid') AS cnt,
+                COALESCE(sum(amount) FILTER (WHERE status = 'valid' AND kind <> 'refund'), 0) AS t_in,
+                COALESCE(sum(amount) FILTER (WHERE status = 'valid' AND kind = 'refund'), 0) AS t_out,
+                count(*) FILTER (WHERE status = 'cancelled') AS c_cnt,
+                COALESCE(sum(amount) FILTER (WHERE status = 'cancelled'), 0) AS c_amt
+           FROM finance.receipts WHERE tenant_id = $1 AND organization_id = $2
+            AND (created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date
+          GROUP BY created_by),
+       vc AS (
+         SELECT voided_by AS user_id, count(*) AS v_cnt FROM finance.charges WHERE tenant_id = $1 AND organization_id = $2 AND status = 'voided'
+            AND (voided_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date GROUP BY voided_by),
+       sh AS (
+         SELECT user_id, count(*) AS s_cnt, count(*) FILTER (WHERE status = 'open') AS s_open, COALESCE(sum(cash_difference), 0) AS s_diff
+           FROM finance.cashier_shifts WHERE tenant_id = $1 AND organization_id = $2
+            AND (opened_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date GROUP BY user_id),
+       ids AS (SELECT user_id FROM rc UNION SELECT user_id FROM vc UNION SELECT user_id FROM sh)
+       SELECT ids.user_id, u.display_name, COALESCE(rc.cnt, 0) AS cnt, COALESCE(rc.t_in, 0) AS t_in, COALESCE(rc.t_out, 0) AS t_out,
+              COALESCE(rc.c_cnt, 0) AS c_cnt, COALESCE(rc.c_amt, 0) AS c_amt, COALESCE(vc.v_cnt, 0) AS v_cnt,
+              COALESCE(sh.s_cnt, 0) AS s_cnt, COALESCE(sh.s_open, 0) AS s_open, COALESCE(sh.s_diff, 0) AS s_diff
+         FROM ids JOIN iam.users u ON u.tenant_id = $1 AND u.user_id = ids.user_id
+         LEFT JOIN rc ON rc.user_id = ids.user_id LEFT JOIN vc ON vc.user_id = ids.user_id LEFT JOIN sh ON sh.user_id = ids.user_id
+        ORDER BY t_in DESC, u.display_name`,
+      [this.t, org, from, to],
+    );
+    return r.rows.map((x) => ({
+      userId: x['user_id'] as UserId, name: (x['display_name'] as string | null) ?? null, receiptCount: n(x['cnt']), in: n(x['t_in']), out: n(x['t_out']),
+      cancelledCount: n(x['c_cnt']), cancelledAmount: n(x['c_amt']), voidedCharges: n(x['v_cnt']), shifts: n(x['s_cnt']), openShifts: n(x['s_open']),
+      cashDifference: n(x['s_diff']),
+    }));
+  }
+  async reportCancelledReceipts(org: OrganizationId, from: string, to: string): Promise<CancelledReceiptRow[]> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT r.receipt_no, r.kind, r.method, r.amount, ps.family_name || ' ' || ps.given_name AS patient_name, pt.mrn,
+              cu.display_name AS created_by_name, r.created_at, xu.display_name AS cancelled_by_name, r.cancelled_at, r.cancel_reason
+         FROM finance.receipts r
+         JOIN finance.billing_cases c ON c.tenant_id = r.tenant_id AND c.case_id = r.case_id
+         JOIN patient.patients pt ON pt.tenant_id = c.tenant_id AND pt.patient_id = c.patient_id
+         JOIN patient.persons ps ON ps.tenant_id = pt.tenant_id AND ps.person_id = pt.person_id
+         JOIN iam.users cu ON cu.tenant_id = r.tenant_id AND cu.user_id = r.created_by
+         JOIN iam.users xu ON xu.tenant_id = r.tenant_id AND xu.user_id = r.cancelled_by
+        WHERE r.tenant_id = $1 AND r.organization_id = $2 AND r.status = 'cancelled'
+          AND (r.cancelled_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date
+        ORDER BY r.cancelled_at LIMIT 1000`,
+      [this.t, org, from, to],
+    );
+    return r.rows.map((x) => ({
+      receiptNo: x['receipt_no'] as string, kind: x['kind'] as ReceiptKind, method: x['method'] as PaymentMethod, amount: n(x['amount']),
+      patientName: x['patient_name'] as string, mrn: x['mrn'] as string, createdByName: (x['created_by_name'] as string | null) ?? null, createdAt: iso(x['created_at']),
+      cancelledByName: (x['cancelled_by_name'] as string | null) ?? null, cancelledAt: iso(x['cancelled_at']), reason: x['cancel_reason'] as string,
+    }));
+  }
+  async reportVoidedCharges(org: OrganizationId, from: string, to: string): Promise<VoidedChargeRow[]> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT ch.item_code, ch.description, ch.quantity, ch.amount, ps.family_name || ' ' || ps.given_name AS patient_name, pt.mrn,
+              cu.display_name AS created_by_name, ch.created_at, vu.display_name AS voided_by_name, ch.voided_at, ch.void_reason
+         FROM finance.charges ch
+         JOIN finance.billing_cases c ON c.tenant_id = ch.tenant_id AND c.case_id = ch.case_id
+         JOIN patient.patients pt ON pt.tenant_id = c.tenant_id AND pt.patient_id = c.patient_id
+         JOIN patient.persons ps ON ps.tenant_id = pt.tenant_id AND ps.person_id = pt.person_id
+         JOIN iam.users cu ON cu.tenant_id = ch.tenant_id AND cu.user_id = ch.created_by
+         JOIN iam.users vu ON vu.tenant_id = ch.tenant_id AND vu.user_id = ch.voided_by
+        WHERE ch.tenant_id = $1 AND ch.organization_id = $2 AND ch.status = 'voided'
+          AND (ch.voided_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date
+        ORDER BY ch.voided_at LIMIT 1000`,
+      [this.t, org, from, to],
+    );
+    return r.rows.map((x) => ({
+      itemCode: x['item_code'] as string, description: x['description'] as string, quantity: n(x['quantity']), amount: n(x['amount']),
+      patientName: x['patient_name'] as string, mrn: x['mrn'] as string, createdByName: (x['created_by_name'] as string | null) ?? null, createdAt: iso(x['created_at']),
+      voidedByName: (x['voided_by_name'] as string | null) ?? null, voidedAt: iso(x['voided_at']), reason: x['void_reason'] as string,
+    }));
   }
 
   // ---- idempotency (migration 008) ----
@@ -911,6 +1074,73 @@ export class FinanceService {
         receiptNo: r.receiptNo, amount: r.amount, reason,
       }));
       return this.detail(repo, c.caseId);
+    });
+  }
+
+  // ---- báo cáo tài chính (HCOS-F9) ----
+  /** Báo cáo theo khoảng ngày (giờ VN, tối đa 92 ngày). Chỉ quản lý / ban giám đốc. */
+  async report(q: { organizationId: string; from?: string; to?: string }, ctx: TenantContext = requireTenantContext()): Promise<FinanceReport> {
+    return this.tx(ctx, { action: 'finance.report', resourceType: 'FinanceReport' }, async (repo) => {
+      const org = this.orgOf(q.organizationId, ctx);
+      const p = await this.principal(repo, ctx, org);
+      this.decideAny(p, ['finance:read', 'finance:manage']);
+      this.requireReportRole(p);
+      const today = vnDate(this.clock());
+      const from = q.from ?? today;
+      const to = q.to ?? from;
+      const valid = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
+      if (!valid(from) || !valid(to)) throw new ClinicalError('VALIDATION', 'from/to must be valid YYYY-MM-DD dates', { reason: 'INVALID_RANGE' });
+      const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+      if (days < 0 || days > 91) throw new ClinicalError('VALIDATION', 'Range must be 1-92 days with from <= to', { reason: 'INVALID_RANGE' });
+
+      const zeroMethods = (): CashflowDay['byMethod'] => ({ cash: { in: 0, out: 0 }, bank_transfer: { in: 0, out: 0 }, card: { in: 0, out: 0 } });
+      const byDay = new Map<string, { deposit: number; payment: number; refund: number; byMethod: CashflowDay['byMethod']; receiptCount: number }>();
+      for (const x of await repo.reportCashflow(org, from, to)) {
+        const d = byDay.get(x.date) ?? { deposit: 0, payment: 0, refund: 0, byMethod: zeroMethods(), receiptCount: 0 };
+        d[x.kind] += x.amount;
+        d.byMethod[x.method][x.kind === 'refund' ? 'out' : 'in'] += x.amount;
+        d.receiptCount += x.count;
+        byDay.set(x.date, d);
+      }
+      const cfDays: CashflowDay[] = [...byDay].sort(([a], [b]) => a.localeCompare(b)).map(([date, d]) => ({ date, ...d, net: d.deposit + d.payment - d.refund }));
+      const totals = cfDays.reduce(
+        (t, d) => {
+          for (const m of PAYMENT_METHODS) {
+            t.byMethod[m].in += d.byMethod[m].in;
+            t.byMethod[m].out += d.byMethod[m].out;
+          }
+          return { ...t, deposit: t.deposit + d.deposit, payment: t.payment + d.payment, refund: t.refund + d.refund, net: t.net + d.net, receiptCount: t.receiptCount + d.receiptCount };
+        },
+        { deposit: 0, payment: 0, refund: 0, net: 0, receiptCount: 0, byMethod: zeroMethods() },
+      );
+
+      const items = await repo.reportServices(org, from, to);
+      const cat = new Map<PriceCategory, { quantity: number; amount: number }>();
+      for (const i of items) {
+        const c = cat.get(i.category) ?? { quantity: 0, amount: 0 };
+        c.quantity += i.quantity;
+        c.amount += i.amount;
+        cat.set(i.category, c);
+      }
+      const open = await repo.listCases(org, { status: 'open' });
+      const report: FinanceReport = {
+        organizationId: org, from, to, generatedAt: this.clock().toISOString(),
+        cashflow: { days: cfDays, totals },
+        services: {
+          items,
+          byCategory: [...cat].map(([category, v]) => ({ category, ...v })).sort((a, b) => b.amount - a.amount),
+          total: items.reduce((t, i) => t + i.amount, 0),
+        },
+        openCases: {
+          cases: open,
+          depositsHeld: open.reduce((t, c) => t + Math.max(0, c.totals.balance), 0),
+          receivable: open.reduce((t, c) => t + Math.max(0, -c.totals.balance), 0),
+        },
+        cashiers: await repo.reportCashiers(org, from, to),
+        controls: { cancelledReceipts: await repo.reportCancelledReceipts(org, from, to), voidedCharges: await repo.reportVoidedCharges(org, from, to) },
+      };
+      await repo.appendAudit(this.event(ctx, { action: 'finance.report', resourceType: 'FinanceReport', organizationId: org }, 'success', p.user, { from, to }));
+      return report;
     });
   }
 

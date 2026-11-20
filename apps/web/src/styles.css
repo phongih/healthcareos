@@ -237,3 +237,8 @@ table.compact { width: auto; }
   body[data-print='receipt'] .print-ticket, body[data-print='receipt'] .print-ticket * { visibility: hidden; }
 }
 fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
+/* ---- Báo cáo ---- */
+svg.bars { width: 100%; max-width: 680px; height: auto; color: var(--ink); margin: 8px 0; }
+svg.bars .bar { fill: var(--brand); }
+svg.bars .bar.neg { fill: var(--danger); }
+details summary { cursor: pointer; color: var(--brand); margin: 6px 0; }
