@@ -11,6 +11,7 @@
  *   GET  /api/finance/shifts/:id                                  ca + danh sách phiếu
  *   POST /api/finance/shifts  { organizationId, openingFloat }
  *   POST /api/finance/shifts/:id/close  { countedCash, note? } + If-Match
+ *   GET  /api/finance/reports?organization=&from=&to=             báo cáo tài chính (quản lý / ban giám đốc; tối đa 92 ngày)
  *   GET  /api/finance/cases?organization=&status=open|closed&patient=
  *   POST /api/finance/cases  { organizationId, patientId }        hồ sơ đang mở của bệnh nhân (chưa có thì mở)
  *   GET  /api/finance/cases/:id
@@ -28,7 +29,7 @@ import { HttpError, PLAIN_JSON } from './http-kernel';
 export type FinanceApi = Pick<
   FinanceService,
   | 'getSettings' | 'updateSettings' | 'listPriceItems' | 'createPriceItem' | 'updatePriceItem' | 'myShift' | 'openShift' | 'closeShift' | 'getShift'
-  | 'listShifts' | 'listCases' | 'openCase' | 'getCase' | 'addCharge' | 'voidCharge' | 'closeCase' | 'createReceipt' | 'cancelReceipt'
+  | 'listShifts' | 'report' | 'listCases' | 'openCase' | 'getCase' | 'addCharge' | 'voidCharge' | 'closeCase' | 'createReceipt' | 'cancelReceipt'
 >;
 
 const json = (status: number, body: unknown, headers?: Record<string, string>): RouteResult => ({
@@ -158,6 +159,16 @@ export function buildFinanceRoutes(api: FinanceApi): readonly Route[] {
         const o = await obj(input, ['countedCash', 'note']);
         const sh = await api.closeShift(id!, { countedCash: numField(o, 'countedCash'), note: optStr(o, 'note') }, version, input.ctx);
         return json(200, sh, etag(sh.version));
+      },
+    },
+    {
+      method: 'GET',
+      pattern: ['api', 'finance', 'reports'],
+      handler: async (input) => {
+        const p = params(input.url, ['organization', 'from', 'to']);
+        const from = p.get('from');
+        const to = p.get('to');
+        return json(200, await api.report({ organizationId: required(p, 'organization'), ...(from ? { from } : {}), ...(to ? { to } : {}) }, input.ctx));
       },
     },
     // ---- hồ sơ ----

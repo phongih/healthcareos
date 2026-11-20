@@ -9,6 +9,7 @@ import { AdminScreen } from './screens/admin';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
 import { CaseScreen, FinanceScreen, ShiftScreen } from './screens/finance';
+import { ReportsScreen } from './screens/reports';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
 import { BoardScreen, QueueScreen } from './screens/queue';
@@ -24,6 +25,7 @@ type Route =
   | { name: 'queue' }
   | { name: 'bookings' }
   | { name: 'finance' }
+  | { name: 'reports' }
   | { name: 'financeCase'; id: string }
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
@@ -41,6 +43,7 @@ function parseRoute(hash: string): Route {
   if ((m = new RegExp(`^#/finance/cases/(${UUID})$`).exec(hash))) return { name: 'financeCase', id: m[1]! };
   if ((m = new RegExp(`^#/finance/shifts/(${UUID})$`).exec(hash))) return { name: 'financeShift', id: m[1]! };
   if (hash.startsWith('#/finance')) return { name: 'finance' };
+  if (hash.startsWith('#/reports')) return { name: 'reports' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   return { name: 'home' };
 }
@@ -68,6 +71,7 @@ function Shell({ me }: { me: Me }) {
     can.queue(roles) && { hash: '#/queue', label: 'Hàng đợi', active: route.name === 'queue' },
     can.bookings(roles) && { hash: '#/bookings', label: 'Lịch hẹn', active: route.name === 'bookings' },
     can.finance(roles) && { hash: '#/finance', label: 'Thu ngân', active: route.name.startsWith('finance') },
+    can.reports(roles) && { hash: '#/reports', label: 'Báo cáo', active: route.name === 'reports' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -133,6 +137,8 @@ function Shell({ me }: { me: Me }) {
           <CaseScreen id={route.id} />
         ) : route.name === 'financeShift' ? (
           <ShiftScreen id={route.id} />
+        ) : route.name === 'reports' ? (
+          <ReportsScreen />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
         ) : route.name === 'admin' ? (

@@ -202,6 +202,39 @@ run('Thu ngân / PostgreSQL', () => {
     expect((await f.getShift(other.shiftId, C.admin)).totals.card).toEqual({ in: 200_000, out: 0, count: 1 });
   });
 
+  it('báo cáo tài chính: thực thu theo ngày + hình thức, doanh thu dịch vụ, tạm ứng còn giữ, theo thu ngân, phiếu huỷ / chi phí gỡ', async () => {
+    expect(await outcome(f.report({ organizationId: OA }, C.staff))).toBe('FORBIDDEN:REPORT_ROLE');
+    expect(await outcome(f.report({ organizationId: OA }, C.doc))).toBe('FORBIDDEN');
+    expect(await outcome(f.report({ organizationId: OA, from: '2026-11-20', to: '2026-11-01' }, C.admin))).toBe('VALIDATION:INVALID_RANGE');
+    expect(await outcome(f.report({ organizationId: OA, from: '2026-01-01', to: '2026-06-01' }, C.admin))).toBe('VALIDATION:INVALID_RANGE');
+    expect(await outcome(f.report({ organizationId: OA, from: '2026-02-30' }, C.admin))).toBe('VALIDATION:INVALID_RANGE');
+
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+    const r = await f.report({ organizationId: OA }, C.admin);
+    expect([r.from, r.to]).toEqual([today, today]);
+    // Phiếu hợp lệ: tạm ứng 500k + 5×100k tiền mặt, thanh toán thẻ 200k, hoàn 170k tiền mặt; phiếu chuyển khoản đã huỷ không tính.
+    expect(r.cashflow.totals).toEqual({
+      deposit: 1_000_000, payment: 200_000, refund: 170_000, net: 1_030_000, receiptCount: 8,
+      byMethod: { cash: { in: 1_000_000, out: 170_000 }, bank_transfer: { in: 0, out: 0 }, card: { in: 200_000, out: 0 } },
+    });
+    expect(r.cashflow.days.map((d) => d.date)).toEqual([today]);
+    // Doanh thu dịch vụ: chi phí còn hiệu lực, giá đã chụp (XN-CTM ghi 90k trước khi đổi giá), không tính dòng đã gỡ.
+    expect(r.services.items.map((i) => [i.code, i.quantity, i.amount, i.cases])).toEqual([['SA-BUNG', 1, 200_000, 1], ['XN-CTM', 2, 180_000, 1], ['KB-NOI', 1, 150_000, 1]]);
+    expect(r.services.byCategory).toEqual([{ category: 'imaging', quantity: 1, amount: 200_000 }, { category: 'lab', quantity: 2, amount: 180_000 }, { category: 'exam', quantity: 1, amount: 150_000 }]);
+    expect(r.services.total).toBe(530_000);
+    expect(r.openCases.cases).toHaveLength(6);
+    expect([r.openCases.depositsHeld, r.openCases.receivable]).toEqual([500_000, 0]);
+    const by = Object.fromEntries(r.cashiers.map((c) => [c.name, c]));
+    expect(by['staff']).toMatchObject({ receiptCount: 7, in: 1_000_000, out: 170_000, cancelledCount: 1, cancelledAmount: 200_000, shifts: 1, openShifts: 0, cashDifference: -10_000 });
+    expect(by['cashier']).toMatchObject({ receiptCount: 1, in: 200_000, voidedCharges: 1, shifts: 1, openShifts: 1 });
+    expect(by['staff2']).toMatchObject({ receiptCount: 0, shifts: 1, openShifts: 1 });
+    expect(r.controls.cancelledReceipts.map((x) => [x.method, x.amount, x.reason, x.cancelledByName])).toEqual([['bank_transfer', 200_000, 'Chuyển khoản không về', 'staff']]);
+    expect(r.controls.voidedCharges.map((x) => [x.itemCode, x.amount, x.reason, x.voidedByName])).toEqual([['KB-NOI', 150_000, 'Ghi nhầm dịch vụ', 'cashier']]);
+    // Khoảng ngày không có dữ liệu.
+    const empty = await f.report({ organizationId: OA, from: '2026-01-01', to: '2026-01-31' }, C.admin);
+    expect([empty.cashflow.days.length, empty.services.total, empty.cashiers.length]).toEqual([0, 0, 0]);
+  });
+
   it('DB chặn khi đi vòng service: sửa phiếu, hoàn vượt đã thu, đóng hồ sơ lệch số dư, tự ghi tiền phải có, xoá; RLS', async () => {
     const c = new PsqlClient({ database: DB });
     const code = (sql: string) => c.query(sql).then(() => 'OK', (e: { code?: string }) => e.code);
