@@ -37,6 +37,7 @@ import {
   type FhirObservation,
 } from '../../../../packages/domain/src/s1-contracts';
 import { asPatientId } from '../../../../packages/domain/src/s0-contracts';
+import { REDACTED_SECURITY_LABEL } from '../../../../packages/security/src/access-policy';
 import type { ClinicalEncounterService } from '../clinical/encounter.service';
 import { FHIR_JSON, HttpError, PLAIN_JSON } from './http-kernel';
 
@@ -103,12 +104,26 @@ function requireEncounterParam(url: URL) {
 const fhir = (status: number, body: unknown, headers?: Record<string, string>): RouteResult =>
   ({ status, body, contentType: FHIR_JSON, ...(headers ? { headers } : {}) });
 
-const bundle = (type: 'searchset' | 'collection', resources: ReadonlyArray<{ resourceType: string; id?: string }>) => ({
+const bundle = (
+  type: 'searchset' | 'collection',
+  resources: ReadonlyArray<{ resourceType: string; id?: string }>,
+  redacted: readonly string[] = [],
+) => ({
   resourceType: 'Bundle',
+  ...(redacted.length > 0 ? { meta: { security: [REDACTED_SECURITY_LABEL] } } : {}),
   type,
   total: resources.length,
   entry: resources.map((r) => ({ fullUrl: `/fhir/${r.resourceType}/${r.id ?? ''}`, resource: r })),
 });
+
+/** Access policy đã che trường => gắn nhãn REDACTED để client không hiểu nhầm "không có dữ liệu". */
+function labelRedacted<T extends { meta?: { security?: Array<{ system: string; code: string; display?: string }> } }>(
+  resource: T,
+  redacted: readonly string[] | undefined,
+): T {
+  if (!redacted || redacted.length === 0) return resource;
+  return { ...resource, meta: { ...(resource.meta ?? {}), security: [...(resource.meta?.security ?? []), { ...REDACTED_SECURITY_LABEL }] } };
+}
 
 export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
   return [
@@ -168,15 +183,15 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
           },
           input.ctx,
         );
-        return fhir(200, bundle('searchset', results.map((r) => toFhirPatient(r.person, r.patient, r.identifiers))));
+        return fhir(200, bundle('searchset', results.map((r) => labelRedacted(toFhirPatient(r.person, r.patient, r.identifiers), r.redacted))));
       },
     },
     {
       method: 'GET',
       pattern: ['fhir', 'Patient', ':id'],
       handler: async (input, [id]) => {
-        const { person, patient, identifiers } = await api.getPatient(asPatientId(id!), input.ctx);
-        return fhir(200, toFhirPatient(person, patient, identifiers), { etag: etag(patient.version) });
+        const { person, patient, identifiers, redacted } = await api.getPatient(asPatientId(id!), input.ctx);
+        return fhir(200, labelRedacted(toFhirPatient(person, patient, identifiers), redacted), { etag: etag(patient.version) });
       },
     },
     {
@@ -195,20 +210,22 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
       method: 'GET',
       pattern: ['fhir', 'Encounter', ':id'],
       handler: async (input, [id]) => {
-        const { encounter } = await api.getEncounterChart(asEncounterId(id!), input.ctx);
-        return fhir(200, toFhirEncounter(encounter), { etag: etag(encounter.version) });
+        const { encounter, redacted } = await api.getEncounterChart(asEncounterId(id!), input.ctx);
+        const encRedacted = redacted?.includes('encounter.reasonText') ? ['encounter.reasonText'] : [];
+        return fhir(200, labelRedacted(toFhirEncounter(encounter), encRedacted), { etag: etag(encounter.version) });
       },
     },
     {
       method: 'GET',
       pattern: ['fhir', 'Encounter', ':id', '$everything'],
       handler: async (input, [id]) => {
-        const { encounter, conditions, observations } = await api.getEncounterChart(asEncounterId(id!), input.ctx);
+        const { encounter, conditions, observations, redacted } = await api.getEncounterChart(asEncounterId(id!), input.ctx);
+        const encRedacted = redacted?.includes('encounter.reasonText') ? ['encounter.reasonText'] : [];
         return fhir(200, bundle('collection', [
-          toFhirEncounter(encounter),
+          labelRedacted(toFhirEncounter(encounter), encRedacted),
           ...conditions.map(toFhirCondition),
           ...observations.map(toFhirObservation),
-        ]));
+        ], redacted));
       },
     },
     {
@@ -243,8 +260,8 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
       method: 'GET',
       pattern: ['fhir', 'Condition'],
       handler: async (input) => {
-        const { conditions } = await api.getEncounterChart(requireEncounterParam(input.url), input.ctx);
-        return fhir(200, bundle('searchset', conditions.map(toFhirCondition)));
+        const { conditions, redacted } = await api.getEncounterChart(requireEncounterParam(input.url), input.ctx);
+        return fhir(200, bundle('searchset', conditions.map(toFhirCondition), redacted?.includes('conditions') ? ['conditions'] : []));
       },
     },
     {
@@ -270,8 +287,8 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
       method: 'GET',
       pattern: ['fhir', 'Observation'],
       handler: async (input) => {
-        const { observations } = await api.getEncounterChart(requireEncounterParam(input.url), input.ctx);
-        return fhir(200, bundle('searchset', observations.map(toFhirObservation)));
+        const { observations, redacted } = await api.getEncounterChart(requireEncounterParam(input.url), input.ctx);
+        return fhir(200, bundle('searchset', observations.map(toFhirObservation), redacted?.includes('observations') ? ['observations'] : []));
       },
     },
   ];

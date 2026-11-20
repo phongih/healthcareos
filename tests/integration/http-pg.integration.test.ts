@@ -5,6 +5,7 @@
  * Tự tạo database `hcos_http_<pid>`, áp migration, seed bằng superuser; server chạy bằng role `hcos_app`.
  */
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -90,8 +91,7 @@ run('S2 / HTTP -> service -> PostgreSQL end-to-end', () => {
 
   beforeAll(async () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
-    suFile(`${MIG}/001_s0_init.sql`);
-    suFile(`${MIG}/002_s1_clinical_init.sql`);
+    for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
 
     const kp = await generateKeyPair('RS256');

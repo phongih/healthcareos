@@ -187,6 +187,8 @@ export interface FhirReference {
 export interface FhirMeta {
   versionId?: string;
   lastUpdated?: string;
+  /** Nhãn bảo mật, vd. REDACTED khi access policy che bớt trường. */
+  security?: Array<{ system: string; code: string; display?: string }>;
 }
 export interface FhirIdentifier {
   use?: 'usual' | 'official' | 'secondary';

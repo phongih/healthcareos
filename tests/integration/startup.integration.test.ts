@@ -9,6 +9,7 @@
  * Dữ liệu: chỉ fixture tổng hợp (không có dữ liệu bệnh nhân).
  */
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -77,7 +78,7 @@ run('Runtime: main.ts + PostgreSQL', () => {
   beforeAll(() => {
     for (const db of [DB1, DB2]) {
       sql(`CREATE DATABASE ${db}`);
-      for (const f of ['001_s0_init.sql', '002_s1_clinical_init.sql', '003_person_registry.sql']) psql(db, ['-f', `${MIG}/${f}`]);
+      for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) psql(db, ['-f', `${MIG}/${f}`]);
       sql(`GRANT CONNECT ON DATABASE ${db} TO PUBLIC`);
     }
     sql(`CREATE ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PW}' IN ROLE hcos_app`);

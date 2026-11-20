@@ -3,6 +3,7 @@
  * Chạy: HCOS_IT=1 PGHOST=… PGPORT=… PGUSER=… ; tự tạo DB `hcos_ts_<pid>`.
  */
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -27,7 +28,7 @@ const run = ENABLED ? describe : (describe as unknown as { skip: typeof describe
 run('PgTenantStatusLookup / PgAuditSink', () => {
   beforeAll(() => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
-    for (const f of ['001_s0_init.sql', '002_s1_clinical_init.sql', '003_person_registry.sql']) {
+    for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) {
       execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-d', DB, '-f', `${MIG}/${f}`]);
     }
     su(`INSERT INTO iam.tenants(tenant_id,code,name,status) VALUES ('${TA}','ta','A','active'),('${TS}','ts','S','suspended')`);

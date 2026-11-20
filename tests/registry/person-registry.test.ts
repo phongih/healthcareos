@@ -18,6 +18,8 @@ import {
   type PersonMergeRecord, type PersonUnmergeRecord,
 } from '../../packages/domain/src/person-registry';
 import { ClinicalError, type OutboxDraft } from '../../services/api/src/clinical/encounter.service';
+import { validateAccessRules, type AccessPolicy } from '../../packages/security/src/access-policy';
+import type { AccessPolicyId } from '../../packages/domain/src/s0-contracts';
 import {
   PersonRegistryService,
   type CandidateQuery, type IdentifierMatch, type PersonKeys, type RegistryRepository, type RegistryUnitOfWork, type SurvivorPatch, type TargetRestore,
@@ -110,11 +112,11 @@ const AN = { givenName: 'Văn An', familyName: 'Nguyễn', birthDate: '1990-05-1
 
 interface State {
   persons: Mut<Person>[]; keys: Record<string, PersonKeys>; identifiers: Mut<Identifier>[]; patients: Mut<Patient>[]; users: Mut<User>[];
-  memberships: Membership[]; merges: PersonMergeRecord[]; unmerges: PersonUnmergeRecord[]; outbox: Array<OutboxDraft & { tenantId: TenantId }>; audit: NewAuditEvent[];
+  memberships: Membership[]; policies: AccessPolicy[]; merges: PersonMergeRecord[]; unmerges: PersonUnmergeRecord[]; outbox: Array<OutboxDraft & { tenantId: TenantId }>; audit: NewAuditEvent[];
 }
 
 class Store {
-  state: State = { persons: [], keys: {}, identifiers: [], patients: [], users: [], memberships: [], merges: [], unmerges: [], outbox: [], audit: [] };
+  state: State = { persons: [], keys: {}, identifiers: [], patients: [], users: [], memberships: [], policies: [], merges: [], unmerges: [], outbox: [], audit: [] };
   /** Gây lỗi giữa chừng để kiểm tra rollback. */
   failAt: string | null = null;
 }
@@ -127,6 +129,7 @@ class MemRepo implements RegistryRepository {
 
   async findUserBySubject(sub: string) { return this.vis(this.s.users).find((u) => u.externalSubject === sub) ?? null; }
   async listMemberships(userId: UserId) { return this.vis(this.s.memberships).filter((m) => m.userId === userId); }
+  async findAccessPolicies(ids: readonly AccessPolicyId[]) { return this.vis(this.s.policies).filter((p) => ids.includes(p.policyId)); }
   async findPerson(id: PersonId) { const p = this.vis(this.s.persons).find((x) => x.personId === id); return p ? { ...p } : null; }
   async insertPerson(p: Person, keys: PersonKeys) {
     if (p.tenantId !== this.tenantId) throw Object.assign(new Error('rls'), { code: '42501' });
@@ -758,5 +761,59 @@ describe('registry / registerPersonAndPatient', () => {
     expect(await code(w.svc.registerPersonAndPatient(input({ person: { ...AN, email: 'nope' } }), w.ctx.nurse))).toBe('VALIDATION');
     expect(w.s.persons).toHaveLength(0);
     expect(w.s.patients).toHaveLength(0);
+  });
+});
+
+describe('access policy (migration 007) trên Person Registry', () => {
+  let w: ReturnType<typeof world>;
+  const POL = uid(9901) as AccessPolicyId;
+  const restrict = (user: UserId, rules: unknown, over: Partial<AccessPolicy> = {}) => {
+    w.s.policies.push({
+      tenantId: TA, policyId: POL, name: 'p', description: null, status: 'active', rules: validateAccessRules(rules),
+      createdBy: U.tenantAdmin, createdAt: T0, updatedAt: T0, version: 1, ...over,
+    });
+    const i = w.s.memberships.findIndex((m) => m.userId === user);
+    w.s.memberships[i] = { ...w.s.memberships[i]!, accessPolicyId: POL };
+  };
+  beforeEach(() => { w = world(); });
+
+  it('che định danh / SĐT khi đọc person, ghi policy vào audit', async () => {
+    const { person } = await w.svc.createPerson({ ...AN, identifiers: [CCCD] }, w.ctx.nurse);
+    restrict(U.pharm, [{ action: 'person:read', hiddenFields: ['identifiers', 'person.phone'] }]);
+    const v = await w.svc.getPerson(person.personId, w.ctx.pharm);
+    expect(v.identifiers).toHaveLength(0);
+    expect(v.person.phone).toBeNull();
+    expect(v.person.birthDate).toBe(AN.birthDate);
+    expect(v.redacted).toEqual(['identifiers', 'person.phone']);
+    expect(w.s.audit.at(-1)?.payload).toMatchObject({ accessPolicyIds: [POL], redacted: ['identifiers', 'person.phone'] });
+  });
+
+  it('policy không có luật cho thao tác => 403 ACCESS_POLICY dù vai trò cho phép; audit từ chối có reason', async () => {
+    restrict(U.nurse, [{ action: 'person:read' }]);
+    expect(await code(w.svc.createPerson({ ...AN }, w.ctx.nurse))).toBe('FORBIDDEN:ACCESS_POLICY');
+    expect(w.sink.events.at(-1)).toMatchObject({ outcome: 'denied', payload: { reason: 'ACCESS_POLICY' } });
+    expect(await code(w.svc.registerPersonAndPatient({ organizationId: OA, mrn: 'MRN-X', person: { ...AN } }, w.ctx.nurse))).toBe('FORBIDDEN:ACCESS_POLICY');
+    expect(w.s.persons).toHaveLength(0);
+  });
+
+  it('policy chỉ thu hẹp: không cấp merge cho vai trò không có quyền merge', async () => {
+    restrict(U.nurse, [{ action: 'person:merge' }]);
+    const a = await w.svc.createPerson({ ...AN }, w.ctx.clinicAdmin);
+    const b = await w.svc.createPerson({ ...AN, givenName: 'Văn Ân', duplicateOverride: { reason: 'đã đối chiếu, người khác' } }, w.ctx.clinicAdmin);
+    expect(await code(w.svc.mergePersons({ sourcePersonId: b.person.personId, targetPersonId: a.person.personId, reason: 'trùng', expectedSourceVersion: 1, expectedTargetVersion: 1 }, w.ctx.nurse)))
+      .toBe('FORBIDDEN');
+  });
+
+  it('policy retired / không tải được => từ chối; bệnh nhân xem chính mình không bị che', async () => {
+    const { person } = await w.svc.createPerson({ ...AN, identifiers: [CCCD] }, w.ctx.nurse);
+    restrict(U.pharm, [{ action: 'person:read' }], { status: 'retired' });
+    expect(await code(w.svc.getPerson(person.personId, w.ctx.pharm))).toBe('FORBIDDEN:ACCESS_POLICY');
+    const pu = w.s.users.find((u) => u.userId === U.patientUser)!;
+    pu.personId = person.personId;
+    w.s.policies[0] = { ...w.s.policies[0]!, status: 'active', rules: validateAccessRules([{ action: 'person:read', hiddenFields: ['identifiers'] }]) };
+    const i = w.s.memberships.findIndex((m) => m.userId === U.patientUser);
+    w.s.memberships[i] = { ...w.s.memberships[i]!, accessPolicyId: POL };
+    const self = await w.svc.getPerson(person.personId, w.ctx.patientUser);
+    expect(self.identifiers).toHaveLength(1);
   });
 });

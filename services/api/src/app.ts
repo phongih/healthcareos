@@ -13,6 +13,8 @@ import type { PgPoolLike } from '../../../packages/security/src/tenant-context';
 import { ClinicalEncounterService, PgClinicalUnitOfWork } from './clinical/encounter.service';
 import { loadConfig } from './config';
 import { createApiServer } from './http/server';
+import { AccessPolicyService, PgAccessPolicyUnitOfWork } from './iam/access-policy.service';
+import { PgPharmacyUnitOfWork, PharmacyInventoryService } from './pharmacy/inventory.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
 
 export interface RunningApp {
@@ -53,6 +55,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       },
       clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
       registry: new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit }),
+      accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
+      pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),

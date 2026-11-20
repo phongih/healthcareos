@@ -217,6 +217,9 @@ class MemoryRepo implements ClinicalRepository {
   async listMemberships(userId: User['userId']) {
     return this.vis(this.s.memberships).filter((m) => m.userId === userId);
   }
+  async findAccessPolicies() {
+    return []; // suite này không gắn policy (xem tests/clinical/access-policy.test.ts)
+  }
   async insertEncounter(e: Encounter) {
     this.writable(e.tenantId);
     const pat = this.s.patients.find((p) => p.tenantId === e.tenantId && p.patientId === e.patientId && p.organizationId === e.organizationId);

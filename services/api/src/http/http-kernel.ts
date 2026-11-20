@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TenantIsolationError, VersionConflictError } from '../../../../packages/domain/src/s0-contracts';
 import { FhirMappingError } from '../../../../packages/domain/src/s1-contracts';
 import { ClinicalError } from '../clinical/encounter.service';
+import { PharmacyError } from '../pharmacy/inventory.service';
 
 export const FHIR_JSON = 'application/fhir+json; charset=utf-8';
 export const PLAIN_JSON = 'application/json; charset=utf-8';
@@ -65,6 +66,17 @@ export function mapError(e: unknown): MappedError {
       case 'CONFLICT': return { status: 409, fhirCode: 'conflict', message: e.message, headers: {} };
       case 'INVALID_STATE': return { status: 409, fhirCode: 'conflict', message: e.message, headers: {} };
       case 'VALIDATION': return { status: 422, fhirCode: 'invalid', message: e.message, headers: {} };
+    }
+  }
+  if (e instanceof PharmacyError) {
+    const reason = typeof e.details?.['reason'] === 'string' ? (e.details['reason'] as string) : undefined;
+    switch (e.code) {
+      case 'NOT_FOUND': return { status: 404, fhirCode: 'not-found', message: e.message, headers: {} };
+      case 'FORBIDDEN': return { status: 403, fhirCode: 'forbidden', message: 'Access denied', headers: {} };
+      case 'CONFLICT': return { status: 409, fhirCode: 'conflict', message: e.message, ...(reason ? { detail: reason } : {}), headers: {} };
+      case 'INSUFFICIENT_STOCK': return { status: 409, fhirCode: 'business-rule', message: e.message, detail: 'INSUFFICIENT_STOCK', headers: {} };
+      case 'EXPIRED_BATCH': return { status: 422, fhirCode: 'business-rule', message: e.message, detail: 'EXPIRED_BATCH', headers: {} };
+      case 'VALIDATION': return { status: 422, fhirCode: 'invalid', message: e.message, ...(reason ? { detail: reason } : {}), headers: {} };
     }
   }
   return { status: 500, fhirCode: 'exception', message: 'Internal server error', headers: {} };

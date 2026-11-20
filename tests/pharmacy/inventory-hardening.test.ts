@@ -30,18 +30,28 @@ import {
 const NOW = new Date('2026-11-10T03:00:00Z');
 const ISO = '2026-11-10T03:00:00.000Z' as never;
 
-const mkCtx = (roles: Role[]): TenantContext =>
-  Object.freeze({
+const ORG = randomUUID() as OrganizationId;
+
+/**
+ * `roles` ở đây là vai trò trong iam.memberships (DB) tại ORG — service KHÔNG đọc roles từ JWT.
+ * ctx.roles cố ý để trống để chứng minh điều đó.
+ */
+const ROLES = new WeakMap<TenantContext, Role[]>();
+const mkCtx = (roles: Role[]): TenantContext => {
+  const c: TenantContext = Object.freeze({
     tenantId: randomUUID() as TenantId,
     userSubject: 'sub-1',
     userId: randomUUID() as UserId,
     personId: null,
-    activeOrganizationId: null,
-    allowedOrganizationIds: Object.freeze([]),
-    roles: Object.freeze(roles),
+    activeOrganizationId: ORG,
+    allowedOrganizationIds: Object.freeze([ORG]),
+    roles: Object.freeze([] as Role[]),
     tokenId: null,
     correlationId: 'hardening-corr' as CorrelationId,
   });
+  ROLES.set(c, roles);
+  return c;
+};
 
 interface Harness {
   svc: PharmacyInventoryService;
@@ -62,7 +72,7 @@ function harness(opts: { loc?: Partial<StockLocation>; med?: Partial<Medication>
   const loc: StockLocation = {
     locationId: randomUUID() as never,
     tenantId: c.tenantId,
-    organizationId: randomUUID() as OrganizationId,
+    organizationId: ORG,
     name: 'Kho',
     type: 'main_warehouse',
     isActive: true,
@@ -83,6 +93,17 @@ function harness(opts: { loc?: Partial<StockLocation>; med?: Partial<Medication>
     ...opts.med,
   };
   const repo: Partial<PharmacyRepository> = {
+    findUserBySubject: async () => ({
+      tenantId: c.tenantId, userId: c.userId!, externalSubject: c.userSubject, email: null, displayName: 'u', personId: null,
+      status: 'active', lastLoginAt: null, createdAt: ISO, updatedAt: ISO, version: 1,
+    }),
+    listMemberships: async () =>
+      (ROLES.get(c) ?? []).map((role) => ({
+        tenantId: c.tenantId, membershipId: randomUUID() as never, userId: c.userId!, organizationId: ORG, role,
+        status: 'active', validFrom: ISO, validTo: null, accessPolicyId: null, createdAt: ISO, updatedAt: ISO, version: 1,
+      })),
+    findAccessPolicies: async () => [],
+    findEncounterRef: async () => ({ organizationId: ORG, patientId: randomUUID(), status: 'in_progress' }),
     findStockLocation: async () => loc,
     findMedication: async () => med,
     findBatch: async (_m, n) => batches.find((b) => b.batchNumber === n) ?? null,
