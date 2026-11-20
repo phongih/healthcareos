@@ -47,6 +47,7 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
   - Có **5 lịch hẹn mẫu** ở buổi gần nhất còn nhận lịch (SĐT giả đầu `01209`); 2 người trùng hồ sơ cũ `TT00011`, `TT00012`, 3 người mới.
   - Mã đặt lịch mẫu được in ra khi chạy `setup-training.sh` (chỉ dữ liệu giả). Quên mã thì check-in từ danh sách trong ngày.
   - Chỉ check-in được **đúng ngày khám**. Nếu lịch mẫu rơi vào ngày mai, hôm nay hãy tự đặt một lịch buổi chiều (trước 16:00) để tập.
+- **Dự báo:** N1, N2 khai báo sức khám **15 lượt / buổi**. Chi phí cố định / % biến đổi **chưa nhập** (quản lý tự nhập khi tập). Sổ kho và đơn thuốc giả tạo cùng một ngày nên phần tồn kho / tái khám còn "mặc định — chưa đủ dữ liệu".
 - **Thu ngân:** bảng giá mẫu 9 dịch vụ (khám, xét nghiệm, siêu âm, X-quang, điện tim, khí dung; **giá giả**), tạm ứng mặc định **500.000đ**.
   - **Chưa cài tài khoản nhận chuyển khoản**: số tài khoản bịa có thể trùng tài khoản thật của người khác. Muốn tập VietQR, quản lý nhập tài khoản thật của phòng khám (hoặc chỉ xem màn hình, KHÔNG chuyển tiền thật).
   - Mỗi người thu tiền phải **mở ca** của mình (tab Thu ngân). Điều dưỡng (có policy) không thu tiền được — đúng thiết kế.
@@ -113,6 +114,7 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 0. Tab **Hàng đợi → Cài đặt hàng đợi**: xem 2 phòng; thêm phòng `NHI` "Phòng khám Nhi"; tạo một **đường dẫn màn hình** mới rồi mở nó ở tab khác, để làm màn hình TV.
 0c. Tab **Thu ngân → Cài đặt thu ngân**: sửa giá `KB-NOI` (chi phí đã ghi trước đó không đổi); thêm dịch vụ mới; xem **Báo cáo ca thu ngân** trong ngày (tiền phải có, đếm được, chênh lệch) và danh sách phiếu từng ca.
 0d. Tab **Báo cáo**: xem báo cáo tài chính hôm nay sau khi lễ tân tập thu ngân (thực thu, doanh thu dịch vụ, tạm ứng còn giữ, phiếu huỷ); đổi sang "7 ngày"; bấm **Xuất Excel** và mở file.
+0e. Tab **Dự báo**: xem tải phòng khám 14 ngày tới (N1, N2 đã khai báo sức khám 15 lượt / buổi); hạ sức khám N1 xuống 2 để thấy cảnh báo "quá tải", rồi đặt lại 15. Nhập **chi phí cố định / tháng** và **% chi phí biến đổi** (số giả), kéo các thanh trượt What-If và xem lượt khám hòa vốn thay đổi. Xem bảng điểm đặt hàng lại thuốc.
 0b. Tab **Lịch hẹn → Cài đặt đặt lịch online**: đặt số chỗ cho phòng `NHI` (vd. 5) và xem phòng xuất hiện trên trang đặt lịch; thử **Tạm ngừng** đường dẫn rồi mở trang đặt lịch (báo tạm ngừng), sau đó **Mở lại**.
 1. Mở tab Quản trị, xem policy của điều dưỡng và lịch sử phiên bản.
 2. Sửa policy, ví dụ giới hạn điều dưỡng chỉ được ghi nhiệt độ và SpO₂, rồi đăng nhập lại bằng `tt.dieuduong1` để kiểm tra.

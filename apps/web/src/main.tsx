@@ -10,6 +10,7 @@ import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './scree
 import { EncounterScreen } from './screens/encounter';
 import { CaseScreen, FinanceScreen, ShiftScreen } from './screens/finance';
 import { ReportsScreen } from './screens/reports';
+import { ForecastScreen } from './screens/forecast';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
 import { BoardScreen, QueueScreen } from './screens/queue';
@@ -26,6 +27,7 @@ type Route =
   | { name: 'bookings' }
   | { name: 'finance' }
   | { name: 'reports' }
+  | { name: 'forecast' }
   | { name: 'financeCase'; id: string }
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
@@ -44,6 +46,7 @@ function parseRoute(hash: string): Route {
   if ((m = new RegExp(`^#/finance/shifts/(${UUID})$`).exec(hash))) return { name: 'financeShift', id: m[1]! };
   if (hash.startsWith('#/finance')) return { name: 'finance' };
   if (hash.startsWith('#/reports')) return { name: 'reports' };
+  if (hash.startsWith('#/forecast')) return { name: 'forecast' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   return { name: 'home' };
 }
@@ -72,6 +75,7 @@ function Shell({ me }: { me: Me }) {
     can.bookings(roles) && { hash: '#/bookings', label: 'Lịch hẹn', active: route.name === 'bookings' },
     can.finance(roles) && { hash: '#/finance', label: 'Thu ngân', active: route.name.startsWith('finance') },
     can.reports(roles) && { hash: '#/reports', label: 'Báo cáo', active: route.name === 'reports' },
+    can.forecast(roles) && { hash: '#/forecast', label: 'Dự báo', active: route.name === 'forecast' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -139,6 +143,8 @@ function Shell({ me }: { me: Me }) {
           <ShiftScreen id={route.id} />
         ) : route.name === 'reports' ? (
           <ReportsScreen />
+        ) : route.name === 'forecast' ? (
+          <ForecastScreen />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
         ) : route.name === 'admin' ? (

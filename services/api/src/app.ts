@@ -14,6 +14,7 @@ import { BookingService, PgBookingUnitOfWork, PublicBookingService } from './cli
 import { ClinicalEncounterService, PgClinicalUnitOfWork } from './clinical/encounter.service';
 import { loadConfig } from './config';
 import { FinanceService, PgFinanceUnitOfWork } from './finance/finance.service';
+import { ForecastService, PgForecastUnitOfWork } from './analytics/forecast.service';
 import { createApiServer } from './http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from './iam/access-policy.service';
 import { PgPharmacyUnitOfWork, PharmacyInventoryService } from './pharmacy/inventory.service';
@@ -67,6 +68,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
       publicBooking: new PublicBookingService({ pool, audit }),
       finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
+      forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),

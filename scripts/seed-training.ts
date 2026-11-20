@@ -30,6 +30,7 @@ import { BookingService, PgBookingUnitOfWork, PublicBookingService, periodOpen, 
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
 import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
+import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analytics/forecast.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -140,6 +141,7 @@ const handler = createApiHandler({
   bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
   publicBooking: new PublicBookingService({ pool, audit }),
   finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
+  forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
   // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
   rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
@@ -533,6 +535,21 @@ async function seedFinance(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 2e. Dự báo: sức khám tối đa mỗi buổi cho N1 / N2 (để có cảnh báo quá tải). Chi phí cố định / % biến đổi
+//     KHÔNG seed — là số liệu kinh doanh, để quản lý tự nhập khi tập.
+// ---------------------------------------------------------------------------
+const VISIT_CAPACITY = 15;
+async function seedForecast(): Promise<void> {
+  const QL = 'tt.quanly1';
+  const rooms = (await call<{ rooms: Array<{ servicePointId: string; code: string; visitCapacity: number | null; version: number }> }>(
+    QL, 'GET', `/api/forecast/load?organization=${ORG}&days=7`)).data.rooms;
+  for (const r of rooms.filter((x) => ROOMS.some(([c]) => c === x.code) && x.visitCapacity === null)) {
+    await call(QL, 'POST', `/api/forecast/capacity/${r.servicePointId}`, { visitCapacity: VISIT_CAPACITY }, { 'if-match': `W/"${r.version}"` });
+    bump('sức khám mỗi buổi');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3. Access policy cho điều dưỡng (quản lý)
 // ---------------------------------------------------------------------------
 async function seedPolicy(): Promise<void> {
@@ -572,6 +589,7 @@ try {
   await seedQueue();
   await seedBooking();
   await seedFinance();
+  await seedForecast();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);
 } catch (e) {
