@@ -112,3 +112,5 @@ ul.list li { margin: 4px 0; }
 input.short { width: 90px; }
 form.inline { gap: 6px; align-items: center; flex-wrap: nowrap; }
 form.inline .alert { margin: 0; }
+
+.spaced { margin-left: 12px; }

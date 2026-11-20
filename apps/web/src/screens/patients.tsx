@@ -38,6 +38,7 @@ export function PatientsScreen() {
 
   return (
     <div className="stack">
+      {(roles.has('doctor') || roles.has('clinic_staff')) && <Worklist />}
       <Card
         title="Tìm bệnh nhân"
         actions={can.registerPatient(roles) ? <button onClick={() => setShowRegister((v) => !v)}>{showRegister ? 'Đóng' : '+ Đăng ký mới'}</button> : null}
@@ -113,6 +114,84 @@ export function PatientsScreen() {
 
 const genderLabel = (g: string | undefined): string =>
   ({ male: 'Nam', female: 'Nữ', other: 'Khác', unknown: 'Không rõ' } as Record<string, string>)[g ?? ''] ?? '';
+
+interface WorklistItem {
+  encounterId: string; patientId: string; mrn: string; familyName: string; givenName: string; encounterClass: string;
+  periodStart: string; reasonText: string | null; reasonRedacted: boolean; practitionerUserId: string; practitionerName: string | null;
+}
+
+/**
+ * Danh sách đang khám của cơ sở: các đợt khám chưa kết thúc (bác sĩ mặc định chỉ xem đợt của mình).
+ * Server lọc theo quyền / access policy; chỉ có MRN + họ tên, không có CCCD hay liên lạc.
+ */
+function Worklist() {
+  const { orgId, roles, me } = useSession();
+  const isDoctor = roles.has('doctor');
+  const [mineOnly, setMineOnly] = useState(isDoctor);
+  const wl = useLoad(
+    () => api<{ items: WorklistItem[]; filtered: number }>('GET', `/api/worklist?organization=${orgId}`).then((r) => r.data),
+    [orgId],
+  );
+  const all = wl.data?.items ?? [];
+  const items = mineOnly ? all.filter((i) => i.practitionerUserId === me.user.userId) : all;
+  return (
+    <Card
+      title={`Đang khám${wl.data ? ` (${items.length})` : ''}`}
+      actions={
+        <div className="row">
+          {isDoctor && (
+            <select aria-label="Phạm vi" value={mineOnly ? 'mine' : 'all'} onChange={(e) => setMineOnly(e.target.value === 'mine')}>
+              <option value="mine">Của tôi</option>
+              <option value="all">Cả phòng khám</option>
+            </select>
+          )}
+          <button className="link" onClick={wl.reload}>
+            Tải lại
+          </button>
+        </div>
+      }
+    >
+      <ErrorBox error={wl.error} />
+      {wl.loading && !wl.data && <p className="muted">Đang tải…</p>}
+      {wl.data && items.length === 0 && (
+        <p className="muted">
+          {mineOnly
+            ? 'Bạn không có đợt khám nào đang mở. Tìm bệnh nhân bên dưới để mở đợt khám mới, hoặc chọn "Cả phòng khám".'
+            : 'Không có đợt khám nào đang mở.'}
+        </p>
+      )}
+      {items.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>Bắt đầu</th>
+              <th>Bệnh nhân</th>
+              <th>MRN</th>
+              <th>Lý do khám</th>
+              <th>Bác sĩ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((i) => (
+              <tr key={i.encounterId} className="clickable" onClick={() => navigate(`#/encounters/${i.encounterId}`)}>
+                <td>{fmtDateTime(i.periodStart)}</td>
+                <td>
+                  <a href={`#/encounters/${i.encounterId}`}>
+                    {i.familyName} {i.givenName}
+                  </a>
+                </td>
+                <td>{i.mrn}</td>
+                <td>{i.reasonRedacted ? <RedactedBadge show /> : (i.reasonText ?? '—')}</td>
+                <td>{i.practitionerUserId === me.user.userId ? <strong>Bạn</strong> : (i.practitionerName ?? '—')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {wl.data && wl.data.filtered > 0 && <p className="muted">{wl.data.filtered} đợt khám bị ẩn theo access policy của bạn.</p>}
+    </Card>
+  );
+}
 
 function RegisterPatient({ onDone }: { onDone: (patientId: string) => void }) {
   const { orgId } = useSession();

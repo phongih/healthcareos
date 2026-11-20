@@ -13,6 +13,7 @@ import {
   asOrganizationId, asTenantId, asUserId,
   type CorrelationId, type ISODate, type OrganizationId, type TenantContext, type TenantId, type UserId,
 } from '../../packages/domain/src/s0-contracts';
+import { ClinicalEncounterService, PgClinicalUnitOfWork } from '../../services/api/src/clinical/encounter.service';
 import { PgPrescriptionUnitOfWork, PrescriptionService } from '../../services/api/src/clinical/prescription.service';
 import { PharmacyInventoryService, PgPharmacyUnitOfWork } from '../../services/api/src/pharmacy/inventory.service';
 import { PsqlClient, psqlPool } from './psql-pool';
@@ -173,6 +174,15 @@ run('Kê đơn + cấp phát theo đơn / PostgreSQL', () => {
     // Đơn đã cấp một phần thì không huỷ được.
     const partial = (await rx.listForOrganization({ organizationId: OA }, C.ds)).find((p) => p.items.some((i) => i.quantityDispensed > 0))!;
     expect(await outcome(rx.cancelPrescription(partial.prescription.prescriptionId, partial.prescription.version, C.doc))).toBe('CONFLICT:ALREADY_DISPENSED');
+  });
+
+  it('worklist: đợt đang mở kèm MRN, tên bệnh nhân, tên bác sĩ; dược sĩ (chart:read) xem được, thủ kho thì không', async () => {
+    const clinical = new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(psqlPool({ database: DB })), audit: { record: async () => {} } });
+    const r = await clinical.listOpenEncounters(OA, C.doc);
+    expect(r.items.map((i) => i.encounterId).sort()).toEqual([ENC, ENC2].sort());
+    expect(r.items[0]).toMatchObject({ mrn: 'MRN-RX', familyName: 'Nguyen', givenName: 'An', practitionerName: 'BS Một' });
+    expect((await clinical.listOpenEncounters(OA, C.ds)).items).toHaveLength(2);
+    expect(await outcome(clinical.listOpenEncounters(OA, C.admin))).toBe('FORBIDDEN');
   });
 
   it('đợt khám đã đóng: không kê đơn mới', async () => {

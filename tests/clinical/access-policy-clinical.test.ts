@@ -123,6 +123,13 @@ class Repo implements ClinicalRepository {
   async insertEncounter(e: Encounter) { this.s.encounters.push(e); }
   async findEncounter(id: EncounterId) { return this.s.encounters.find((e) => e.encounterId === id) ?? null; }
   async listEncountersByPatient(patientId: Patient['patientId'], limit: number) { return this.s.encounters.filter((e) => e.patientId === patientId).slice(0, limit); }
+  async listOpenEncounterSummaries(org: Encounter['organizationId'], limit: number) {
+    return this.s.encounters.filter((e) => e.organizationId === org && e.status === 'in_progress').slice(0, limit).map((e) => {
+      const pt = this.s.patients.find((p) => p.patientId === e.patientId);
+      const ps = this.s.persons.find((x) => x.personId === pt?.personId);
+      return { encounter: e, mrn: pt?.mrn ?? '', familyName: ps?.familyName ?? '', givenName: ps?.givenName ?? '', practitionerName: null };
+    });
+  }
   async updateEncounter(next: Encounter, v: number) {
     const cur = this.s.encounters.find((e) => e.encounterId === next.encounterId);
     if (!cur || cur.version !== v) return null;
@@ -328,6 +335,26 @@ describe('kết hợp và fail-closed', () => {
     const e = await svc.getEncounterChart(ENC_DOC2, ctxFor(U.doc)).catch((x: unknown) => x);
     expect(e).toBeInstanceOf(ClinicalError);
     expect(JSON.stringify((e as ClinicalError).details)).not.toContain('practitioner');
+  });
+});
+
+describe('danh sách đang khám (worklist) của cơ sở', () => {
+  it('chỉ đợt in_progress; bác sĩ chỉ-xem-của-mình bị lọc đợt của đồng nghiệp; điều dưỡng bị che lý do khám', async () => {
+    const all = await svc.listOpenEncounters(ORG, ctxFor(U.plainDoc));
+    expect(all.items.map((i) => i.encounterId).sort()).toEqual([ENC_DOC, ENC_DOC2].sort());
+    expect(all.items[0]).not.toHaveProperty('identifiers');
+    const mine = await svc.listOpenEncounters(ORG, ctxFor(U.doc));
+    expect(mine.items.map((i) => i.encounterId)).toEqual([ENC_DOC]);
+    expect(mine.filtered).toBe(1);
+    const nurse = await svc.listOpenEncounters(ORG, ctxFor(U.nurse));
+    expect(nurse.items).toHaveLength(2);
+    expect(nurse.items.every((i) => i.reasonText === null && i.reasonRedacted)).toBe(true);
+    expect(state.audit.at(-1)).toMatchObject({ action: 'encounter.worklist', outcome: 'success' });
+  });
+
+  it('không có quyền đọc hồ sơ => 403; organization ngoài token => 403', async () => {
+    await expect(svc.listOpenEncounters(ORG, ctxFor(U.broken))).rejects.toMatchObject(policyDenied);
+    await expect(svc.listOpenEncounters(uid(999), ctxFor(U.plainDoc))).rejects.toMatchObject({ code: 'ORG_NOT_ALLOWED' });
   });
 });
 
