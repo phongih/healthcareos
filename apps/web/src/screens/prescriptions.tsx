@@ -71,7 +71,15 @@ function ItemsTable({ items, extra }: { items: RxItem[]; extra?: (i: RxItem) => 
 // Trong màn đợt khám
 // ---------------------------------------------------------------------------
 export function EncounterPrescriptions({ encounterId, open, isPractitioner }: { encounterId: string; open: boolean; isPractitioner: boolean }) {
-  const { me } = useSession();
+  const { me, roles } = useSession();
+  // Bác sĩ nhưng không kê được: nói rõ lý do thay vì chỉ ẩn nút.
+  const why = !roles.has('doctor')
+    ? null
+    : !open
+      ? 'Đợt khám đã kết thúc nên không kê đơn mới được. Để kê đơn, hãy mở một đợt khám mới từ hồ sơ bệnh nhân.'
+      : !isPractitioner
+        ? 'Chỉ bác sĩ phụ trách đợt khám này mới kê đơn được.'
+        : null;
   const list = useLoad(
     () => api<{ prescriptions: RxView[] }>('GET', `/api/prescriptions?encounter=${encounterId}`).then((r) => r.data.prescriptions),
     [encounterId],
@@ -93,6 +101,7 @@ export function EncounterPrescriptions({ encounterId, open, isPractitioner }: { 
       }
     >
       <ErrorBox error={list.error} />
+      {why && <Notice>{why}</Notice>}
       {list.data && list.data.length === 0 && !composing && <p className="muted">Chưa có đơn thuốc.</p>}
       {list.data?.map((p) => (
         <div key={p.prescription.prescriptionId} className="rx">
