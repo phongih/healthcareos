@@ -262,3 +262,71 @@ td.h-unknown { background: #f3f4f6; }
 @media (max-width: 800px) { .whatif { grid-template-columns: 1fr; } }
 label.slider { display: flex; flex-direction: column; gap: 4px; }
 label.slider input { width: 100%; }
+
+/* ---- HCOS-F11: Decision Engine, chuông thông báo, Native AI ---- */
+.flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--card); overflow: hidden; }
+.flow > div { padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; position: relative; }
+.flow > div + div { border-left: 1px solid var(--line); }
+.flow > div:not(:last-child)::after { content: '→'; position: absolute; right: -9px; top: 14px; color: var(--muted); background: var(--card); font-size: 14px; z-index: 1; }
+.flow span { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--brand); font-weight: 700; }
+.flow strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+.flow small { color: var(--muted); font-size: 12px; }
+@media (max-width: 720px) { .flow { grid-template-columns: 1fr 1fr; } .flow > div:not(:last-child)::after { display: none; } }
+nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+nav.tabs button { background: none; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; }
+nav.tabs button.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+.card.rule { display: flex; flex-direction: column; gap: 8px; }
+.card.rule.paused { opacity: 0.75; background: #fafbfc; }
+.rule-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.badge.on { background: var(--ok-bg); border-color: var(--ok-line); color: #14532d; }
+.badge.off { background: #f1f5f9; border-color: var(--line); color: var(--muted); }
+.badge.prio-1 { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+.badge.prio-2 { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+.badge.prio-3 { background: #e0f2fe; border-color: #7dd3fc; color: #075985; }
+.badge.run-success { background: var(--ok-bg); border-color: var(--ok-line); color: #14532d; }
+.badge.run-partial { background: var(--warn-bg); border-color: var(--warn-line); color: #7a4b00; }
+.badge.run-failed { background: var(--err-bg); border-color: var(--err-line); color: var(--danger); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { display: inline-block; font-size: 13px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: #f8fafc; }
+.chip-act { background: #ecfeff; border-color: #a5f3fc; color: #155e75; }
+.chip-suggest { background: #f5f3ff; border-color: #c4b5fd; color: #5b21b6; }
+.chip-neg { color: var(--muted); text-decoration: none; background: #f1f5f9; }
+.chip-flag { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; font-weight: 600; }
+.chip-check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; }
+button.chip-btn { font-size: 13px; padding: 2px 10px; border-radius: 999px; }
+ul.tight { margin: 6px 0 0; padding-left: 18px; }
+td.nowrap, .nowrap { white-space: nowrap; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.preview { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 12px; background: #fafbfc; }
+.stack.small-gap { gap: 6px; }
+/* Chuông */
+.bell { position: relative; }
+.bell-btn { position: relative; background: rgba(255, 255, 255, 0.12); color: var(--brand-ink); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 8px; padding: 5px 8px; line-height: 0; }
+.bell-btn.urgent { background: #b91c1c; border-color: #fecaca; }
+.bell-count { position: absolute; top: -6px; right: -6px; background: #f59e0b; color: #111827; border-radius: 999px; font-size: 11px; line-height: 16px; min-width: 18px; padding: 0 4px; font-weight: 700; }
+.bell-panel { position: absolute; right: 0; top: calc(100% + 8px); width: min(440px, 92vw); max-height: 70vh; overflow: auto; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18); z-index: 50; padding: 10px 12px; }
+.bell-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.bell-list { list-style: none; margin: 0; padding: 0; }
+.bell-list li { padding: 10px 0 10px 10px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; }
+.bell-list li.p1.open { border-left-color: #dc2626; }
+.bell-list li.p2.open { border-left-color: #f59e0b; }
+.bell-list li.p3.open { border-left-color: #0ea5e9; }
+.bell-list li.handled { opacity: 0.7; }
+.bell-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bell-title { font-weight: 600; margin: 4px 0 2px; }
+.bell-actions { margin-top: 6px; gap: 6px; align-items: center; }
+.bell-actions button { font-size: 13px; padding: 4px 10px; }
+.bell-empty, .bell-foot { margin: 10px 0 0; }
+/* Native AI: ô tìm mờ + triệu chứng */
+.fuzzy { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 280px; flex: 1; margin-bottom: 8px; }
+.fuzzy-list { position: absolute; top: 100%; left: 0; right: 0; z-index: 40; list-style: none; margin: 2px 0 0; padding: 4px 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); max-height: 320px; overflow: auto; }
+.fuzzy-list li { padding: 6px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.fuzzy-list li.active { background: #ecfeff; }
+.fuzzy-list li.muted { cursor: default; }
+.fuzzy-why { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.symptom-assist textarea { width: 100%; min-width: 280px; }
+.bell-backdrop { position: fixed; inset: 0; z-index: 49; }
+.topbar { flex-wrap: wrap; row-gap: 6px; }
+.topbar nav { flex-wrap: wrap; }
+.topbar nav a { white-space: nowrap; padding: 6px 10px; }
+.topbar .user { white-space: nowrap; }

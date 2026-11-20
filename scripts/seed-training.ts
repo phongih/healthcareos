@@ -31,6 +31,7 @@ import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/s
 import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
 import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analytics/forecast.service';
+import { DecisionEngineService, PgDecisionUnitOfWork } from '../services/api/src/decision/decision.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ const handler = createApiHandler({
   publicBooking: new PublicBookingService({ pool, audit }),
   finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
   forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
+  decision: new DecisionEngineService({ uow: new PgDecisionUnitOfWork(pool), audit }),
   // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
   rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
@@ -550,6 +552,41 @@ async function seedForecast(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 2f. Decision Engine: bộ luật mẫu (chỉ báo + gợi ý). Bỏ qua luật đã có (theo tên). Hai luật để ở trạng thái tạm dừng
+//     cho học viên tập bật / tắt. Chạy engine một lần để hộp thông báo có dữ liệu.
+// ---------------------------------------------------------------------------
+type SeedRule = [name: string, detector: string, conditions: Array<[string, string, number]>, priority: number, cooldownMinutes: number, actions: string[], paused?: boolean];
+const DECISION_RULES: SeedRule[] = [
+  ['SpO₂ thấp', 'vital_abnormal', [['spo2_pct', '<', 92]], 1, 60, ['notify_doctor', 'notify_clinic_staff', 'suggest']],
+  ['Huyết áp tâm thu rất cao', 'vital_abnormal', [['systolic_mmhg', '>=', 180]], 1, 60, ['notify_doctor', 'suggest']],
+  ['Sốt cao', 'vital_abnormal', [['temperature_c', '>=', 39]], 2, 120, ['notify_doctor', 'suggest']],
+  ['Phòng sắp quá tải (3 ngày tới)', 'room_overload', [['utilization_pct', '>=', 100], ['days_ahead', '<=', 3]], 2, 720, ['notify_clinic_admin', 'notify_clinic_staff', 'suggest']],
+  ['Thuốc dưới điểm đặt hàng', 'stock_low', [['below_reorder_point', '=', 1]], 2, 1440, ['notify_pharmacy_admin', 'notify_clinic_admin', 'suggest']],
+  ['Thuốc sắp hết hạn (60 ngày)', 'stock_expiry', [['days_to_expiry', '<=', 60]], 3, 10080, ['notify_pharmacy_admin', 'suggest']],
+  ['Lệch quỹ cuối ca', 'cash_difference', [['abs_difference_vnd', '>=', 10_000]], 1, 1440, ['notify_clinic_admin', 'suggest']],
+  ['Huỷ phiếu nhiều trong tuần', 'receipt_cancellations', [['cancel_count', '>=', 3]], 2, 1440, ['notify_clinic_admin', 'suggest']],
+  ['Tạm ứng treo quá 3 ngày', 'deposit_aging', [['age_days', '>=', 3], ['held_vnd', '>', 0]], 3, 1440, ['notify_cashier', 'notify_clinic_admin', 'suggest']],
+  ['Mã bệnh tăng đột biến', 'icd_spike', [['ratio', '>=', 2], ['last7_count', '>=', 5]], 2, 1440, ['notify_clinic_admin', 'notify_doctor']],
+  ['Đơn thuốc chưa phát quá 24 giờ', 'rx_not_dispensed', [['age_hours', '>=', 24]], 3, 720, ['notify_pharmacist', 'suggest']],
+  ['Lượt khám bất thường', 'visit_volume', [['abs_robust_z', '>=', 3]], 3, 1440, ['log_only'], true],
+  ['Tỷ lệ vắng lịch hẹn tăng', 'booking_no_show', [['no_show_pct', '>=', 30], ['booked_count', '>=', 10]], 3, 10080, ['notify_clinic_admin'], true],
+];
+async function seedDecision(): Promise<void> {
+  const QL = 'tt.quanly1';
+  const have = new Set((await call<{ rules: Array<{ name: string }> }>(QL, 'GET', `/api/decision/rules?organization=${ORG}`)).data.rules.map((r) => r.name));
+  for (const [name, detector, conditions, priority, cooldownMinutes, actions, paused] of DECISION_RULES) {
+    if (have.has(name)) continue;
+    const r = await call<{ ruleId: string; version: number }>(QL, 'POST', '/api/decision/rules', {
+      organizationId: ORG, name, detector, conditions: conditions.map(([metric, op, value]) => ({ metric, op, value })), priority, cooldownMinutes, actions,
+    });
+    if (paused) await call(QL, 'POST', `/api/decision/rules/${r.data.ruleId}/status`, { status: 'paused' }, { 'if-match': `W/"${r.data.version}"` });
+    bump('luật Decision Engine');
+  }
+  const run = (await call<{ eventsCreated: number; suppressed: number }>(QL, 'POST', '/api/decision/run', { organizationId: ORG })).data;
+  console.log(`Decision Engine chạy thử: ${run.eventsCreated} sự kiện mới, ${run.suppressed} bị chặn bởi thời gian chờ.`);
+}
+
+// ---------------------------------------------------------------------------
 // 3. Access policy cho điều dưỡng (quản lý)
 // ---------------------------------------------------------------------------
 async function seedPolicy(): Promise<void> {
@@ -590,6 +627,7 @@ try {
   await seedBooking();
   await seedFinance();
   await seedForecast();
+  await seedDecision();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);
 } catch (e) {

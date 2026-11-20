@@ -435,6 +435,178 @@ export class PgForecastRepository extends PgClinicalRepository {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+/** Tải phòng khám `days` ngày tới (dùng chung cho màn Dự báo và Decision Engine). */
+export async function computeLoad(repo: PgForecastRepository, org: OrganizationId, days: number, now: Date): Promise<LoadForecast> {
+  const today = vnDate(now);
+  const hFrom = addDays(today, -HISTORY_DAYS);
+  const hTo = addDays(today, -1);
+  const fFrom = addDays(today, 1);
+  const fTo = addDays(today, days);
+  const rooms = await repo.rooms(org);
+  const hist = await repo.visitHistory(org, hFrom, hTo);
+
+  // Lịch sử thực có từ ngày khám đầu tiên trong cửa sổ.
+  const firstDate = hist.length ? hist.map((h) => h.date).sort()[0]! : null;
+  const historyDays = firstDate ? Math.round((Date.parse(`${hTo}T00:00:00Z`) - Date.parse(`${firstDate}T00:00:00Z`)) / 86_400_000) + 1 : 0;
+  const wdCount = firstDate ? weekdayCounts(firstDate, hTo) : [0, 0, 0, 0, 0, 0, 0];
+  const total = hist.reduce((a, h) => a + h.count, 0);
+  const morning = hist.filter((h) => h.period === 'morning').reduce((a, h) => a + h.count, 0);
+  const morningShare = total > 0 ? morning / total : 0.6;
+
+  // Phân bổ lượt không rõ phòng theo tỷ trọng các phòng (không có dữ liệu => chia đều).
+  const roomKeys = rooms.length ? rooms.map((r) => r.servicePointId) : ['—'];
+  const assigned = new Map<string, number>(roomKeys.map((k) => [k, 0]));
+  for (const h of hist) if (h.sp && assigned.has(h.sp)) assigned.set(h.sp, assigned.get(h.sp)! + h.count);
+  const assignedTotal = [...assigned.values()].reduce((a, b) => a + b, 0);
+  const share = new Map(roomKeys.map((k) => [k, assignedTotal > 0 ? assigned.get(k)! / assignedTotal : 1 / roomKeys.length]));
+  const spread = (sp: string | null, f: (room: string, w: number) => void) => {
+    if (sp && share.has(sp)) f(sp, 1);
+    else for (const [k, w] of share) if (w > 0) f(k, w);
+  };
+
+  // Trung bình theo (phòng, thứ, buổi): vãng lai (không đặt lịch, không tái khám) và khách đặt lịch.
+  const key = (room: string, wd: number, p: Period) => `${room}|${wd}|${p}`;
+  const walk = new Map<string, number>();
+  const bookedHist = new Map<string, number>();
+  const wdTotals = [0, 0, 0, 0, 0, 0, 0];
+  for (const h of hist) {
+    const wd = weekdayOf(h.date);
+    wdTotals[wd]! += h.count;
+    if (h.followUp) continue;
+    const target = h.booked ? bookedHist : walk;
+    spread(h.sp, (room, w) => target.set(key(room, wd, h.period), (target.get(key(room, wd, h.period)) ?? 0) + h.count * w));
+  }
+  const avg = (m: Map<string, number>, room: string, wd: number, p: Period) => (wdCount[wd] ? (m.get(key(room, wd, p)) ?? 0) / wdCount[wd]! : 0);
+  const dailyMean = historyDays > 0 ? total / historyDays : 0;
+  const weekdayIndex = wdTotals.map((t, wd) => (dailyMean > 0 && wdCount[wd] ? r2(t / wdCount[wd]! / dailyMean) : 0));
+
+  // Tỷ lệ đến của lịch hẹn và tỷ lệ quay lại tái khám.
+  const show = await repo.bookingShow(org, hFrom, hTo);
+  const showRate = show.total >= MIN_SAMPLE ? show.shown / show.total : DEFAULT_SHOW;
+  const ended = await repo.prescriptionEnds(org, hFrom, addDays(today, -8));
+  const returnRate = ended.length >= MIN_SAMPLE ? ended.filter((e) => e.returned).length / ended.length : DEFAULT_RETURN;
+
+  // Tái khám dự kiến: đơn kết thúc trong [fFrom - 7, fTo + 1], rải đều [end - 1, end + 7].
+  const follow = new Map<string, number>();
+  for (const e of await repo.prescriptionEnds(org, addDays(fFrom, -7), addDays(fTo, 1))) {
+    for (let k = -1; k <= 7; k++) {
+      const d = addDays(e.end, k);
+      if (d < fFrom || d > fTo) continue;
+      spread(e.sp, (room, w) => {
+        for (const p of PERIODS) {
+          const ps = p === 'morning' ? morningShare : 1 - morningShare;
+          follow.set(`${room}|${d}|${p}`, (follow.get(`${room}|${d}|${p}`) ?? 0) + (returnRate / 9) * w * ps);
+        }
+      });
+    }
+  }
+  const fb = new Map<string, number>();
+  for (const b of await repo.futureBookings(org, fFrom, fTo)) fb.set(`${b.sp}|${b.date}|${b.period}`, (fb.get(`${b.sp}|${b.date}|${b.period}`) ?? 0) + b.count);
+
+  const out: LoadDay[] = [];
+  const alerts: LoadForecast['alerts'] = [];
+  const totals = { walkIn: 0, booked: 0, followUp: 0, total: 0 };
+  const roomInfo = new Map(rooms.map((r) => [r.servicePointId, r]));
+  for (let d = fFrom; d <= fTo; d = addDays(d, 1)) {
+    const wd = weekdayOf(d);
+    const periods = { morning: [] as LoadCell[], afternoon: [] as LoadCell[] };
+    let dayTotal = 0;
+    let worst: LoadCell['status'] = 'unknown';
+    const sev: Record<LoadCell['status'], number> = { unknown: 0, ok: 1, busy: 2, overload: 3 };
+    for (const p of PERIODS) {
+      for (const room of roomKeys) {
+        const walkIn = avg(walk, room, wd, p);
+        const bookedRaw = fb.get(`${room}|${d}|${p}`) ?? 0;
+        const booked = Math.max(bookedRaw * showRate, avg(bookedHist, room, wd, p));
+        const followUp = follow.get(`${room}|${d}|${p}`) ?? 0;
+        const t = walkIn + booked + followUp;
+        const capacity = roomInfo.get(room)?.visitCapacity ?? null;
+        const status = loadStatus(t, capacity);
+        const cell: LoadCell = {
+          servicePointId: roomInfo.has(room) ? room : null, walkIn: r1(walkIn), bookedRaw, booked: r1(booked), followUp: r1(followUp), total: r1(t),
+          capacity, utilization: capacity ? r2(t / capacity) : null, status,
+        };
+        periods[p].push(cell);
+        dayTotal += t;
+        totals.walkIn += walkIn;
+        totals.booked += booked;
+        totals.followUp += followUp;
+        if (sev[status] > sev[worst]) worst = status;
+        if ((status === 'busy' || status === 'overload') && capacity) {
+          alerts.push({ date: d, period: p, servicePointId: cell.servicePointId, code: roomInfo.get(room)?.code ?? '—', total: r1(t), capacity, utilization: r2(t / capacity), status });
+        }
+      }
+    }
+    totals.total += dayTotal;
+    out.push({ date: d, weekday: wd, periods, total: r1(dayTotal), worst });
+  }
+  return {
+    from: fFrom, to: fTo, rooms, days: out, alerts, weekdayIndex,
+    params: {
+      historyDays, sufficient: historyDays >= 14,
+      showRate: r2(showRate), showRateSource: show.total >= MIN_SAMPLE ? 'data' : 'default', showRateSample: show.total,
+      returnRate: r2(returnRate), returnRateSource: ended.length >= MIN_SAMPLE ? 'data' : 'default', returnRateSample: ended.length,
+      morningShare: r2(morningShare), avgDailyVisits: r1(dailyMean),
+    },
+    totals: { walkIn: r1(totals.walkIn), booked: r1(totals.booked), followUp: r1(totals.followUp), total: r1(totals.total) },
+  };
+}
+
+/** Điểm đặt hàng lại thuốc (dùng chung cho màn Dự báo và Decision Engine). */
+export async function computeInventory(repo: PgForecastRepository, org: OrganizationId, now: Date): Promise<InventoryForecast> {
+  const today = vnDate(now);
+  const settings = await repo.getSettings(org);
+  const z = Z[settings.serviceLevelPct] ?? 1.6449;
+  const first = await repo.firstMovementDate(org);
+  const span = first ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86_400_000) + 1 : 0;
+  const windowDays = Math.min(30, Math.max(7, span));
+  const from = addDays(today, -(windowDays - 1));
+  const dispensed = await repo.dispensedDaily(org, from, today);
+  const batches = await repo.stockBatches(org, today);
+  const meds = await repo.medications();
+  const icd = await repo.icdCounts(org, today);
+  const ratio = new Map(icd.map((c) => [c.code, trendRatio(c.last7, c.prior21)]));
+  const links = await repo.drugIcd(org, today);
+
+  const ids = new Set([...dispensed.map((d) => d.medicationId), ...batches.map((b) => b.medicationId)]);
+  const lines: InventoryLine[] = [];
+  for (const id of ids) {
+    const m = meds.get(id);
+    if (!m) continue;
+    const series: number[] = [];
+    const byDate = new Map(dispensed.filter((d) => d.medicationId === id).map((d) => [d.date, d.qty]));
+    for (let d = from; d <= today; d = addDays(d, 1)) series.push(byDate.get(d) ?? 0);
+    const myLinks = links.filter((l) => l.medicationId === id);
+    const w = myLinks.reduce((a, l) => a + l.qty, 0);
+    const trendFactor = w > 0 ? myLinks.reduce((a, l) => a + l.qty * (ratio.get(l.code) ?? 1), 0) / w : 1;
+    const myBatches = batches.filter((b) => b.medicationId === id);
+    const available = myBatches.reduce((a, b) => a + b.qty, 0);
+    const calc = reorderLine({ available, daily: series, trendFactor, leadTimeDays: settings.leadTimeDays, z, reviewDays: REVIEW_DAYS });
+    const unitCost = myBatches.length ? Math.max(...myBatches.map((b) => b.unitCost)) : null;
+    lines.push({
+      medicationId: id, name: m.name, unit: m.unit, available, trendFactor: r2(trendFactor),
+      trendCodes: myLinks.map((l) => ({ code: l.code, ratio: r2(ratio.get(l.code) ?? 1) })).filter((c) => c.ratio !== 1).sort((a, b) => b.ratio - a.ratio).slice(0, 3),
+      ...calc,
+      estimatedOrderValue: calc.suggestedOrder && unitCost ? Math.round(calc.suggestedOrder * unitCost) : null,
+      earliestExpiry: myBatches.length ? myBatches.map((b) => b.expiry).sort()[0]! : null,
+      // Chưa có tiêu thụ => không đủ căn cứ để nói hàng sẽ hết hạn (tránh báo động giả).
+      expiryRiskQty: calc.adjustedDaily > 0 ? expiryRisk(myBatches, calc.adjustedDaily, today) : 0,
+    });
+  }
+  const rank: Record<InventoryLine['status'], number> = { stockout: 0, urgent: 1, reorder: 2, ok: 3, no_demand: 4 };
+  lines.sort((a, b) => rank[a.status] - rank[b.status] || (a.daysOfCover ?? 1e9) - (b.daysOfCover ?? 1e9) || a.name.localeCompare(b.name));
+  return {
+    asOf: today,
+    params: { windowDays, sufficient: span >= 14, leadTimeDays: settings.leadTimeDays, serviceLevelPct: settings.serviceLevelPct, z, reviewDays: REVIEW_DAYS },
+    lines,
+    risingCodes: icd
+      .map((c) => ({ ...c, ratio: r2(trendRatio(c.last7, c.prior21)) }))
+      .filter((c) => c.ratio >= 1.3 && c.last7 >= 2)
+      .sort((a, b) => b.ratio - a.ratio)
+      .slice(0, 10),
+  };
+}
+
 export interface ForecastUnitOfWork {
   run<T>(ctx: TenantContext, fn: (repo: PgForecastRepository) => Promise<T>): Promise<T>;
 }
@@ -548,58 +720,9 @@ export class ForecastService {
       const org = this.orgOf(organizationId, ctx);
       const p = await this.principal(repo, ctx, org);
       this.decide(p, ['forecast:inventory']);
-      const today = vnDate(this.clock());
-      const settings = await repo.getSettings(org);
-      const z = Z[settings.serviceLevelPct] ?? 1.6449;
-      const first = await repo.firstMovementDate(org);
-      const span = first ? Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / 86_400_000) + 1 : 0;
-      const windowDays = Math.min(30, Math.max(7, span));
-      const from = addDays(today, -(windowDays - 1));
-      const dispensed = await repo.dispensedDaily(org, from, today);
-      const batches = await repo.stockBatches(org, today);
-      const meds = await repo.medications();
-      const icd = await repo.icdCounts(org, today);
-      const ratio = new Map(icd.map((c) => [c.code, trendRatio(c.last7, c.prior21)]));
-      const links = await repo.drugIcd(org, today);
-
-      const ids = new Set([...dispensed.map((d) => d.medicationId), ...batches.map((b) => b.medicationId)]);
-      const lines: InventoryLine[] = [];
-      for (const id of ids) {
-        const m = meds.get(id);
-        if (!m) continue;
-        const series: number[] = [];
-        const byDate = new Map(dispensed.filter((d) => d.medicationId === id).map((d) => [d.date, d.qty]));
-        for (let d = from; d <= today; d = addDays(d, 1)) series.push(byDate.get(d) ?? 0);
-        const myLinks = links.filter((l) => l.medicationId === id);
-        const w = myLinks.reduce((a, l) => a + l.qty, 0);
-        const trendFactor = w > 0 ? myLinks.reduce((a, l) => a + l.qty * (ratio.get(l.code) ?? 1), 0) / w : 1;
-        const myBatches = batches.filter((b) => b.medicationId === id);
-        const available = myBatches.reduce((a, b) => a + b.qty, 0);
-        const calc = reorderLine({ available, daily: series, trendFactor, leadTimeDays: settings.leadTimeDays, z, reviewDays: REVIEW_DAYS });
-        const unitCost = myBatches.length ? Math.max(...myBatches.map((b) => b.unitCost)) : null;
-        lines.push({
-          medicationId: id, name: m.name, unit: m.unit, available, trendFactor: r2(trendFactor),
-          trendCodes: myLinks.map((l) => ({ code: l.code, ratio: r2(ratio.get(l.code) ?? 1) })).filter((c) => c.ratio !== 1).sort((a, b) => b.ratio - a.ratio).slice(0, 3),
-          ...calc,
-          estimatedOrderValue: calc.suggestedOrder && unitCost ? Math.round(calc.suggestedOrder * unitCost) : null,
-          earliestExpiry: myBatches.length ? myBatches.map((b) => b.expiry).sort()[0]! : null,
-          // Chưa có tiêu thụ => không đủ căn cứ để nói hàng sẽ hết hạn (tránh báo động giả).
-          expiryRiskQty: calc.adjustedDaily > 0 ? expiryRisk(myBatches, calc.adjustedDaily, today) : 0,
-        });
-      }
-      const rank: Record<InventoryLine['status'], number> = { stockout: 0, urgent: 1, reorder: 2, ok: 3, no_demand: 4 };
-      lines.sort((a, b) => rank[a.status] - rank[b.status] || (a.daysOfCover ?? 1e9) - (b.daysOfCover ?? 1e9) || a.name.localeCompare(b.name));
+      const out = await computeInventory(repo, org, this.clock());
       await repo.appendAudit(this.event(ctx, 'forecast.inventory', org, 'success', p.user, {}));
-      return {
-        asOf: today,
-        params: { windowDays, sufficient: span >= 14, leadTimeDays: settings.leadTimeDays, serviceLevelPct: settings.serviceLevelPct, z, reviewDays: REVIEW_DAYS },
-        lines,
-        risingCodes: icd
-          .map((c) => ({ ...c, ratio: r2(trendRatio(c.last7, c.prior21)) }))
-          .filter((c) => c.ratio >= 1.3 && c.last7 >= 2)
-          .sort((a, b) => b.ratio - a.ratio)
-          .slice(0, 10),
-      };
+      return out;
     });
   }
 
@@ -627,121 +750,8 @@ export class ForecastService {
     });
   }
 
-  // ---- tính tải ----
-  private async computeLoad(repo: PgForecastRepository, org: OrganizationId, days: number): Promise<LoadForecast> {
-    const today = vnDate(this.clock());
-    const hFrom = addDays(today, -HISTORY_DAYS);
-    const hTo = addDays(today, -1);
-    const fFrom = addDays(today, 1);
-    const fTo = addDays(today, days);
-    const rooms = await repo.rooms(org);
-    const hist = await repo.visitHistory(org, hFrom, hTo);
-
-    // Lịch sử thực có từ ngày khám đầu tiên trong cửa sổ.
-    const firstDate = hist.length ? hist.map((h) => h.date).sort()[0]! : null;
-    const historyDays = firstDate ? Math.round((Date.parse(`${hTo}T00:00:00Z`) - Date.parse(`${firstDate}T00:00:00Z`)) / 86_400_000) + 1 : 0;
-    const wdCount = firstDate ? weekdayCounts(firstDate, hTo) : [0, 0, 0, 0, 0, 0, 0];
-    const total = hist.reduce((a, h) => a + h.count, 0);
-    const morning = hist.filter((h) => h.period === 'morning').reduce((a, h) => a + h.count, 0);
-    const morningShare = total > 0 ? morning / total : 0.6;
-
-    // Phân bổ lượt không rõ phòng theo tỷ trọng các phòng (không có dữ liệu => chia đều).
-    const roomKeys = rooms.length ? rooms.map((r) => r.servicePointId) : ['—'];
-    const assigned = new Map<string, number>(roomKeys.map((k) => [k, 0]));
-    for (const h of hist) if (h.sp && assigned.has(h.sp)) assigned.set(h.sp, assigned.get(h.sp)! + h.count);
-    const assignedTotal = [...assigned.values()].reduce((a, b) => a + b, 0);
-    const share = new Map(roomKeys.map((k) => [k, assignedTotal > 0 ? assigned.get(k)! / assignedTotal : 1 / roomKeys.length]));
-    const spread = (sp: string | null, f: (room: string, w: number) => void) => {
-      if (sp && share.has(sp)) f(sp, 1);
-      else for (const [k, w] of share) if (w > 0) f(k, w);
-    };
-
-    // Trung bình theo (phòng, thứ, buổi): vãng lai (không đặt lịch, không tái khám) và khách đặt lịch.
-    const key = (room: string, wd: number, p: Period) => `${room}|${wd}|${p}`;
-    const walk = new Map<string, number>();
-    const bookedHist = new Map<string, number>();
-    const wdTotals = [0, 0, 0, 0, 0, 0, 0];
-    for (const h of hist) {
-      const wd = weekdayOf(h.date);
-      wdTotals[wd]! += h.count;
-      if (h.followUp) continue;
-      const target = h.booked ? bookedHist : walk;
-      spread(h.sp, (room, w) => target.set(key(room, wd, h.period), (target.get(key(room, wd, h.period)) ?? 0) + h.count * w));
-    }
-    const avg = (m: Map<string, number>, room: string, wd: number, p: Period) => (wdCount[wd] ? (m.get(key(room, wd, p)) ?? 0) / wdCount[wd]! : 0);
-    const dailyMean = historyDays > 0 ? total / historyDays : 0;
-    const weekdayIndex = wdTotals.map((t, wd) => (dailyMean > 0 && wdCount[wd] ? r2(t / wdCount[wd]! / dailyMean) : 0));
-
-    // Tỷ lệ đến của lịch hẹn và tỷ lệ quay lại tái khám.
-    const show = await repo.bookingShow(org, hFrom, hTo);
-    const showRate = show.total >= MIN_SAMPLE ? show.shown / show.total : DEFAULT_SHOW;
-    const ended = await repo.prescriptionEnds(org, hFrom, addDays(today, -8));
-    const returnRate = ended.length >= MIN_SAMPLE ? ended.filter((e) => e.returned).length / ended.length : DEFAULT_RETURN;
-
-    // Tái khám dự kiến: đơn kết thúc trong [fFrom - 7, fTo + 1], rải đều [end - 1, end + 7].
-    const follow = new Map<string, number>();
-    for (const e of await repo.prescriptionEnds(org, addDays(fFrom, -7), addDays(fTo, 1))) {
-      for (let k = -1; k <= 7; k++) {
-        const d = addDays(e.end, k);
-        if (d < fFrom || d > fTo) continue;
-        spread(e.sp, (room, w) => {
-          for (const p of PERIODS) {
-            const ps = p === 'morning' ? morningShare : 1 - morningShare;
-            follow.set(`${room}|${d}|${p}`, (follow.get(`${room}|${d}|${p}`) ?? 0) + (returnRate / 9) * w * ps);
-          }
-        });
-      }
-    }
-    const fb = new Map<string, number>();
-    for (const b of await repo.futureBookings(org, fFrom, fTo)) fb.set(`${b.sp}|${b.date}|${b.period}`, (fb.get(`${b.sp}|${b.date}|${b.period}`) ?? 0) + b.count);
-
-    const out: LoadDay[] = [];
-    const alerts: LoadForecast['alerts'] = [];
-    const totals = { walkIn: 0, booked: 0, followUp: 0, total: 0 };
-    const roomInfo = new Map(rooms.map((r) => [r.servicePointId, r]));
-    for (let d = fFrom; d <= fTo; d = addDays(d, 1)) {
-      const wd = weekdayOf(d);
-      const periods = { morning: [] as LoadCell[], afternoon: [] as LoadCell[] };
-      let dayTotal = 0;
-      let worst: LoadCell['status'] = 'unknown';
-      const sev: Record<LoadCell['status'], number> = { unknown: 0, ok: 1, busy: 2, overload: 3 };
-      for (const p of PERIODS) {
-        for (const room of roomKeys) {
-          const walkIn = avg(walk, room, wd, p);
-          const bookedRaw = fb.get(`${room}|${d}|${p}`) ?? 0;
-          const booked = Math.max(bookedRaw * showRate, avg(bookedHist, room, wd, p));
-          const followUp = follow.get(`${room}|${d}|${p}`) ?? 0;
-          const t = walkIn + booked + followUp;
-          const capacity = roomInfo.get(room)?.visitCapacity ?? null;
-          const status = loadStatus(t, capacity);
-          const cell: LoadCell = {
-            servicePointId: roomInfo.has(room) ? room : null, walkIn: r1(walkIn), bookedRaw, booked: r1(booked), followUp: r1(followUp), total: r1(t),
-            capacity, utilization: capacity ? r2(t / capacity) : null, status,
-          };
-          periods[p].push(cell);
-          dayTotal += t;
-          totals.walkIn += walkIn;
-          totals.booked += booked;
-          totals.followUp += followUp;
-          if (sev[status] > sev[worst]) worst = status;
-          if ((status === 'busy' || status === 'overload') && capacity) {
-            alerts.push({ date: d, period: p, servicePointId: cell.servicePointId, code: roomInfo.get(room)?.code ?? '—', total: r1(t), capacity, utilization: r2(t / capacity), status });
-          }
-        }
-      }
-      totals.total += dayTotal;
-      out.push({ date: d, weekday: wd, periods, total: r1(dayTotal), worst });
-    }
-    return {
-      from: fFrom, to: fTo, rooms, days: out, alerts, weekdayIndex,
-      params: {
-        historyDays, sufficient: historyDays >= 14,
-        showRate: r2(showRate), showRateSource: show.total >= MIN_SAMPLE ? 'data' : 'default', showRateSample: show.total,
-        returnRate: r2(returnRate), returnRateSource: ended.length >= MIN_SAMPLE ? 'data' : 'default', returnRateSample: ended.length,
-        morningShare: r2(morningShare), avgDailyVisits: r1(dailyMean),
-      },
-      totals: { walkIn: r1(totals.walkIn), booked: r1(totals.booked), followUp: r1(totals.followUp), total: r1(totals.total) },
-    };
+  private computeLoad(repo: PgForecastRepository, org: OrganizationId, days: number): Promise<LoadForecast> {
+    return computeLoad(repo, org, days, this.clock());
   }
 
   // ---- nội bộ ----

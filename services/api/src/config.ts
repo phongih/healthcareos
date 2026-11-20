@@ -12,6 +12,7 @@
  *   HCOS_MAX_BODY_BYTES mặc định 1048576
  *   HCOS_DB_POOL_MAX    mặc định 10
  *   HCOS_READY_TIMEOUT_MS  timeout của /readyz, mặc định 2000
+ *   HCOS_DECISION_INTERVAL_SEC  chu kỳ chạy Decision Engine (giây), mặc định 300; 0 = tắt bộ lập lịch (vẫn bấm "Chạy ngay" được)
  */
 import { isIP } from 'node:net';
 export interface AppConfig {
@@ -25,6 +26,8 @@ export interface AppConfig {
   readonly maxBodyBytes: number;
   readonly dbPoolMax: number;
   readonly readyTimeoutMs: number;
+  /** Chu kỳ chạy Decision Engine (giây); 0 = tắt bộ lập lịch. */
+  readonly decisionIntervalSec: number;
 }
 
 export class ConfigError extends Error {
@@ -93,6 +96,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     maxBodyBytes: int('HCOS_MAX_BODY_BYTES', 1_048_576, 1024, 50 * 1_048_576),
     dbPoolMax: int('HCOS_DB_POOL_MAX', 10, 1, 200),
     readyTimeoutMs: int('HCOS_READY_TIMEOUT_MS', 2000, 100, 30_000),
+    decisionIntervalSec: (() => {
+      const v = int('HCOS_DECISION_INTERVAL_SEC', 300, 0, 86_400);
+      if (v > 0 && v < 60) {
+        problems.push('HCOS_DECISION_INTERVAL_SEC must be 0 (off) or at least 60');
+      }
+      return v;
+    })(),
   };
   if (problems.length > 0) throw new ConfigError(problems);
   return cfg;

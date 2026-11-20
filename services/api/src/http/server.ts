@@ -21,6 +21,7 @@ import {
 import type { ReadinessProbe } from '../../../../packages/security/src/pg-readiness';
 import { buildBookingRoutes, handlePublicBooking, RateLimiter, type BookingApi, type PublicBookingApi } from './booking-routes';
 import { buildFinanceRoutes, type FinanceApi } from './finance-routes';
+import { buildDecisionRoutes, type DecisionApi } from './decision-routes';
 import { buildForecastRoutes, type ForecastApi } from './forecast-routes';
 import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from './clinical-routes';
 import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
@@ -66,6 +67,8 @@ export interface ApiDeps {
   readonly finance?: FinanceApi;
   /** Tuỳ chọn: dự báo kinh doanh (/api/forecast/*). */
   readonly forecast?: ForecastApi;
+  /** Tuỳ chọn: Decision Engine + hộp thông báo (/api/decision/*, /api/notifications*). */
+  readonly decision?: DecisionApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
   readonly rateLimiter?: RateLimiter;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
@@ -88,6 +91,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.bookings ? buildBookingRoutes(deps.bookings) : []),
     ...(deps.finance ? buildFinanceRoutes(deps.finance) : []),
     ...(deps.forecast ? buildForecastRoutes(deps.forecast) : []),
+    ...(deps.decision ? buildDecisionRoutes(deps.decision) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
