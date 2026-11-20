@@ -4,3 +4,4 @@ kc-import/
 kc-h2/
 __pycache__/
 *.pyc
+training-passwords.txt

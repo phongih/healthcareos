@@ -58,6 +58,8 @@ npm run typecheck
 npm run build      # ra dist/index.html, dist/app-<hash>.js, dist/app-<hash>.css
 ```
 - Caddy phục vụ `deploy/staging/web-dist` (mount chỉ đọc vào `/srv/hcos-web`) tại `/app/`.
+- Khi cập nhật `web-dist`, **xoá nội dung bên trong rồi chép vào** (`find web-dist -mindepth 1 -delete && cp -r apps/web/dist/. web-dist/`). Nếu xoá cả thư mục rồi tạo lại, container Caddy vẫn giữ bind mount tới thư mục cũ và tiếp tục phục vụ bản cũ.
+- Biến `HCOS_ENV_LABEL` lúc build: nếu có giá trị, web hiện một dải cảnh báo ở đầu trang (dùng cho môi trường thực tập, xem `deploy/staging/TRAINING.md`). Nếu để trống thì không hiện.
 - Mọi đường dẫn con đều fallback về `index.html`.
 - Realm template thêm redirect `https://smart.id.vn/app/callback` và post-logout `https://smart.id.vn/app/` cho client `hcos-web`.
 - Realm đang chạy phải được cập nhật bằng kcadm (xem runbook staging).

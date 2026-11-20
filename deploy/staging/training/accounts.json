@@ -1,0 +1,15 @@
+{
+  "_comment": "STAGING / THỰC TẬP. Tài khoản theo vai trò thật, dữ liệu giả. id = user_id trong iam.users = id (sub) trong Keycloak. Không chứa mật khẩu.",
+  "tenantId": "00000000-0000-4000-8000-0000000000a1",
+  "organizationId": "00000000-0000-4000-8000-0000000000b1",
+  "accounts": [
+    { "username": "tt.letan1",    "id": "00000000-0000-4000-8000-0000000000d1", "displayName": "Nguyễn Thị Lan (Lễ tân)",      "roles": ["clinic_staff"],                   "realmRole": "clinic_staff" },
+    { "username": "tt.letan2",    "id": "00000000-0000-4000-8000-0000000000d2", "displayName": "Trần Văn Hùng (Lễ tân)",       "roles": ["clinic_staff"],                   "realmRole": "clinic_staff" },
+    { "username": "tt.bacsi1",    "id": "00000000-0000-4000-8000-0000000000d3", "displayName": "BS. Lê Minh Quân",             "roles": ["doctor"],                         "realmRole": "doctor" },
+    { "username": "tt.bacsi2",    "id": "00000000-0000-4000-8000-0000000000d4", "displayName": "BS. Phạm Thu Hà",              "roles": ["doctor"],                         "realmRole": "doctor" },
+    { "username": "tt.dieuduong1","id": "00000000-0000-4000-8000-0000000000d5", "displayName": "ĐD. Võ Thị Mai (Điều dưỡng)",  "roles": ["clinic_staff"],                   "realmRole": "clinic_staff", "policy": "nurse" },
+    { "username": "tt.duocsi1",   "id": "00000000-0000-4000-8000-0000000000d6", "displayName": "DS. Hoàng Đức Anh (Dược sĩ)",  "roles": ["pharmacist"],                     "realmRole": "clinic_staff" },
+    { "username": "tt.thukho1",   "id": "00000000-0000-4000-8000-0000000000d7", "displayName": "DS. Đặng Ngọc Bích (Thủ kho)", "roles": ["pharmacy_admin"],                 "realmRole": "clinic_staff" },
+    { "username": "tt.quanly1",   "id": "00000000-0000-4000-8000-0000000000d8", "displayName": "Bùi Quốc Toàn (Quản lý)",      "roles": ["clinic_admin", "tenant_admin"],   "realmRole": "clinic_admin" }
+  ]
+}
