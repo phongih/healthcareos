@@ -28,7 +28,7 @@ python3 training/accounts.py keycloak "$PW" | docker compose --env-file secrets.
   K=/opt/keycloak/bin/kcadm.sh
   $K config credentials --server http://127.0.0.1:8081/auth --realm master --user admin --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" >/dev/null &&
   $K create partialImport -r hcos -o -f -' \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"   thêm {d.get(\"added\",0)}, đã có (bỏ qua) {d.get(\"skipped\",0)}")'
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print("   thêm %s, đã có (bỏ qua) %s" % (d.get("added", 0), d.get("skipped", 0)))'
 
 echo "== 3/4 Dữ liệu giả qua API thật (role hcos_api, RLS + audit như người dùng thật)"
 "${NODE_RUN[@]}" --env-file hcos.env -e TT_PATIENTS="${TT_PATIENTS:-40}" -v "$REPO":/w -w /w node:22 \
