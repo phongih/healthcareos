@@ -22,6 +22,7 @@ import type { ReadinessProbe } from '../../../../packages/security/src/pg-readin
 import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from './clinical-routes';
 import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
 import { buildPharmacyRoutes, type PharmacyApi } from './pharmacy-routes';
+import { buildPrescriptionRoutes, type PrescriptionApi } from './prescription-routes';
 import { buildRegistryRoutes, type RegistryApi } from './registry-routes';
 import {
   FHIR_JSON,
@@ -47,6 +48,8 @@ export interface ApiDeps {
   readonly accessPolicies?: AccessPolicyApi;
   /** Tuỳ chọn: bật các route dược (/api/pharmacy/*, /fhir/Medication/:id). */
   readonly pharmacy?: PharmacyApi;
+  /** Tuỳ chọn: bật các route đơn thuốc (/api/prescriptions*). */
+  readonly prescriptions?: PrescriptionApi;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
   readonly readiness?: ReadinessProbe;
   readonly logger?: ApiLogger;
@@ -62,6 +65,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.registry ? buildRegistryRoutes(deps.registry) : []),
     ...(deps.accessPolicies ? buildAccessPolicyRoutes(deps.accessPolicies) : []),
     ...(deps.pharmacy ? buildPharmacyRoutes(deps.pharmacy) : []),
+    ...(deps.prescriptions ? buildPrescriptionRoutes(deps.prescriptions) : []),
   ];
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
   const logger: ApiLogger = deps.logger ?? { error: (m, meta) => console.error(m, JSON.stringify(meta)) };

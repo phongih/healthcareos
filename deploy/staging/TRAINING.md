@@ -33,7 +33,10 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 ## Dữ liệu có sẵn
 - 40 bệnh nhân (`TT00001`–`TT00040`), khoảng 80% có CCCD.
 - Đợt khám ngoại trú trong 30 ngày gần nhất, đã đóng, có sinh hiệu, chẩn đoán ICD-10 và thuốc đã cấp phát.
-- **8 đợt khám đang mở hôm nay** để tập, ở các bệnh nhân `TT00005`, `TT00010`, `TT00015`, `TT00020`, `TT00025`, `TT00030`, `TT00035`, `TT00040`. Các đợt này mới có sinh hiệu, chưa có chẩn đoán và chưa cấp thuốc.
+- **8 đợt khám đang mở hôm nay** để tập, ở các bệnh nhân `TT00005`, `TT00010`, `TT00015`, `TT00020`, `TT00025`, `TT00030`, `TT00035`, `TT00040`.
+  - Năm đợt `TT00005`–`TT00025` mới có sinh hiệu: để bác sĩ tập chẩn đoán và kê đơn.
+  - Ba đợt `TT00030`, `TT00035`, `TT00040` đã có **đơn chờ cấp**: để dược sĩ tập cấp theo đơn.
+- Các đợt khám đã đóng đều có đơn thuốc đã cấp đủ.
 - 14 thuốc thông dụng; hai kho là "Kho tổng" và "Quầy cấp phát thực tập".
 - Ở quầy, mỗi thuốc có 1 lô cận hạn (20–75 ngày) và 1 lô hạn xa. Vì vậy cấp phát sẽ lấy lô cận hạn trước (FEFO).
 
@@ -48,17 +51,26 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 2. Thử tìm bệnh nhân theo CCCD: hệ thống từ chối, đúng như policy.
 3. Vào đợt khám đang mở, ghi nhiệt độ và SpO₂.
 
-**Bác sĩ** (`tt.bacsi1`)
+**Bác sĩ** (`tt.bacsi1`, `tt.bacsi2`)
 1. Mở đợt khám đang mở của `TT00010`, xem các sinh hiệu điều dưỡng đã ghi.
+   Chỉ bác sĩ phụ trách mới kê đơn được; nếu không thấy nút "+ Kê đơn" thì thử bằng tài khoản bác sĩ còn lại.
 2. Thêm chẩn đoán, ví dụ `J06.9` (Nhiễm trùng hô hấp trên cấp).
-3. Báo dược sĩ cấp thuốc trước, rồi mới đóng đợt khám.
-4. Mở một bệnh nhân bất kỳ, tạo một đợt khám mới.
+3. Bấm **+ Kê đơn** và kê 2 thuốc, ví dụ:
+   - Paracetamol 500, 1 viên × 2 lần/ngày × 5 ngày: số lượng tự tính ra 10;
+   - Loratadin 10, 1 viên × 1 lần/ngày × 7 ngày.
+   Thêm lời dặn rồi lưu.
+4. Kê thêm một đơn sai rồi bấm **Huỷ đơn**. Chỉ huỷ được khi đơn chưa cấp gì.
+5. Đợi dược sĩ cấp xong (đơn chuyển sang "Đã cấp đủ"), rồi **Kết thúc đợt khám**.
+6. Mở một bệnh nhân bất kỳ, tạo một đợt khám mới.
 
 **Dược sĩ** (`tt.duocsi1`)
 1. Chọn "Quầy cấp phát thực tập", xem tồn theo lô. Để ý lô cận hạn.
-2. Cấp `Paracetamol 500` × 10 cho đợt khám của `TT00010` (tìm theo MRN). Kiểm tra lô cận hạn bị trừ trước.
-3. Bấm cấp phát hai lần liền với cùng nội dung. Kho chỉ bị trừ một lần.
-4. Cấp vượt số tồn để xem thông báo thiếu hàng.
+2. Ở thẻ **Đơn chờ cấp**, cấp đơn của `TT00030`.
+   - Cấp một phần trước, rồi cấp phần còn lại.
+   - Xem đơn biến khỏi hàng đợi khi đã cấp đủ, và lô cận hạn bị trừ trước.
+3. Thử nhập số lượng lớn hơn số còn lại: hệ thống không cho.
+4. Cấp đơn mà bác sĩ vừa kê ở bài tập của bác sĩ. Bấm **Tải lại** nếu chưa thấy đơn.
+5. Ở thẻ "Cấp phát theo đợt khám" (cấp ngoài đơn), bấm cấp hai lần liền với cùng nội dung: kho chỉ bị trừ một lần.
 
 **Thủ kho** (`tt.thukho1`)
 1. Nhập một lô mới vào "Kho tổng" với số lô `TT-…`.

@@ -920,9 +920,10 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   patients_person_org_uk: 'PERSON_ALREADY_REGISTERED',
   patients_pkey: 'ID_COLLISION',
   conditions_encounter_code_uk: 'DUPLICATE_CONDITION',
+  prescription_items_medication_uk: 'DUPLICATE_MEDICATION',
 };
 
-function translatePgError(e: unknown): never {
+export function translatePgError(e: unknown): never {
   const err = e as { code?: string; constraint?: string };
   if (err && typeof err === 'object') {
     if (err.code === '23505') {
@@ -1029,9 +1030,9 @@ export const mapIdentifier = (r: any): Identifier => ({
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 export class PgClinicalRepository implements ClinicalRepository {
-  constructor(private readonly db: TenantScopedDb) {}
+  constructor(protected readonly db: TenantScopedDb) {}
 
-  private get t(): string {
+  protected get t(): string {
     return this.db.tenantId;
   }
 

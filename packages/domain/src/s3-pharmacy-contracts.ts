@@ -99,6 +99,8 @@ export interface StockMovement extends TenantScoped {
   readonly quantity: number;
   readonly movementType: StockMovementType;
   readonly encounterId?: EncounterId;
+  /** Dòng đơn thuốc được cấp (chỉ với movement dispense theo đơn). */
+  readonly prescriptionItemId?: string;
   readonly reason?: string;
   readonly performedBy?: UserId;
   readonly occurredAt: ISODateTime;
@@ -120,6 +122,10 @@ export interface FefoAllocationPlan {
   readonly allocatedTotal: number;
   readonly items: readonly FefoAllocationItem[];
   readonly isFullyAllocated: boolean;
+  /** Có khi cấp theo dòng đơn thuốc. */
+  readonly prescriptionItemId?: string;
+  /** Trạng thái đơn sau lần cấp này (completed khi mọi dòng đã đủ). */
+  readonly prescriptionStatus?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -99,6 +99,20 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'prescription:write': {
+    basePermission: 'prescription:write',
+    description: 'Kê đơn / huỷ đơn thuốc (bác sĩ phụ trách đợt khám)',
+    criteria: ['encounterClass'],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'prescription:read': {
+    basePermission: 'prescription:read',
+    description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
 
   // ---- Person Registry ----------------------------------------------------
   'person:read': {

@@ -15,6 +15,7 @@ import { loadConfig } from './config';
 import { createApiServer } from './http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from './iam/access-policy.service';
 import { PgPharmacyUnitOfWork, PharmacyInventoryService } from './pharmacy/inventory.service';
+import { PgPrescriptionUnitOfWork, PrescriptionService } from './clinical/prescription.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
 
 export interface RunningApp {
@@ -57,6 +58,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       registry: new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit }),
       accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
       pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
+      prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),
