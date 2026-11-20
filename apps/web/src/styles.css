@@ -242,3 +242,23 @@ svg.bars { width: 100%; max-width: 680px; height: auto; color: var(--ink); margi
 svg.bars .bar { fill: var(--brand); }
 svg.bars .bar.neg { fill: var(--danger); }
 details summary { cursor: pointer; color: var(--brand); margin: 6px 0; }
+/* ---- Dự báo ---- */
+.scroll-x { overflow-x: auto; }
+table.heat td, table.heat th { text-align: center; white-space: nowrap; }
+table.heat td small { color: var(--muted); font-size: 11px; }
+td.h-ok { background: #ecfdf5; }
+td.h-busy { background: #fef3c7; }
+td.h-overload { background: #fee2e2; font-weight: 700; }
+td.h-unknown { background: #f3f4f6; }
+.wdbars { display: flex; gap: 10px; align-items: flex-end; height: 110px; margin: 6px 0 10px; }
+.wdbars > div { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; width: 40px; }
+.wdbars span { display: block; width: 22px; background: var(--brand); border-radius: 3px 3px 0 0; min-height: 2px; }
+.wdbars small { font-size: 11px; color: var(--muted); }
+.badge.inv-stockout, .badge.inv-urgent { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+.badge.inv-reorder { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.badge.inv-ok { background: var(--ok-bg); color: #14532d; border-color: var(--ok-line); }
+.badge.inv-no_demand { color: var(--muted); }
+.whatif { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.2fr); gap: 20px; align-items: start; }
+@media (max-width: 800px) { .whatif { grid-template-columns: 1fr; } }
+label.slider { display: flex; flex-direction: column; gap: 4px; }
+label.slider input { width: 100%; }

@@ -162,6 +162,27 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'forecast:read': {
+    basePermission: 'forecast:read',
+    description: 'Xem dự báo tải phòng khám, dòng tiền và mô phỏng kịch bản',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'forecast:inventory': {
+    basePermission: 'forecast:inventory',
+    description: 'Xem dự báo tồn kho thuốc và điểm đặt hàng lại',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'forecast:manage': {
+    basePermission: 'forecast:manage',
+    description: 'Sửa thông số dự báo: chi phí cố định, % chi phí biến đổi, thời gian chờ hàng, mức phục vụ, sức khám mỗi phòng',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',
