@@ -195,3 +195,7 @@ label.radio { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
   .pub-done { position: absolute; left: 0; top: 0; border: 0; }
   .pub-done button, .pub-done .muted { display: none; }
 }
+svg.qr { display: block; margin: 8px auto 0; max-width: 70vw; height: auto; image-rendering: pixelated; }
+@media print { svg.qr { width: 160px; } }
+.badge.match-strong { background: var(--ok-bg); border-color: var(--ok-line); color: #14532d; }
+.badge.match-weak { background: var(--warn-bg); border-color: var(--warn-line); color: #7a4b00; }

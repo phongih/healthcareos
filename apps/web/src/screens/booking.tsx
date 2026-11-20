@@ -7,10 +7,11 @@
  *  - Quản lý: sức chứa mỗi buổi theo phòng, đường dẫn cổng đặt lịch.
  * Server là nơi quyết định quyền; giao diện chỉ ẩn nút.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { api, ApiError } from '../lib/api';
 import { CCCD_SYSTEM, fmtDateTime, type FhirPatient } from '../lib/fhir';
+import { QrCode } from '../lib/qr-view';
 import { useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 import { PRIORITY_LABEL, useServicePoints, type ServicePoint } from './queue';
@@ -152,6 +153,8 @@ export function PublicBookingScreen({ slug }: { slug: string }) {
       <PublicShell title={o.organizationName}>
         <div className="pub-card pub-done">
           <p>Đặt lịch thành công. Mã đặt lịch của bạn:</p>
+          {/* QR chỉ chứa mã đặt lịch (không có thông tin cá nhân): máy quét ở quầy / kiosk đọc là ra màn check-in. */}
+          <QrCode text={done.code} label={`Mã QR của mã đặt lịch ${done.code}`} />
           <div className="pub-code select-all">{done.code}</div>
           <p>
             <strong>{PERIOD_LABEL[done.period]}</strong> · {fmtDay(done.visitDate)}
@@ -159,7 +162,7 @@ export function PublicBookingScreen({ slug }: { slug: string }) {
             {done.servicePointName}
           </p>
           <div className="alert warn">
-            Hãy <strong>chụp màn hình hoặc ghi lại mã này</strong> — mã chỉ hiển thị một lần. Khi đến, đưa mã cho quầy lễ tân để được cấp số thứ tự.
+            Hãy <strong>chụp màn hình (cả mã QR) hoặc ghi lại mã này</strong> — mã chỉ hiển thị một lần. Khi đến, đưa mã QR cho quầy lễ tân quét (hoặc đọc mã) để được cấp số thứ tự.
             Mang theo CCCD (và thẻ BHYT nếu có).
           </div>
           <div className="row wrap">
@@ -371,7 +374,20 @@ interface Candidate { patientId: string; mrn: string; familyName: string; givenN
 interface Found { booking: Booking; candidates: Candidate[] }
 interface IssuedTicket { displayNo: string; servicePointName: string; priorityReason: string | null; issuedAt: string }
 
-const MATCH_LABEL: Record<string, string> = { national_id: 'trùng CCCD', name_birthdate: 'trùng họ tên + ngày sinh', phone_birthdate: 'trùng SĐT + ngày sinh' };
+const MATCH_LABEL: Record<string, string> = {
+  national_id: 'trùng CCCD',
+  phone_birthdate: 'trùng SĐT + ngày sinh',
+  name_birthdate: 'trùng họ tên + ngày sinh',
+  phone: 'chỉ trùng SĐT — có thể là người nhà',
+};
+/** Mức tin cậy để tô màu / chọn sẵn: CCCD hoặc SĐT + ngày sinh là "mạnh"; chỉ tên hoặc chỉ SĐT phải kiểm tra bằng giấy tờ. */
+const strong = (c: Candidate) => c.matchedBy.includes('national_id') || c.matchedBy.includes('phone_birthdate');
+/** Chọn sẵn hồ sơ chỉ khi đúng MỘT hồ sơ khớp mạnh; không có khớp nào => tạo mới; còn lại để lễ tân tự chọn. */
+function defaultChoice(cs: Candidate[]): string {
+  const s = cs.filter(strong);
+  if (s.length === 1) return s[0]!.patientId;
+  return cs.length === 0 ? 'new' : '';
+}
 const vnToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
 function ageOf(birthDate: string): number {
   const [y, m, d] = birthDate.split('-').map(Number);
@@ -392,6 +408,7 @@ export function BookingsScreen() {
   );
   const denied = list.error instanceof ApiError && list.error.status === 403;
   const [code, setCode] = useState('');
+  const codeRef = useRef<HTMLInputElement | null>(null);
   const [found, setFound] = useState<Found | null>(null);
   const [notFound, setNotFound] = useState(false);
 
@@ -401,6 +418,7 @@ export function BookingsScreen() {
     try {
       const r = await api<Found>('GET', `/api/bookings/by-code?organization=${orgId}&code=${encodeURIComponent(code.trim())}`);
       setFound(r.data);
+      codeRef.current?.select(); // lượt quét tiếp theo ghi đè mã cũ
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) setNotFound(true);
       else throw e;
@@ -433,8 +451,11 @@ export function BookingsScreen() {
               void lookup.run();
             }}
           >
-            <Field label="Mã đặt lịch" hint="Người bệnh đọc / đưa mã (vd. ABCD-2345)">
-              <input required className="code-input" autoCapitalize="characters" autoComplete="off" maxLength={9} value={code} onChange={(e) => setCode(e.target.value)} />
+            <Field label="Mã đặt lịch" hint="Quét mã QR bằng máy quét, hoặc gõ mã người bệnh đọc (vd. ABCD-2345)">
+              <input
+                required autoFocus ref={codeRef} className="code-input" autoCapitalize="characters" autoComplete="off" spellCheck={false} maxLength={9}
+                value={code} onChange={(e) => setCode(e.target.value)}
+              />
             </Field>
             <button type="submit" disabled={lookup.busy}>Tìm</button>
           </form>
@@ -448,6 +469,7 @@ export function BookingsScreen() {
               onClose={() => {
                 setFound(null);
                 setCode('');
+                setTimeout(() => codeRef.current?.focus(), 0); // sẵn sàng cho lượt quét tiếp theo
               }}
             />
           )}
@@ -526,7 +548,7 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
   const today = vnToday();
   const age = ageOf(b.birthDate);
   const suggested = age < 6 ? 'child_under_6' : age >= 75 ? 'elderly_75' : '';
-  const [choice, setChoice] = useState<string>(found.candidates.length === 1 ? found.candidates[0]!.patientId : found.candidates.length ? '' : 'new');
+  const [choice, setChoice] = useState<string>(() => defaultChoice(found.candidates));
   const [mrn, setMrn] = useState('');
   const [reason, setReason] = useState(suggested);
   const [ticket, setTicket] = useState<IssuedTicket | null>(null);
@@ -605,7 +627,8 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
                 <input type="radio" name="pt" checked={choice === c.patientId} onChange={() => setChoice(c.patientId)} />
                 <span>
                   <strong>{c.mrn}</strong> · {c.familyName} {c.givenName} · {fmtDob(c.birthDate)}{' '}
-                  <span className="badge">{c.matchedBy.map((m) => MATCH_LABEL[m] ?? m).join(', ')}</span>
+                  <span className={`badge ${strong(c) ? 'match-strong' : 'match-weak'}`}>{c.matchedBy.map((m) => MATCH_LABEL[m] ?? m).join(', ')}</span>
+                  {c.birthDate && c.birthDate !== b.birthDate && <span className="badge priority">ngày sinh khác lịch đặt</span>}
                 </span>
               </label>
             ))}
@@ -618,6 +641,9 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
               <Field label="Mã bệnh nhân (MRN) *" hint="Duy nhất trong cơ sở">
                 <input required pattern="[A-Za-z0-9][A-Za-z0-9_.\/\-]{0,63}" value={mrn} onChange={(ev) => setMrn(ev.target.value)} />
               </Field>
+            )}
+            {found.candidates.length > 0 && !found.candidates.some(strong) && choice !== 'new' && (
+              <Notice kind="warn">Chỉ trùng tên hoặc chỉ trùng SĐT — đối chiếu CCCD / giấy tờ trước khi chọn, vì nhiều người trùng tên và ngày sinh, hoặc dùng chung SĐT với người nhà.</Notice>
             )}
             {found.candidates.length > 0 && choice === 'new' && (
               <Notice kind="warn">Có hồ sơ có thể là cùng người ở trên — kiểm tra kỹ trước khi tạo hồ sơ mới để tránh trùng.</Notice>
