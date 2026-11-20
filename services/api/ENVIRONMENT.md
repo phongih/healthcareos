@@ -13,6 +13,10 @@ Cấu hình **chỉ** qua biến môi trường lúc chạy. Image không chứa
 | `HCOS_MAX_BODY_BYTES` | không | `1048576` | 1024 – 52428800 |
 | `HCOS_DB_POOL_MAX` | không | `10` | 1–200 |
 | `HCOS_READY_TIMEOUT_MS` | không | `2000` | Timeout cứng của `/readyz` (100–30000) |
+| `HCOS_DECISION_INTERVAL_SEC` | không | `300` | Chu kỳ chạy Decision Engine (giây); `0` = tắt, ≥ 60 |
+| `HCOS_INTEGRATION_KEY` | không | — | Khoá AES-256 (base64 32 byte, `openssl rand -base64 32`) mã hoá URL / bí mật kết nối tích hợp. Không đặt ⇒ tắt tích hợp. **Sao lưu riêng**: mất khoá ⇒ phải nhập lại URL các kết nối |
+| `HCOS_PUBLIC_BASE_URL` | không | — | Địa chỉ https công khai (vd `https://smart.id.vn`) để thẻ Teams có nút "Mở trong HealthcareOS" |
+| `HCOS_INTEGRATION_DISPATCH_SEC` | không | `15` | Chu kỳ giao webhook (giây); `0` = tắt, ≥ 5 |
 
 Tạo login-role cho ứng dụng (chạy bởi DBA, không nằm trong migration vì chứa mật khẩu):
 

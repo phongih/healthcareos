@@ -13,6 +13,10 @@
  *   HCOS_DB_POOL_MAX    mặc định 10
  *   HCOS_READY_TIMEOUT_MS  timeout của /readyz, mặc định 2000
  *   HCOS_DECISION_INTERVAL_SEC  chu kỳ chạy Decision Engine (giây), mặc định 300; 0 = tắt bộ lập lịch (vẫn bấm "Chạy ngay" được)
+ *   HCOS_INTEGRATION_KEY  khoá AES-256 (base64, đúng 32 byte) để mã hoá URL / bí mật webhook khi lưu. Không đặt => tắt tính năng tích hợp
+ *                         (API vẫn chạy). Tạo: openssl rand -base64 32. Mất khoá => phải nhập lại URL các kết nối.
+ *   HCOS_PUBLIC_BASE_URL  vd https://smart.id.vn — để thẻ Teams có nút "Mở trong HealthcareOS"; bắt buộc https
+ *   HCOS_INTEGRATION_DISPATCH_SEC  chu kỳ giao webhook (giây), mặc định 15; 0 = tắt
  */
 import { isIP } from 'node:net';
 export interface AppConfig {
@@ -28,6 +32,10 @@ export interface AppConfig {
   readonly readyTimeoutMs: number;
   /** Chu kỳ chạy Decision Engine (giây); 0 = tắt bộ lập lịch. */
   readonly decisionIntervalSec: number;
+  /** Khoá mã hoá bí mật tích hợp (32 byte); null = tắt tích hợp. */
+  readonly integrationKey: Buffer | null;
+  readonly publicBaseUrl: string | null;
+  readonly integrationDispatchSec: number;
 }
 
 export class ConfigError extends Error {
@@ -86,6 +94,25 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     }
   }
 
+  let integrationKey: Buffer | null = null;
+  const keyRaw = env['HCOS_INTEGRATION_KEY']?.trim();
+  if (keyRaw) {
+    const k = /^[A-Za-z0-9+/]+={0,2}$/.test(keyRaw) ? Buffer.from(keyRaw, 'base64') : Buffer.alloc(0);
+    if (k.length !== 32) problems.push('HCOS_INTEGRATION_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)');
+    else integrationKey = k;
+  }
+  let publicBaseUrl: string | null = null;
+  const baseRaw = env['HCOS_PUBLIC_BASE_URL']?.trim();
+  if (baseRaw) {
+    try {
+      const u = new URL(baseRaw);
+      if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) problems.push('HCOS_PUBLIC_BASE_URL must be a plain https URL');
+      else publicBaseUrl = u.origin + u.pathname.replace(/\/+$/, '');
+    } catch {
+      problems.push('HCOS_PUBLIC_BASE_URL is not a valid URL');
+    }
+  }
+
   const cfg: AppConfig = {
     databaseUrl,
     issuer,
@@ -101,6 +128,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       if (v > 0 && v < 60) {
         problems.push('HCOS_DECISION_INTERVAL_SEC must be 0 (off) or at least 60');
       }
+      return v;
+    })(),
+    integrationKey,
+    publicBaseUrl,
+    integrationDispatchSec: (() => {
+      const v = int('HCOS_INTEGRATION_DISPATCH_SEC', 15, 0, 3600);
+      if (v > 0 && v < 5) problems.push('HCOS_INTEGRATION_DISPATCH_SEC must be 0 (off) or at least 5');
       return v;
     })(),
   };

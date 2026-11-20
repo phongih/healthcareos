@@ -204,6 +204,20 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'integration:read': {
+    basePermission: 'integration:read',
+    description: 'Xem kết nối tích hợp (Teams, webhook), lịch sử giao và nhật ký gửi',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'integration:manage': {
+    basePermission: 'integration:manage',
+    description: 'Tạo / sửa / tạm dừng / xoá kết nối tích hợp, gửi thử và gửi lại',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',

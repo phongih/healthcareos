@@ -45,6 +45,9 @@ HCOS_JWT_AUDIENCE=hcos-api
 HCOS_JWKS_URL=https://smart.id.vn/auth/realms/hcos/protocol/openid-connect/certs
 HCOS_PORT=8080
 HCOS_HOST=127.0.0.1
+# HCOS-F12: khoá mã hoá URL / bí mật tích hợp (mất khoá => phải nhập lại URL các kết nối) + địa chỉ công khai cho nút trên thẻ Teams.
+HCOS_INTEGRATION_KEY=$(openssl rand -base64 32)
+HCOS_PUBLIC_BASE_URL=https://smart.id.vn
 ENV
 echo "OK. Tiếp theo: docker compose --env-file secrets.env up -d"
 echo "Realm chỉ được import khi DB Keycloak chưa có realm 'hcos'. Sau khi import xong: rm -rf kc-import (chứa mật khẩu demo)."
