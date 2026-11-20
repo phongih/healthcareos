@@ -89,8 +89,16 @@ Lookup / cancel dùng POST để SĐT không nằm trong URL và log. Lý do l�
 - **Lưu trữ:** chưa có job xoá / ẩn danh lịch hẹn. Đề xuất: lịch `cancelled` / `no_show` / chưa check-in quá hạn ẩn danh hoá sau 90 ngày; lịch đã check-in giữ theo hồ sơ khám. Chưa làm ở bản này.
 - `no_show`: DB đã có trạng thái nhưng chưa có thao tác đánh dấu (sẽ làm cùng job cuối ngày).
 
-## 7. Chưa làm / hướng tiếp
-- Mã QR cho mã đặt lịch (bundle web chưa có thư viện QR; hiện hiển thị chữ lớn + sao chép).
+## 7. Bổ sung (PR sau F7): mã QR + khớp hồ sơ theo độ tin cậy
+- **Mã QR** trên màn xác nhận đặt lịch, ngay trên mã chữ. QR **chỉ chứa mã đặt lịch** (không có thông tin cá nhân).
+  - Bộ mã hoá QR tự viết (`apps/web/src/lib/qr.ts`, chế độ byte UTF-8, phiên bản 1–40, mức L/M/Q/H), vẽ bằng SVG nên hợp CSP và không cần thư viện ngoài. Đã giải mã kiểm chứng bằng OpenCV; test giữ băm ma trận tham chiếu (`tests/web/qr.test.ts`).
+  - Ô "Mã đặt lịch" ở tab Lịch hẹn tự focus và nhận máy quét kiểu bàn phím (gõ mã + Enter). Sau khi tìm thấy, mã được bôi chọn để lượt quét kế tiếp ghi đè.
+  - **Bảng ký tự mã mới không có nguyên âm, D, W** (`BCFGHJKMNPQRSTVXZ2-9`): máy quét gõ như bàn phím, nếu máy lễ tân đang bật Telex/VNI thì "AS", "A1", "DD", "W"… bị biến thành dấu. Không có nguyên âm thì bộ gõ không đổi gì. Mã cũ (bảng ký tự đầu) vẫn tra được.
+- **Khớp hồ sơ cũ theo độ tin cậy**: CCCD → SĐT + ngày sinh → họ tên + ngày sinh (không phân biệt dấu và thứ tự họ/tên) → chỉ SĐT (có thể là người nhà).
+  - Chỉ **chọn sẵn** khi đúng một hồ sơ khớp mạnh (CCCD hoặc SĐT + ngày sinh). Chỉ trùng tên / chỉ trùng SĐT: không chọn sẵn, hiện cảnh báo đối chiếu giấy tờ.
+  - Nhãn xanh = khớp mạnh, vàng = cần kiểm tra; thêm nhãn "ngày sinh khác lịch đặt" khi hồ sơ khớp CCCD/SĐT nhưng ngày sinh lệch.
+
+## 8. Chưa làm / hướng tiếp
 - Gửi SMS / Zalo xác nhận và nhắc lịch.
 - Kiosk tự check-in bằng mã.
 - Giới hạn tần suất dùng chung khi chạy nhiều tiến trình API (hiện trong bộ nhớ từng tiến trình).

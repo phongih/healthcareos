@@ -29,6 +29,8 @@ const TB = asTenantId(uid(2));
 const OA = asOrganizationId(uid(11));
 const U = { doc: asUserId(uid(101)), staff: asUserId(uid(103)), admin: asUserId(uid(104)) };
 const PAT_OLD = uid(1001);
+const PAT_FAMILY = uid(1002);
+const PAT_CCCD = uid(1003);
 
 // Thứ Hai 23/11/2026 11:30 giờ VN: buổi sáng hôm nay đã đóng, buổi chiều còn mở.
 const FIXED = new Date('2026-11-23T04:30:00Z');
@@ -55,6 +57,13 @@ INSERT INTO iam.memberships(tenant_id,user_id,organization_id,role) VALUES
 INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,name_key)
   VALUES ('${uid(2001)}','${TA}','An','Nguyễn Văn','1950-03-04','${nameKey('An', 'Nguyễn Văn')}');
 INSERT INTO patient.patients(patient_id,tenant_id,person_id,organization_id,mrn) VALUES ('${PAT_OLD}','${TA}','${uid(2001)}','${OA}','B0001');
+-- Người nhà dùng chung SĐT (khác tên, khác ngày sinh) và một hồ sơ có đúng CCCD nhưng tên gõ khác.
+INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,name_key,phone_key)
+  VALUES ('${uid(2002)}','${TA}','Bình','Nguyễn Thị','1952-07-07','${nameKey('Bình', 'Nguyễn Thị')}','0912345678'),
+         ('${uid(2003)}','${TA}','Anh','Nguyen Van','1950-03-04','${nameKey('Anh', 'Nguyen Van')}',NULL);
+INSERT INTO patient.patients(patient_id,tenant_id,person_id,organization_id,mrn) VALUES
+  ('${PAT_FAMILY}','${TA}','${uid(2002)}','${OA}','B0002'),('${PAT_CCCD}','${TA}','${uid(2003)}','${OA}','B0003');
+INSERT INTO patient.identifiers(tenant_id,person_id,type,system,value) VALUES ('${TA}','${uid(2003)}','national_id','https://moh.gov.vn/cccd','001050000001');
 `;
 
 const outcome = (p: Promise<unknown>) =>
@@ -176,9 +185,12 @@ run('Đặt lịch khám online / PostgreSQL', () => {
     expect(list.map((b) => b.status).sort()).toEqual(['booked', 'booked', 'booked', 'cancelled']);
     const f = (await bk.findByCode({ organizationId: OA, code: codeA }, C.staff))!;
     expect(f.booking.phone).toBe('0912345678');
-    expect(f.candidates.map((x) => [x.patientId, x.mrn, x.matchedBy.join()])).toEqual([[PAT_OLD, 'B0001', 'name_birthdate']]);
+    // Xếp theo độ tin cậy: CCCD trước (dù tên gõ khác), rồi họ tên + ngày sinh, cuối cùng chỉ trùng SĐT (người nhà).
+    expect(f.candidates.map((x) => [x.mrn, x.matchedBy.join()])).toEqual([
+      ['B0003', 'national_id'], ['B0001', 'name_birthdate'], ['B0002', 'phone'],
+    ]);
     expect(await bk.findByCode({ organizationId: OA, code: 'ZZZZ-ZZZZ' }, C.staff)).toBeNull();
-    expect((await bk.getById(f.booking.bookingId, C.staff)).candidates).toHaveLength(1);
+    expect((await bk.getById(f.booking.bookingId, C.staff)).candidates).toHaveLength(3);
     expect(await outcome(bk.getById(f.booking.bookingId, C.doc))).toBe('FORBIDDEN');
     expect(await outcome(bk.checkIn(f.booking.bookingId, { patientId: PAT_OLD }, C.staff))).toBe('INVALID_STATE:NOT_VISIT_DAY');
   });

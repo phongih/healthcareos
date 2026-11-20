@@ -33,10 +33,12 @@ describe('mã đặt lịch', () => {
   it('8 ký tự không dễ nhầm; chuẩn hoá chữ thường / dấu gạch / khoảng trắng', () => {
     for (let i = 0; i < 200; i++) {
       const c = newBookingCode();
-      expect(c).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
+      // Không nguyên âm, không D/W: bộ gõ Telex/VNI không biến đổi được khi máy quét gõ mã.
+      expect(c).toMatch(/^[BCFGHJKMNPQRSTVXZ2-9]{8}$/);
       expect(normalizeCode(formatCode(c).toLowerCase())).toBe(c);
     }
-    expect(normalizeCode(' abcd 2345 ')).toBe('ABCD2345');
+    expect(normalizeCode(' abcd 2345 ')).toBe('ABCD2345'); // mã phát theo bảng ký tự cũ vẫn tra được
+    expect(normalizeCode('ÁBCD-2345')).toBeNull();
     expect(normalizeCode('ABCD-234O')).toBeNull();
     expect(normalizeCode('ABCD-2341')).toBeNull();
     expect(normalizeCode('ABCDL345')).toBeNull();

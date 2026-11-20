@@ -81,12 +81,17 @@ export function periodOpen(date: string, period: Period, now: Date): boolean {
   return date > v.date || v.minutes < CUTOFF[period];
 }
 
-// Mã đặt lịch: 8 ký tự, bỏ các ký tự dễ nhầm (0/O, 1/I/L). Hiển thị dạng XXXX-XXXX.
-const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+// Mã đặt lịch: 8 ký tự, hiển thị dạng XXXX-XXXX.
+// Bảng ký tự KHÔNG có nguyên âm (A E I O U Y), D và W: máy quét QR ở quầy thường gõ như bàn phím, nếu máy tính lễ tân đang bật
+// bộ gõ tiếng Việt (Telex / VNI) thì chữ sau nguyên âm (s f r x j, chữ số), "dd", "w" sẽ bị biến thành dấu => sai mã.
+// Không có nguyên âm thì bộ gõ không đổi gì. Cũng bỏ các ký tự dễ nhầm (0/O, 1/I/L).
+const ALPHABET = 'BCFGHJKMNPQRSTVXZ23456789';
+/** Mã đã phát trước khi đổi bảng ký tự (HCOS-F7 bản đầu) vẫn tra được. */
+const LEGACY_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const newBookingCode = (): string => Array.from({ length: 8 }, () => ALPHABET[randomInt(ALPHABET.length)]).join('');
 export const normalizeCode = (raw: string): string | null => {
   const c = String(raw ?? '').toUpperCase().replace(/[\s-]/g, '');
-  return /^[A-HJ-NP-Z2-9]{8}$/.test(c) && [...c].every((ch) => ALPHABET.includes(ch)) ? c : null;
+  return c.length === 8 && [...c].every((ch) => LEGACY_ALPHABET.includes(ch)) ? c : null;
 };
 export const formatCode = (c: string): string => `${c.slice(0, 4)}-${c.slice(4)}`;
 const codeHash = (c: string): Buffer => createHash('sha256').update(c, 'utf8').digest();
@@ -123,13 +128,16 @@ export interface BookingView extends Booking {
   readonly servicePointCode: string;
   readonly servicePointName: string;
 }
+export type MatchKind = 'national_id' | 'phone_birthdate' | 'name_birthdate' | 'phone';
+const MATCH_ORDER: readonly MatchKind[] = ['national_id', 'phone_birthdate', 'name_birthdate', 'phone'];
 export interface PatientCandidate {
   readonly patientId: PatientId;
   readonly mrn: string;
   readonly familyName: string;
   readonly givenName: string;
   readonly birthDate: string | null;
-  readonly matchedBy: ReadonlyArray<'national_id' | 'name_birthdate' | 'phone_birthdate'>;
+  /** Theo độ tin cậy giảm dần: CCCD > SĐT + ngày sinh > họ tên + ngày sinh > chỉ SĐT (có thể là người nhà dùng chung số). */
+  readonly matchedBy: ReadonlyArray<MatchKind>;
 }
 export interface BookingPortal {
   readonly portalId: string;
@@ -292,28 +300,37 @@ export class PgBookingRepository extends PgQueueRepository {
     return r.rows.length ? this.findBooking(id) : null;
   }
 
+  /**
+   * Hồ sơ cũ có thể là cùng người, xếp theo độ tin cậy: CCCD, SĐT + ngày sinh, họ tên + ngày sinh (không phân biệt dấu,
+   * thứ tự họ/tên), chỉ SĐT. Khoá tên / SĐT dùng cùng hàm chuẩn hoá với Person Registry.
+   */
   async findCandidates(organizationId: OrganizationId, b: Booking): Promise<PatientCandidate[]> {
     const r = await this.db.query<Record<string, unknown>>(
-      `SELECT pt.patient_id, pt.mrn, ps.family_name, ps.given_name, ps.birth_date::text AS birth_date,
-              ($3::text IS NOT NULL AND EXISTS (SELECT 1 FROM patient.identifiers i WHERE i.tenant_id = ps.tenant_id AND i.person_id = ps.person_id
-                 AND i.type = 'national_id' AND i.status = 'active' AND i.value = $3)) AS by_id,
-              (ps.name_key = $4 AND ps.birth_date = $5::date) AS by_name,
-              (ps.phone_key = $6 AND ps.birth_date = $5::date) AS by_phone
-         FROM patient.patients pt JOIN patient.persons ps ON ps.tenant_id = pt.tenant_id AND ps.person_id = pt.person_id
-        WHERE pt.tenant_id = $1 AND pt.organization_id = $2 AND pt.status = 'active' AND ps.status = 'active'
-          AND ( ($3::text IS NOT NULL AND EXISTS (SELECT 1 FROM patient.identifiers i WHERE i.tenant_id = ps.tenant_id AND i.person_id = ps.person_id
-                   AND i.type = 'national_id' AND i.status = 'active' AND i.value = $3))
-             OR (ps.name_key = $4 AND ps.birth_date = $5::date)
-             OR (ps.phone_key = $6 AND ps.birth_date = $5::date) )
+      `WITH c AS (
+         SELECT pt.patient_id, pt.mrn, ps.family_name, ps.given_name, ps.birth_date,
+                ($3::text IS NOT NULL AND EXISTS (SELECT 1 FROM patient.identifiers i WHERE i.tenant_id = ps.tenant_id AND i.person_id = ps.person_id
+                   AND i.type = 'national_id' AND i.status = 'active' AND i.value = $3)) AS by_id,
+                (ps.phone_key IS NOT NULL AND ps.phone_key = $6 AND ps.birth_date = $5::date) AS by_phone_dob,
+                (ps.name_key = $4 AND ps.birth_date = $5::date) AS by_name,
+                (ps.phone_key IS NOT NULL AND ps.phone_key = $6) AS by_phone
+           FROM patient.patients pt JOIN patient.persons ps ON ps.tenant_id = pt.tenant_id AND ps.person_id = pt.person_id
+          WHERE pt.tenant_id = $1 AND pt.organization_id = $2 AND pt.status = 'active' AND ps.status = 'active')
+       SELECT patient_id, mrn, family_name, given_name, birth_date::text AS birth_date, by_id, by_phone_dob, by_name, by_phone
+         FROM c WHERE by_id OR by_phone_dob OR by_name OR by_phone
+        ORDER BY by_id DESC, by_phone_dob DESC, by_name DESC, by_phone DESC, mrn
         LIMIT 10`,
       [this.t, organizationId, b.nationalId, nameKey(b.givenName, b.familyName), b.birthDate, normalizePhone(b.phone)],
     );
     const t = (v: unknown) => v === true || v === 't';
-    return r.rows.map((x) => ({
-      patientId: x['patient_id'] as PatientId, mrn: x['mrn'] as string, familyName: x['family_name'] as string, givenName: x['given_name'] as string,
-      birthDate: (x['birth_date'] as string | null) ?? null,
-      matchedBy: [...(t(x['by_id']) ? ['national_id' as const] : []), ...(t(x['by_name']) ? ['name_birthdate' as const] : []), ...(t(x['by_phone']) ? ['phone_birthdate' as const] : [])],
-    }));
+    return r.rows.map((x) => {
+      const hit: Record<MatchKind, boolean> = {
+        national_id: t(x['by_id']), phone_birthdate: t(x['by_phone_dob']), name_birthdate: t(x['by_name']), phone: t(x['by_phone']) && !t(x['by_phone_dob']),
+      };
+      return {
+        patientId: x['patient_id'] as PatientId, mrn: x['mrn'] as string, familyName: x['family_name'] as string, givenName: x['given_name'] as string,
+        birthDate: (x['birth_date'] as string | null) ?? null, matchedBy: MATCH_ORDER.filter((k) => hit[k]),
+      };
+    });
   }
 
   async setBookingCapacity(servicePointId: string, capacity: number, expectedVersion: number): Promise<boolean> {
