@@ -31,6 +31,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web-dist:/srv/hcos-web:ro
       - caddy-data:/data
 volumes:
   caddy-data:

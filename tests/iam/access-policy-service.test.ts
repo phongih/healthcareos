@@ -14,6 +14,7 @@ import {
   type Membership,
   type MembershipId,
   type NewAuditEvent,
+  type OrganizationId,
   type Role,
   type TenantContext,
   type User,
@@ -51,6 +52,13 @@ class Repo implements AccessPolicyRepository {
   async findUserBySubject(sub: string) { return this.s.users.find((u) => u.externalSubject === sub) ?? null; }
   async listMemberships(userId: UserId) { return this.s.memberships.filter((m) => m.userId === userId); }
   async findMembership(id: MembershipId) { return this.s.memberships.find((m) => m.membershipId === id) ?? null; }
+  async listOrganizations(ids: readonly OrganizationId[]) { return ids.map((organizationId) => ({ organizationId, name: 'Phòng khám A', type: 'clinic' })); }
+  async listMembershipsByOrganization(org: OrganizationId) {
+    return this.s.memberships.filter((m) => m.organizationId === org).map((membership) => {
+      const u = this.s.users.find((x) => x.userId === membership.userId)!;
+      return { membership, user: { userId: u.userId, displayName: u.displayName, email: u.email, status: u.status } };
+    });
+  }
   async listPolicies() { return [...this.s.policies]; }
   async findPolicy(id: AccessPolicyId) { return this.s.policies.find((p) => p.policyId === id) ?? null; }
   async listPolicyVersions(id: AccessPolicyId) { return this.s.versions.filter((v) => v.policyId === id); }
@@ -164,6 +172,8 @@ describe('tạo / sửa / retire', () => {
     await expect(svc.createPolicy({ name: 'bad rules', rules: [{ action: 'patient:read', hiddenFields: ['ssn'] }] }, ctxFor(U.admin)))
       .rejects.toMatchObject({ code: 'VALIDATION', details: { path: 'rules[0].hiddenFields[0]' } });
     await expect(svc.createPolicy({ name: '!!', rules: RULES }, ctxFor(U.admin))).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(svc.createPolicy({ name: 'Điều dưỡng — che CCCD, khoa Nội & Ngoại', rules: RULES }, ctxFor(U.admin))).resolves.toMatchObject({ status: 'active' });
+    await expect(svc.createPolicy({ name: 'bad<script>', rules: RULES }, ctxFor(U.admin))).rejects.toMatchObject({ code: 'VALIDATION' });
     await create();
     await expect(create()).rejects.toMatchObject({ code: 'CONFLICT', details: { reason: 'NAME_TAKEN' } });
   });
@@ -217,5 +227,23 @@ describe('gắn policy & chống tự nới quyền', () => {
   it('membership / policy không tồn tại => NOT_FOUND', async () => {
     await expect(svc.assignPolicy(uid(999) as MembershipId, null, 1, ctxFor(U.admin))).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(svc.assignPolicy(nurseM.membershipId, uid(998) as AccessPolicyId, 1, ctxFor(U.admin))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('whoAmI / danh sách membership', () => {
+  it('whoAmI: chỉ membership còn hiệu lực, kèm tên organization; không cần quyền quản trị', async () => {
+    const me = await svc.whoAmI(ctxFor(U.nurse));
+    expect(me.user.userId).toBe(U.nurse);
+    expect(me.memberships).toMatchObject([{ role: 'clinic_staff', organization: { organizationId: ORG, name: 'Phòng khám A' } }]);
+    const ex = await svc.whoAmI(ctxFor(U.exAdmin));
+    expect(ex.memberships).toHaveLength(0);
+  });
+
+  it('listMemberships: chỉ tenant_admin; trả user kèm membership', async () => {
+    await expect(svc.listMemberships(ORG, ctxFor(U.nurse))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const items = await svc.listMemberships(ORG, ctxFor(U.admin));
+    expect(items.length).toBe(s.memberships.length);
+    expect(items.find((i) => i.membership.membershipId === nurseM.membershipId)?.user.userId).toBe(U.nurse);
+    expect(s.audit.at(-1)).toMatchObject({ action: 'iam.membership.list', organizationId: ORG, actor: { id: U.admin } });
   });
 });

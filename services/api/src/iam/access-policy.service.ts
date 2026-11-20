@@ -23,6 +23,7 @@ import {
   type Membership,
   type MembershipId,
   type NewAuditEvent,
+  type OrganizationId,
   type TenantContext,
   type TenantScopedDb,
   type User,
@@ -57,8 +58,32 @@ import {
 // ---------------------------------------------------------------------------
 // Ports
 // ---------------------------------------------------------------------------
+export interface OrganizationSummary {
+  readonly organizationId: OrganizationId;
+  readonly name: string;
+  readonly type: string;
+}
+
+export interface MembershipListItem {
+  readonly membership: Membership;
+  readonly user: { readonly userId: UserId; readonly displayName: string | null; readonly email: string | null; readonly status: string };
+}
+
+/** Ai đang đăng nhập + vai trò (từ DB) theo organization — để UI dựng menu. Không thay thế phân quyền ở server. */
+export interface WhoAmI {
+  readonly user: { readonly userId: UserId; readonly displayName: string | null; readonly email: string | null };
+  readonly memberships: ReadonlyArray<{
+    readonly membershipId: MembershipId;
+    readonly organization: OrganizationSummary;
+    readonly role: Membership['role'];
+    readonly accessPolicyId: AccessPolicyId | null;
+  }>;
+}
+
 export interface AccessPolicyRepository {
   findUserBySubject(subject: string): Promise<User | null>;
+  listOrganizations(ids: readonly OrganizationId[]): Promise<OrganizationSummary[]>;
+  listMembershipsByOrganization(organizationId: OrganizationId): Promise<MembershipListItem[]>;
   listMemberships(userId: UserId): Promise<Membership[]>;
   findMembership(id: MembershipId): Promise<Membership | null>;
   listPolicies(): Promise<AccessPolicy[]>;
@@ -106,7 +131,7 @@ interface AuditMeta {
   readonly resourceId?: string;
 }
 
-const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._()\-/]{2,99}$/u;
+const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._()\-/,&+–—]{2,99}$/u;
 
 const rulesHash = (rules: readonly AccessRule[]): string =>
   createHash('sha256').update(canonicalRulesJson(rules)).digest('hex');
@@ -142,6 +167,47 @@ export class AccessPolicyService {
     this.newId = deps.newId ?? randomUUID;
   }
 
+  /**
+   * Thông tin người đang đăng nhập: membership CÒN HIỆU LỰC trong phạm vi organization của token.
+   * Chỉ để UI hiển thị menu phù hợp; mọi quyết định truy cập vẫn ở từng service. Không ghi audit (không chạm PHI).
+   */
+  async whoAmI(ctx: TenantContext = requireTenantContext()): Promise<WhoAmI> {
+    return this.uow.run(ctx, async (repo) => {
+      const user = await repo.findUserBySubject(ctx.userSubject);
+      if (!user || user.status !== 'active') throw new ClinicalError('FORBIDDEN', 'Caller is not an active user');
+      assertSameTenant(user, ctx);
+      const now = this.clock().getTime();
+      const active = (await repo.listMemberships(user.userId)).filter(
+        (m) =>
+          m.status === 'active' &&
+          Date.parse(m.validFrom) <= now &&
+          (m.validTo === null || Date.parse(m.validTo) > now) &&
+          (m.role === 'tenant_admin' || ctx.allowedOrganizationIds.includes(m.organizationId)),
+      );
+      const orgs = new Map((await repo.listOrganizations([...new Set(active.map((m) => m.organizationId))])).map((o) => [o.organizationId, o]));
+      return {
+        user: { userId: user.userId, displayName: user.displayName, email: user.email },
+        memberships: active.map((m) => ({
+          membershipId: m.membershipId,
+          organization: orgs.get(m.organizationId) ?? { organizationId: m.organizationId, name: m.organizationId, type: 'unknown' },
+          role: m.role,
+          accessPolicyId: m.accessPolicyId ?? null,
+        })),
+      };
+    });
+  }
+
+  /** Danh sách membership của một organization (để gắn policy). Chỉ tenant_admin. */
+  async listMemberships(organizationId: OrganizationId, ctx: TenantContext = requireTenantContext()): Promise<MembershipListItem[]> {
+    return this.tx(ctx, { action: 'iam.membership.list', resourceType: 'Membership' }, async (repo) => {
+      const admin = await this.requireAdmin(repo, ctx);
+      const items = await repo.listMembershipsByOrganization(organizationId);
+      for (const i of items) assertSameTenant(i.membership, ctx);
+      await repo.appendAudit(this.event(ctx, { action: 'iam.membership.list', resourceType: 'Membership' }, 'success', admin, { count: items.length }, organizationId));
+      return items;
+    });
+  }
+
   /** Kiểm định thử (không ghi). Trả luật đã chuẩn hoá. */
   validateRules(raw: unknown): AccessRule[] {
     return parseRules(raw);
@@ -173,7 +239,7 @@ export class AccessPolicyService {
     return this.tx(ctx, meta, async (repo) => {
       const admin = await this.requireAdmin(repo, ctx);
       const name = typeof input.name === 'string' ? input.name.trim() : '';
-      if (!NAME_RE.test(name)) throw new ClinicalError('VALIDATION', 'name must be 3-100 letters, digits, spaces or ._()-/');
+      if (!NAME_RE.test(name)) throw new ClinicalError('VALIDATION', 'name must be 3-100 letters, digits, spaces or ._()-/,&+–—');
       const description = parseDescription(input.description) ?? null;
       const rules = parseRules(input.rules);
       const now = this.clock().toISOString();
@@ -444,6 +510,34 @@ export class PgAccessPolicyRepository implements AccessPolicyRepository {
   async listMemberships(userId: UserId): Promise<Membership[]> {
     const r = await this.db.query(`SELECT ${MEMBERSHIP_COLS} FROM iam.memberships WHERE tenant_id = $1 AND user_id = $2`, [this.t, userId]);
     return r.rows.map(mapMembership);
+  }
+
+  async listOrganizations(ids: readonly OrganizationId[]): Promise<OrganizationSummary[]> {
+    if (ids.length === 0) return [];
+    const r = await this.db.query<{ organization_id: string; name: string; type: string }>(
+      `SELECT organization_id, name, type FROM iam.organizations WHERE tenant_id = $1 AND organization_id = ANY($2::uuid[])`,
+      [this.t, `{${ids.join(',')}}`],
+    );
+    return r.rows.map((x) => ({ organizationId: x.organization_id as OrganizationId, name: x.name, type: x.type }));
+  }
+
+  async listMembershipsByOrganization(organizationId: OrganizationId): Promise<MembershipListItem[]> {
+    const cols = MEMBERSHIP_COLS.split(',').map((c) => `m.${c.trim()}`).join(', ');
+    const r = await this.db.query(
+      `SELECT ${cols}, u.display_name AS u_display_name, u.email AS u_email, u.status AS u_status
+         FROM iam.memberships m
+         JOIN iam.users u ON u.tenant_id = m.tenant_id AND u.user_id = m.user_id
+        WHERE m.tenant_id = $1 AND m.organization_id = $2
+        ORDER BY u.display_name, m.role
+        LIMIT 500`,
+      [this.t, organizationId],
+    );
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    return r.rows.map((x: any) => ({
+      membership: mapMembership(x),
+      user: { userId: x.user_id, displayName: x.u_display_name ?? null, email: x.u_email ?? null, status: x.u_status },
+    }));
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
   async findMembership(id: MembershipId): Promise<Membership | null> {

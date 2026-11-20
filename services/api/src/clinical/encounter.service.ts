@@ -126,6 +126,8 @@ export interface ClinicalRepository {
   findAccessPolicies(ids: readonly AccessPolicyId[]): Promise<AccessPolicy[]>;
   insertEncounter(e: Encounter): Promise<void>;
   findEncounter(id: EncounterId): Promise<Encounter | null>;
+  /** Đợt khám của một patient, mới nhất trước. */
+  listEncountersByPatient(patientId: PatientId, limit: number): Promise<Encounter[]>;
   /** Cập nhật có điều kiện version; trả null nếu version không khớp / không tìm thấy. */
   updateEncounter(next: Encounter, expectedVersion: number): Promise<Encounter | null>;
   insertCondition(c: Condition): Promise<void>;
@@ -539,6 +541,61 @@ export class ClinicalEncounterService {
         ),
       );
       return { encounter: visibleEncounter, conditions: allConditions, observations: allObservations, redacted };
+    });
+  }
+
+  /**
+   * Các đợt khám của một bệnh nhân (mới nhất trước, tối đa 50). Cần quyền đọc hồ sơ tại organization của patient;
+   * từng đợt khám còn phải qua `encounter:read` — đợt nào policy không cho xem thì bị LỌC BỎ (không lộ là có tồn tại),
+   * `filtered` cho biết số bị lọc. Lý do khám bị che nếu policy che.
+   */
+  async listEncountersForPatient(
+    patientId: PatientId,
+    ctx: TenantContext = requireTenantContext(),
+  ): Promise<{ encounters: Encounter[]; filtered: number; redactedEncounterIds: string[] }> {
+    const meta: AuditMeta = { action: 'patient.encounters.list', resourceType: 'Encounter', patientId };
+    return this.tx(ctx, meta, async (repo) => {
+      const patient = await repo.findPatient(patientId);
+      if (!patient) throw new ClinicalError('NOT_FOUND', 'Patient not found');
+      assertSameTenant(patient, ctx);
+      const user = await this.activeUser(repo, ctx);
+      const isSelf = user.personId !== null && user.personId === patient.personId;
+      let principal: Principal | null = null;
+      if (!isSelf) {
+        assertOrganizationAllowed(patient.organizationId, ctx);
+        principal = await this.principalFor(repo, user, patient.organizationId);
+        this.decide(principal, 'patient:read', {});
+      }
+      const all = await repo.listEncountersByPatient(patientId, 50);
+      const out: Encounter[] = [];
+      const redacted: string[] = [];
+      let filtered = 0;
+      for (const e of all) {
+        assertSameTenant(e, ctx);
+        if (e.patientId !== patientId) continue;
+        if (!principal) {
+          out.push(e);
+          continue;
+        }
+        let d: AllowedDecision;
+        try {
+          d = this.decide(principal, 'encounter:read', {}, e);
+        } catch (err) {
+          if (err instanceof ClinicalError && err.code === 'FORBIDDEN') {
+            filtered++;
+            continue;
+          }
+          throw err;
+        }
+        if (d.hiddenFields.has('encounter.reasonText')) {
+          redacted.push(e.encounterId);
+          out.push({ ...e, reasonText: null });
+        } else out.push(e);
+      }
+      await repo.appendAudit(
+        this.event(ctx, { ...meta, organizationId: patient.organizationId }, 'success', user, { self: isSelf, count: out.length, filtered }),
+      );
+      return { encounters: out, filtered, redactedEncounterIds: redacted };
     });
   }
 
@@ -1068,6 +1125,15 @@ export class PgClinicalRepository implements ClinicalRepository {
   async findEncounter(id: EncounterId): Promise<Encounter | null> {
     const r = await this.db.query(`SELECT ${ENCOUNTER_COLS} FROM clinical.encounters WHERE tenant_id = $1 AND encounter_id = $2`, [this.t, id]);
     return r.rows[0] ? mapEncounter(r.rows[0]) : null;
+  }
+
+  async listEncountersByPatient(patientId: PatientId, limit: number): Promise<Encounter[]> {
+    const r = await this.db.query(
+      `SELECT ${ENCOUNTER_COLS} FROM clinical.encounters WHERE tenant_id = $1 AND patient_id = $2
+        ORDER BY period_start DESC, encounter_id LIMIT $3`,
+      [this.t, patientId, limit],
+    );
+    return r.rows.map(mapEncounter);
   }
 
   async updateEncounter(next: Encounter, expectedVersion: number): Promise<Encounter | null> {

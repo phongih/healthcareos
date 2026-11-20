@@ -80,6 +80,10 @@ const fake: ClinicalApi = {
     rec('closeEncounter', { id, version }, ctx); await maybeFail();
     return encounter({ status: 'finished', periodEnd: T0, version: version + 1 });
   },
+  async listEncountersForPatient(id, ctx) {
+    rec('listEncountersForPatient', id, ctx); await maybeFail();
+    return { encounters: [encounter()], filtered: 0, redactedEncounterIds: [] };
+  },
   async getEncounterChart(id, ctx): Promise<EncounterChart> {
     rec('getEncounterChart', id, ctx); await maybeFail();
     return { encounter: encounter(), conditions: [condition], observations: [observation] };

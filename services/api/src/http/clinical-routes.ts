@@ -5,6 +5,7 @@
  *   GET  /fhir/Patient/:id
  *   GET  /fhir/Patient?organization=<uuid>&(identifier=system|value | mrn=… | given=…&family=…&birthdate=…)&_count=1..20
  *   POST /fhir/Encounter                   tạo đợt khám (practitioner = người gọi, status do server)
+ *   GET  /fhir/Encounter?patient=<id>      đợt khám của bệnh nhân (mới nhất trước, ≤ 50; đợt policy không cho xem bị lọc)
  *   GET  /fhir/Encounter/:id               (ETag = W/"<version>")
  *   GET  /fhir/Encounter/:id/$everything   Bundle(Encounter + Condition + Observation)
  *   POST /fhir/Encounter/:id/$close        bắt buộc If-Match (optimistic concurrency)
@@ -44,6 +45,7 @@ import { FHIR_JSON, HttpError, PLAIN_JSON } from './http-kernel';
 export type ClinicalApi = Pick<
   ClinicalEncounterService,
   'registerPatient' | 'getPatient' | 'searchPatients' | 'createEncounter' | 'addCondition' | 'recordObservation' | 'closeEncounter' | 'getEncounterChart'
+  | 'listEncountersForPatient'
 >;
 
 export interface RouteInput {
@@ -204,6 +206,20 @@ export function buildClinicalRoutes(api: ClinicalApi): readonly Route[] {
           location: `/fhir/Encounter/${encounter.encounterId}`,
           etag: etag(encounter.version),
         });
+      },
+    },
+    {
+      method: 'GET',
+      pattern: ['fhir', 'Encounter'],
+      handler: async (input) => {
+        const q = input.url.searchParams;
+        for (const k of q.keys()) if (k !== 'patient') throw new HttpError(400, 'not-supported', `Unsupported search parameter '${k}'`);
+        const p = q.get('patient');
+        if (!p || !isUuid(p) || q.getAll('patient').length > 1) throw new HttpError(400, 'required', "Search requires a valid 'patient' parameter");
+        const r = await api.listEncountersForPatient(asPatientId(p), input.ctx);
+        const hidden = new Set(r.redactedEncounterIds);
+        const resources = r.encounters.map((e) => labelRedacted(toFhirEncounter(e), hidden.has(e.encounterId) ? ['encounter.reasonText'] : []));
+        return fhir(200, bundle('searchset', resources, hidden.size > 0 ? ['encounter.reasonText'] : []));
       },
     },
     {
