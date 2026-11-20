@@ -6,10 +6,11 @@
  */
 import { useEffect, useState } from 'react';
 
-import { api, newIdempotencyKey } from '../lib/api';
+import { api } from '../lib/api';
 import { CCCD_SYSTEM, entries, fmtDate, fmtDateTime, mrnOf, patientName, STATUS_LABEL, type Bundle, type FhirEncounter, type FhirPatient } from '../lib/fhir';
 import { useSession } from '../lib/session';
-import { Card, ErrorBox, Field, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
+import { Card, ErrorBox, Field, Notice, RedactedBadge, useAction, useIntentKey, useLoad } from '../lib/ui';
+import { PrescriptionQueue } from './prescriptions';
 
 interface Medication { medicationId: string; brandName: string; genericName?: string; strength: string; form: string; unitOfMeasure: string; isActive: boolean }
 interface Location { locationId: string; name: string; type: string; isActive: boolean }
@@ -23,14 +24,6 @@ const LOCATION_TYPES: Record<string, string> = {
   ward_cabinet: 'Tủ trực khoa',
   quarantine: 'Khu cách ly',
 };
-
-/** Khoá idempotency gắn với nội dung form: đổi nội dung => khoá mới; giữ nguyên => dùng lại khi thử lại. */
-function useIntentKey(deps: unknown[]): [string, () => void] {
-  const [key, setKey] = useState(newIdempotencyKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => setKey(newIdempotencyKey()), deps);
-  return [key, () => setKey(newIdempotencyKey())];
-}
 
 export function PharmacyScreen() {
   const { orgId, roles } = useSession();
@@ -93,6 +86,10 @@ export function PharmacyScreen() {
             </table>
           )}
         </Card>
+      )}
+
+      {loc && roles.has('pharmacist') && loc.type !== 'quarantine' && (
+        <PrescriptionQueue locationId={loc.locationId} locationName={loc.name} onDispensed={stock.reload} />
       )}
 
       {loc && meds.data && (

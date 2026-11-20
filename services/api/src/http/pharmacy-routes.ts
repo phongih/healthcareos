@@ -184,7 +184,7 @@ export function buildPharmacyRoutes(api: PharmacyApi): readonly Route[] {
             locationId: str(o, 'locationId', 36, true),
             encounterId: str(o, 'encounterId', 36, true),
             quantity: num(o, 'quantity'),
-            ...optional(o, ['reason', 500]),
+            ...optional(o, ['reason', 500], ['prescriptionItemId', 36]),
           },
           key,
           input.ctx,

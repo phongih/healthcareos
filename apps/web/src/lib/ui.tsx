@@ -1,7 +1,7 @@
 /** Thành phần giao diện dùng chung + hook gọi API có trạng thái loading/lỗi. */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { ApiError } from './api';
+import { ApiError, newIdempotencyKey } from './api';
 
 export function ErrorBox({ error }: { error: unknown }) {
   if (!error) return null;
@@ -107,3 +107,11 @@ export function useAction<A extends unknown[], R>(fn: (...a: A) => Promise<R>) {
 export const navigate = (hash: string): void => {
   location.hash = hash;
 };
+
+/** Khoá idempotency gắn với nội dung form: đổi nội dung => khoá mới; giữ nguyên => dùng lại khi thử lại. */
+export function useIntentKey(deps: unknown[]): [string, () => void] {
+  const [key, setKey] = useState(newIdempotencyKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setKey(newIdempotencyKey()), deps);
+  return [key, () => setKey(newIdempotencyKey())];
+}

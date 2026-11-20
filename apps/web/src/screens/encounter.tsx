@@ -8,6 +8,7 @@ import {
 } from '../lib/fhir';
 import { useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
+import { EncounterPrescriptions } from './prescriptions';
 
 type Resource = FhirEncounter | FhirCondition | FhirObservation;
 
@@ -22,7 +23,7 @@ const VERIFICATION: Record<string, string> = {
 const unitLabel = (u: string | undefined): string => VITALS.find((v) => v.unit === u)?.label ?? u ?? '';
 
 export function EncounterScreen({ id }: { id: string }) {
-  const { roles } = useSession();
+  const { roles, me } = useSession();
   const chart = useLoad(() => api<Bundle<Resource>>('GET', `/fhir/Encounter/${id}/$everything`).then((r) => r.data), [id]);
   const all = entries(chart.data);
   const enc = all.find((r): r is FhirEncounter => r.resourceType === 'Encounter');
@@ -123,6 +124,14 @@ export function EncounterScreen({ id }: { id: string }) {
           )}
           {open && (roles.has('doctor') || roles.has('clinic_staff')) && <AddObservation encounter={enc} onDone={chart.reload} />}
         </Card>
+      )}
+
+      {enc && (roles.has('doctor') || roles.has('pharmacist')) && (
+        <EncounterPrescriptions
+          encounterId={id}
+          open={open}
+          isPractitioner={roles.has('doctor') && idOf(enc.participant?.[0]?.individual) === me.user.userId}
+        />
       )}
     </div>
   );

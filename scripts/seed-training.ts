@@ -24,6 +24,7 @@ import { ClinicalEncounterService, PgClinicalUnitOfWork } from '../services/api/
 import { createApiHandler } from '../services/api/src/http/server';
 import { AccessPolicyService, PgAccessPolicyUnitOfWork } from '../services/api/src/iam/access-policy.service';
 import { PgPharmacyUnitOfWork, PharmacyInventoryService } from '../services/api/src/pharmacy/inventory.service';
+import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/src/clinical/prescription.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 
 // ---------------------------------------------------------------------------
@@ -70,20 +71,21 @@ const FAMILY = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Huỳnh', 'Pha
 const MALE = [['Văn', 'An'], ['Văn', 'Bình'], ['Minh', 'Châu'], ['Quốc', 'Dũng'], ['Hữu', 'Đức'], ['Thanh', 'Hải'], ['Gia', 'Huy'], ['Đức', 'Khánh'], ['Hoàng', 'Long'], ['Văn', 'Nam'], ['Minh', 'Phúc'], ['Tấn', 'Sang'], ['Văn', 'Tài'], ['Quang', 'Vinh']];
 const FEMALE = [['Thị', 'Anh'], ['Ngọc', 'Bích'], ['Thị', 'Cúc'], ['Thu', 'Dung'], ['Thị', 'Hạnh'], ['Thanh', 'Hương'], ['Thị', 'Lan'], ['Mỹ', 'Linh'], ['Thị', 'Mai'], ['Kim', 'Ngân'], ['Thị', 'Oanh'], ['Phương', 'Thảo'], ['Thị', 'Trang'], ['Bảo', 'Vy']];
 
-interface Dx { code: string; display: string; reason: string; vitals: 'fever' | 'htn' | 'normal'; meds: Array<[string, number]> }
+/** meds: [thuốc, liều mỗi lần, lần/ngày, số ngày] — số lượng = tích ba số. */
+interface Dx { code: string; display: string; reason: string; vitals: 'fever' | 'htn' | 'normal'; meds: Array<[string, number, number, number]> }
 const DX: readonly Dx[] = [
-  { code: 'J06.9', display: 'Nhiễm trùng đường hô hấp trên cấp', reason: 'Sốt, ho, sổ mũi 2 ngày', vitals: 'fever', meds: [['Paracetamol 500', 10], ['Loratadin 10', 7]] },
-  { code: 'J02.9', display: 'Viêm họng cấp', reason: 'Đau họng, nuốt vướng', vitals: 'fever', meds: [['Amoxicillin 500', 14], ['Paracetamol 500', 10]] },
-  { code: 'J20.9', display: 'Viêm phế quản cấp', reason: 'Ho đờm 5 ngày', vitals: 'fever', meds: [['Amoxicillin 500', 14], ['Salbutamol 2', 10]] },
-  { code: 'I10', display: 'Tăng huyết áp vô căn', reason: 'Tái khám huyết áp định kỳ', vitals: 'htn', meds: [['Amlodipin 5', 30]] },
-  { code: 'E11.9', display: 'Đái tháo đường type 2 không biến chứng', reason: 'Tái khám đường huyết', vitals: 'normal', meds: [['Metformin 850', 60]] },
-  { code: 'E78.5', display: 'Rối loạn lipid máu', reason: 'Kết quả mỡ máu cao', vitals: 'normal', meds: [['Atorvastatin 20', 30]] },
-  { code: 'K29.7', display: 'Viêm dạ dày', reason: 'Đau thượng vị, ợ chua', vitals: 'normal', meds: [['Omeprazol 20', 14], ['Domperidon 10', 10]] },
-  { code: 'A09', display: 'Tiêu chảy và viêm dạ dày ruột', reason: 'Tiêu chảy 3 lần/ngày', vitals: 'fever', meds: [['Oresol', 6], ['Berberin 100', 20]] },
-  { code: 'M54.5', display: 'Đau thắt lưng', reason: 'Đau lưng sau khi mang vác', vitals: 'normal', meds: [['Ibuprofen 400', 10]] },
-  { code: 'N39.0', display: 'Nhiễm trùng đường tiết niệu', reason: 'Tiểu buốt, tiểu rắt', vitals: 'fever', meds: [['Cefuroxim 500', 14]] },
-  { code: 'L30.9', display: 'Viêm da', reason: 'Ngứa, mẩn đỏ cánh tay', vitals: 'normal', meds: [['Loratadin 10', 10]] },
-  { code: 'H10.9', display: 'Viêm kết mạc', reason: 'Đỏ mắt, cộm mắt', vitals: 'normal', meds: [['Vitamin C 500', 10]] },
+  { code: 'J06.9', display: 'Nhiễm trùng đường hô hấp trên cấp', reason: 'Sốt, ho, sổ mũi 2 ngày', vitals: 'fever', meds: [['Paracetamol 500', 1, 2, 5], ['Loratadin 10', 1, 1, 7]] },
+  { code: 'J02.9', display: 'Viêm họng cấp', reason: 'Đau họng, nuốt vướng', vitals: 'fever', meds: [['Amoxicillin 500', 1, 2, 7], ['Paracetamol 500', 1, 2, 5]] },
+  { code: 'J20.9', display: 'Viêm phế quản cấp', reason: 'Ho đờm 5 ngày', vitals: 'fever', meds: [['Amoxicillin 500', 1, 2, 7], ['Salbutamol 2', 1, 2, 5]] },
+  { code: 'I10', display: 'Tăng huyết áp vô căn', reason: 'Tái khám huyết áp định kỳ', vitals: 'htn', meds: [['Amlodipin 5', 1, 1, 30]] },
+  { code: 'E11.9', display: 'Đái tháo đường type 2 không biến chứng', reason: 'Tái khám đường huyết', vitals: 'normal', meds: [['Metformin 850', 1, 2, 30]] },
+  { code: 'E78.5', display: 'Rối loạn lipid máu', reason: 'Kết quả mỡ máu cao', vitals: 'normal', meds: [['Atorvastatin 20', 1, 1, 30]] },
+  { code: 'K29.7', display: 'Viêm dạ dày', reason: 'Đau thượng vị, ợ chua', vitals: 'normal', meds: [['Omeprazol 20', 1, 2, 7], ['Domperidon 10', 1, 2, 5]] },
+  { code: 'A09', display: 'Tiêu chảy và viêm dạ dày ruột', reason: 'Tiêu chảy 3 lần/ngày', vitals: 'fever', meds: [['Oresol', 1, 2, 3], ['Berberin 100', 2, 2, 5]] },
+  { code: 'M54.5', display: 'Đau thắt lưng', reason: 'Đau lưng sau khi mang vác', vitals: 'normal', meds: [['Ibuprofen 400', 1, 2, 5]] },
+  { code: 'N39.0', display: 'Nhiễm trùng đường tiết niệu', reason: 'Tiểu buốt, tiểu rắt', vitals: 'fever', meds: [['Cefuroxim 500', 1, 2, 7]] },
+  { code: 'L30.9', display: 'Viêm da', reason: 'Ngứa, mẩn đỏ cánh tay', vitals: 'normal', meds: [['Loratadin 10', 1, 1, 10]] },
+  { code: 'H10.9', display: 'Viêm kết mạc', reason: 'Đỏ mắt, cộm mắt', vitals: 'normal', meds: [['Vitamin C 500', 1, 1, 10]] },
 ];
 
 const MEDS = [
@@ -124,6 +126,7 @@ const handler = createApiHandler({
   registry: new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit }),
   accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
   pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
+  prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
 });
 const server = createServer((req, res) => void handler(req, res));
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -255,7 +258,8 @@ async function seedClinical(medId: Map<string, string>, counterId: string): Prom
     const phone = rnd() < 0.7 ? `0120${digits(6)}` : null;
     // Số lần khám và chẩn đoán được rút trước, để chạy lại vẫn ra cùng dữ liệu dù có bỏ qua.
     const visits = Array.from({ length: rnd() < 0.35 ? 2 : 1 }, () => ({ dx: pick(DX), extra: rnd() < 0.25 ? pick(DX) : null, doc: pick(BACSI), daysAgo: int(1, 30) }));
-    const openToday = i % 5 === 0; // ~20% bệnh nhân có đợt khám đang mở hôm nay: để thực hành đóng đợt khám, cấp phát.
+    // ~20% bệnh nhân có đợt khám đang mở hôm nay để thực hành; 3 đợt trong số đó có sẵn đơn chờ cấp (seedPendingPrescriptions).
+    const openToday = i % 5 === 0;
 
     const found = (await call<{ entry?: unknown[] }>(LETAN[0]!, 'GET', `/fhir/Patient?organization=${ORG}&mrn=${mrn}&_count=1`)).data;
     if (found.entry?.length) { bump('bệnh nhân đã có (bỏ qua)'); continue; }
@@ -313,15 +317,61 @@ async function seedClinical(medId: Map<string, string>, counterId: string): Prom
         });
         bump('chẩn đoán');
       }
-      for (const [brand, qty] of v.dx.meds) {
+      // Bác sĩ kê đơn, dược sĩ cấp theo từng dòng đơn, rồi bác sĩ đóng đợt khám.
+      const rx = await prescribe(v.doc, encounterId, v.dx, medId);
+      for (const item of rx.items) {
         await call('tt.duocsi1', 'POST', '/api/pharmacy/dispenses',
-          { medicationId: medId.get(brand), locationId: counterId, encounterId, quantity: qty },
-          { 'idempotency-key': `tt-dispense-${encounterId}-${medId.get(brand)}` });
-        bump('lần cấp phát');
+          { medicationId: item.medicationId, locationId: counterId, encounterId, quantity: item.quantityPrescribed, prescriptionItemId: item.itemId },
+          { 'idempotency-key': `tt-dispense-${item.itemId}` });
+        bump('lần cấp phát theo đơn');
       }
       const cur = await call<{ meta: { versionId: string } }>(v.doc, 'GET', `/fhir/Encounter/${encounterId}`);
       await call(v.doc, 'POST', `/fhir/Encounter/${encounterId}/$close`, undefined, { 'if-match': `W/"${cur.data.meta.versionId}"` });
     }
+  }
+}
+
+interface RxItem { itemId: string; medicationId: string; quantityPrescribed: number }
+async function prescribe(doctor: string, encounterId: string, dx: Dx, medId: Map<string, string>): Promise<{ items: RxItem[] }> {
+  const r = await call<{ items: RxItem[] }>(doctor, 'POST', '/api/prescriptions', {
+    encounterId,
+    note: dx.vitals === 'htn' || dx.code === 'E11.9' || dx.code === 'E78.5' ? 'Tái khám sau 30 ngày' : 'Tái khám nếu không đỡ sau 3 ngày',
+    items: dx.meds.map(([brand, dose, perDay, days]) => ({
+      medicationId: medId.get(brand),
+      doseQuantity: dose,
+      doseUnit: MEDS.find((m) => m.brandName === brand)!.unitOfMeasure,
+      frequencyPerDay: perDay,
+      durationDays: days,
+      quantity: Math.ceil(dose * perDay * days),
+      instructions: brand === 'Omeprazol 20' ? 'uống trước ăn 30 phút' : 'uống sau ăn',
+    })),
+  });
+  bump('đơn thuốc');
+  return r.data;
+}
+
+/**
+ * Đơn chờ cấp để dược sĩ thực hành: bác sĩ phụ trách kê đơn cho một số đợt khám đang mở (nếu đợt đó chưa có đơn).
+ * Chạy được cả trên dữ liệu đã seed từ trước (chỉ thêm đơn còn thiếu).
+ */
+const PENDING_MRNS = ['TT00030', 'TT00035', 'TT00040'];
+async function seedPendingPrescriptions(medId: Map<string, string>): Promise<void> {
+  const byId = new Map(cfg.accounts.map((a) => [a.id, a.username]));
+  for (const mrn of PENDING_MRNS) {
+    const pts = (await call<{ entry?: Array<{ resource: { id: string } }> }>('tt.bacsi1', 'GET', `/fhir/Patient?organization=${ORG}&mrn=${mrn}&_count=1`)).data;
+    const patientId = pts.entry?.[0]?.resource.id;
+    if (!patientId) continue;
+    const encs = (await call<{ entry?: Array<{ resource: { id: string; status: string; reasonCode?: Array<{ text?: string }>; participant?: Array<{ individual?: { reference?: string } }> } }> }>(
+      'tt.bacsi1', 'GET', `/fhir/Encounter?patient=${patientId}`)).data.entry ?? [];
+    const open = encs.map((e) => e.resource).find((e) => e.status === 'in-progress');
+    if (!open) continue;
+    const doctor = byId.get(open.participant?.[0]?.individual?.reference?.split('/')[1] ?? '');
+    if (!doctor) continue;
+    const existing = (await call<{ prescriptions: unknown[] }>(doctor, 'GET', `/api/prescriptions?encounter=${open.id}`)).data.prescriptions;
+    if (existing.length > 0) { bump('đơn chờ cấp đã có (bỏ qua)'); continue; }
+    const dx = DX.find((d) => d.reason === open.reasonCode?.[0]?.text) ?? DX[0]!;
+    await prescribe(doctor, open.id, dx, medId);
+    bump('đơn chờ cấp');
   }
 }
 
@@ -350,6 +400,7 @@ async function seedPolicy(): Promise<void> {
 try {
   const { medId, counterId } = await seedPharmacy();
   await seedClinical(medId, counterId);
+  await seedPendingPrescriptions(medId);
   await seedPolicy();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);

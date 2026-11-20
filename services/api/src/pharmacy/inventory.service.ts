@@ -122,6 +122,20 @@ export interface DispenseMedicationInput {
   readonly quantity: number;
   readonly encounterId: string;
   readonly reason?: string;
+  /** Cấp theo một dòng đơn thuốc (HCOS-F5): thuốc và đợt khám phải khớp dòng đơn, không vượt số còn lại. */
+  readonly prescriptionItemId?: string;
+}
+
+/** Dòng đơn thuốc đã khoá FOR UPDATE, kèm trạng thái và đợt khám của đơn. */
+export interface LockedPrescriptionItem {
+  readonly itemId: string;
+  readonly prescriptionId: string;
+  readonly medicationId: string;
+  readonly quantityPrescribed: number;
+  readonly quantityDispensed: number;
+  readonly prescriptionStatus: string;
+  readonly encounterId: string;
+  readonly organizationId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +236,12 @@ export interface PharmacyRepository {
     quantityOnHand: number,
     expectedVersion: number,
   ): Promise<boolean>;
+
+  // Đơn thuốc (migration 009)
+  /** Khoá dòng đơn (và đơn) FOR UPDATE; null nếu không có. */
+  lockPrescriptionItem(itemId: string): Promise<LockedPrescriptionItem | null>;
+  /** Cộng số đã cấp; nếu mọi dòng của đơn đã đủ thì chuyển đơn sang completed. Trả trạng thái đơn sau cập nhật. */
+  recordPrescriptionDispense(itemId: string, prescriptionId: string, quantity: number): Promise<string>;
 
   // Movements Ledger
   insertStockMovement(m: StockMovement): Promise<void>;
@@ -627,6 +647,27 @@ export class PharmacyInventoryService {
       }
       if (!med.isActive) throw new PharmacyError('VALIDATION', 'Medication is inactive', { reason: 'INACTIVE_MEDICATION' });
 
+      // Cấp theo đơn: khoá dòng đơn trước khi trừ kho để hai dược sĩ cấp cùng dòng không vượt số kê.
+      let rxItem: LockedPrescriptionItem | null = null;
+      if (input.prescriptionItemId !== undefined) {
+        if (!isUuid(input.prescriptionItemId)) throw new PharmacyError('VALIDATION', 'prescriptionItemId must be a UUID');
+        rxItem = await repo.lockPrescriptionItem(input.prescriptionItemId.toLowerCase());
+        if (!rxItem) throw new PharmacyError('VALIDATION', 'Prescription item not found', { reason: 'REFERENCE_NOT_FOUND' });
+        if (rxItem.encounterId !== input.encounterId.toLowerCase() || rxItem.medicationId !== medicationId) {
+          throw new PharmacyError('VALIDATION', 'Medication / encounter do not match the prescription item', { reason: 'PRESCRIPTION_MISMATCH' });
+        }
+        if (rxItem.prescriptionStatus !== 'active') {
+          throw new PharmacyError('CONFLICT', `Prescription is ${rxItem.prescriptionStatus}`, { reason: 'PRESCRIPTION_NOT_ACTIVE' });
+        }
+        const remaining = rxItem.quantityPrescribed - rxItem.quantityDispensed;
+        if (quantity > remaining) {
+          throw new PharmacyError('CONFLICT', `Quantity exceeds what remains on the prescription (${remaining})`, {
+            reason: 'EXCEEDS_PRESCRIPTION',
+            remaining,
+          });
+        }
+      }
+
       // Khóa dòng các bản ghi tồn kho khả dụng còn hạn dùng, sắp xếp tăng dần theo expiry_date
       const candidateBatches = await repo.lockAvailableBatchesForFefo(locationId, medicationId);
 
@@ -670,6 +711,7 @@ export class PharmacyInventoryService {
           quantity: take,
           movementType: 'dispense',
           encounterId: input.encounterId.toLowerCase() as EncounterId,
+          ...(rxItem ? { prescriptionItemId: rxItem.itemId } : {}),
           reason: input.reason ?? 'Prescription fulfillment',
           performedBy: user.userId,
           occurredAt: now,
@@ -686,12 +728,15 @@ export class PharmacyInventoryService {
         remainingToAllocate -= take;
       }
 
+      const prescriptionStatus = rxItem ? await repo.recordPrescriptionDispense(rxItem.itemId, rxItem.prescriptionId, quantity) : undefined;
+
       const plan: FefoAllocationPlan = {
         medicationId,
         requestedQuantity: quantity,
         allocatedTotal: quantity - remainingToAllocate,
         items: allocatedItems,
         isFullyAllocated: remainingToAllocate === 0,
+        ...(rxItem ? { prescriptionItemId: rxItem.itemId, prescriptionStatus } : {}),
       };
       return {
         value: plan,
@@ -700,6 +745,7 @@ export class PharmacyInventoryService {
           locationId,
           encounterId: input.encounterId,
           quantity,
+          ...(rxItem ? { prescriptionId: rxItem.prescriptionId, prescriptionItemId: rxItem.itemId } : {}),
           batches: allocatedItems.map((i) => ({ batchId: i.batchId, quantity: i.allocatedQuantity })),
           ...policyAudit(decision),
         },
@@ -1329,14 +1375,55 @@ export class PgPharmacyRepository implements PharmacyRepository {
     await this.db.query(
       `INSERT INTO pharmacy.stock_movements (
          movement_id, tenant_id, source_location_id, destination_location_id,
-         batch_id, quantity, movement_type, encounter_id, reason, performed_by, occurred_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         batch_id, quantity, movement_type, encounter_id, reason, performed_by, occurred_at, prescription_item_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         m.movementId, m.tenantId, m.sourceLocationId ?? null, m.destinationLocationId ?? null,
         m.batchId, m.quantity, m.movementType, m.encounterId ?? null,
-        m.reason ?? null, m.performedBy ?? null, m.occurredAt,
+        m.reason ?? null, m.performedBy ?? null, m.occurredAt, m.prescriptionItemId ?? null,
       ],
     );
+  }
+
+  async lockPrescriptionItem(itemId: string): Promise<LockedPrescriptionItem | null> {
+    const r = await this.db.query<{
+      item_id: string; prescription_id: string; medication_id: string; quantity_prescribed: number | string;
+      quantity_dispensed: number | string; status: string; encounter_id: string; organization_id: string;
+    }>(
+      `SELECT i.item_id, i.prescription_id, i.medication_id, i.quantity_prescribed, i.quantity_dispensed,
+              p.status, p.encounter_id, p.organization_id
+         FROM clinical.prescription_items i
+         JOIN clinical.prescriptions p ON p.tenant_id = i.tenant_id AND p.prescription_id = i.prescription_id
+        WHERE i.tenant_id = platform.current_tenant_id() AND i.item_id = $1
+        FOR UPDATE OF i, p`,
+      [itemId],
+    );
+    const x = r.rows[0];
+    return x
+      ? {
+          itemId: x.item_id, prescriptionId: x.prescription_id, medicationId: x.medication_id,
+          quantityPrescribed: Number(x.quantity_prescribed), quantityDispensed: Number(x.quantity_dispensed),
+          prescriptionStatus: x.status, encounterId: x.encounter_id, organizationId: x.organization_id,
+        }
+      : null;
+  }
+
+  async recordPrescriptionDispense(itemId: string, prescriptionId: string, quantity: number): Promise<string> {
+    await this.db.query(
+      `UPDATE clinical.prescription_items SET quantity_dispensed = quantity_dispensed + $1
+        WHERE tenant_id = platform.current_tenant_id() AND item_id = $2`,
+      [quantity, itemId],
+    );
+    const r = await this.db.query<{ status: string }>(
+      `UPDATE clinical.prescriptions p SET status = 'completed'
+        WHERE p.tenant_id = platform.current_tenant_id() AND p.prescription_id = $1 AND p.status = 'active'
+          AND NOT EXISTS (SELECT 1 FROM clinical.prescription_items i
+                           WHERE i.tenant_id = p.tenant_id AND i.prescription_id = p.prescription_id
+                             AND i.quantity_dispensed < i.quantity_prescribed)
+        RETURNING p.status`,
+      [prescriptionId],
+    );
+    return r.rows[0]?.status ?? 'active';
   }
 
   async listStockMovementsByEncounter(encounterId: EncounterId): Promise<StockMovement[]> {

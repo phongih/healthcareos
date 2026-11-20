@@ -60,12 +60,13 @@ export function mapError(e: unknown): MappedError {
   }
   if (e instanceof FhirMappingError) return { status: 422, fhirCode: 'invalid', message: e.message, headers: {} };
   if (e instanceof ClinicalError) {
+    const reason = typeof e.details?.['reason'] === 'string' ? { detail: e.details['reason'] as string } : {};
     switch (e.code) {
       case 'NOT_FOUND': return { status: 404, fhirCode: 'not-found', message: e.message, headers: {} };
       case 'FORBIDDEN': return { status: 403, fhirCode: 'forbidden', message: 'Access denied', headers: {} };
-      case 'CONFLICT': return { status: 409, fhirCode: 'conflict', message: e.message, headers: {} };
-      case 'INVALID_STATE': return { status: 409, fhirCode: 'conflict', message: e.message, headers: {} };
-      case 'VALIDATION': return { status: 422, fhirCode: 'invalid', message: e.message, headers: {} };
+      case 'CONFLICT': return { status: 409, fhirCode: 'conflict', message: e.message, ...reason, headers: {} };
+      case 'INVALID_STATE': return { status: 409, fhirCode: 'conflict', message: e.message, ...reason, headers: {} };
+      case 'VALIDATION': return { status: 422, fhirCode: 'invalid', message: e.message, ...reason, headers: {} };
     }
   }
   if (e instanceof PharmacyError) {
