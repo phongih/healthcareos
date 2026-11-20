@@ -10,6 +10,9 @@ import { EncounterScreen } from './screens/encounter';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
 
+declare const __HCOS_ENV_LABEL__: string;
+const ENV_LABEL = __HCOS_ENV_LABEL__;
+
 type Route =
   | { name: 'patients' }
   | { name: 'patient'; id: string }
@@ -60,6 +63,11 @@ function Shell({ me }: { me: Me }) {
 
   return (
     <SessionContext.Provider value={session}>
+      {ENV_LABEL && (
+        <div className="env-banner" role="alert">
+          {ENV_LABEL}
+        </div>
+      )}
       <header className="topbar">
         <span className="brand">HealthcareOS</span>
         <nav>

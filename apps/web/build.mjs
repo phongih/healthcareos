@@ -18,7 +18,11 @@ async function once() {
     target: ['es2022'],
     jsx: 'automatic',
     write: false,
-    define: { 'process.env.NODE_ENV': JSON.stringify(watch ? 'development' : 'production') },
+    define: {
+      'process.env.NODE_ENV': JSON.stringify(watch ? 'development' : 'production'),
+      // Dải cảnh báo môi trường (vd. thực tập). Rỗng = không hiện. Đặt lúc build: HCOS_ENV_LABEL="..." npm run build
+      __HCOS_ENV_LABEL__: JSON.stringify((process.env.HCOS_ENV_LABEL ?? '').slice(0, 200)),
+    },
     legalComments: 'none',
   });
   const js = r.outputFiles[0].contents;

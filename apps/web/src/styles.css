@@ -93,3 +93,13 @@ ul.list li { margin: 4px 0; }
   .topbar { flex-wrap: wrap; }
   dl.kv { grid-template-columns: 110px 1fr; }
 }
+
+.env-banner {
+  background: #b45309;
+  color: #fff;
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 12px;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
