@@ -69,4 +69,7 @@ export const can = {
   reports: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   forecast: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin', 'pharmacy_admin'].some((x) => r.has(x as Role)),
   bookings: (r: ReadonlySet<Role>) => ['clinic_staff', 'clinic_admin', 'tenant_admin'].some((x) => r.has(x as Role)),
+  decision: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
+  notifications: (r: ReadonlySet<Role>) =>
+    ['doctor', 'pharmacist', 'clinic_staff', 'cashier', 'clinic_admin', 'pharmacy_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
 };

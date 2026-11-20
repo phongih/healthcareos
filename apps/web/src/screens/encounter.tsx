@@ -1,5 +1,10 @@
 /** Bác sĩ / điều dưỡng: xem bệnh án một đợt khám, ghi chẩn đoán ICD-10, ghi chỉ số, đóng đợt khám. */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+
+import { buildIndex } from '../lib/ai/fuzzy';
+import { ICD10_COMMON, type IcdEntry } from '../lib/ai/icd10';
+import { FuzzyPicker } from '../lib/ai/picker';
+import { normalizeSymptoms } from '../lib/ai/symptoms';
 
 import { api } from '../lib/api';
 import {
@@ -152,14 +157,33 @@ function AddCondition({ encounter, onDone }: { encounter: FhirEncounter; onDone:
     setDisplay('');
     onDone();
   });
+  const pick = (x: IcdEntry) => {
+    setCode(x.code);
+    setDisplay(x.name);
+  };
   return (
     <form
-      className="row wrap sub"
+      className="sub stack"
       onSubmit={(e) => {
         e.preventDefault();
         void save.run();
       }}
     >
+      <div className="row wrap">
+        <FuzzyPicker
+          index={ICD_INDEX}
+          label="Tìm mã ICD-10 (gõ không dấu, viết tắt, tên thường gọi)"
+          placeholder="vd. viem hong, tha, dau bao tu, j06…"
+          render={(x) => (
+            <>
+              <strong className="mono">{x.code}</strong> {x.name}
+            </>
+          )}
+          onPick={pick}
+        />
+      </div>
+      <SymptomAssist onPick={pick} />
+      <div className="row wrap">
       <Field label="Mã ICD-10">
         <input required pattern="[A-Za-z][0-9][0-9A-Za-z](\.[0-9A-Za-z]{1,4})?" placeholder="J06.9" value={code} onChange={(e) => setCode(e.target.value)} />
       </Field>
@@ -169,8 +193,61 @@ function AddCondition({ encounter, onDone }: { encounter: FhirEncounter; onDone:
       <button type="submit" disabled={save.busy}>
         Thêm chẩn đoán
       </button>
+      </div>
       <ErrorBox error={save.error} />
     </form>
+  );
+}
+
+const ICD_INDEX = buildIndex(ICD10_COMMON, (x) => x);
+const ICD_BY_CODE = new Map(ICD10_COMMON.map((x) => [x.code, x]));
+
+/**
+ * Native AI cục bộ: bác sĩ gõ nhanh triệu chứng (tự do, không dấu cũng được) => nhận dạng triệu chứng, thời gian, phủ định,
+ * dấu hiệu cần chú ý, và gợi ý mã. Ghi chú KHÔNG được lưu và không gửi đi đâu; bấm một mã chỉ điền vào ô, bác sĩ vẫn phải bấm "Thêm".
+ */
+function SymptomAssist({ onPick }: { onPick: (x: IcdEntry) => void }) {
+  const [text, setText] = useState('');
+  const found = useMemo(() => normalizeSymptoms(text), [text]);
+  const present = found.filter((f) => !f.negated);
+  const absent = found.filter((f) => f.negated);
+  const codes = [...new Set(present.flatMap((f) => f.codes))].map((c) => ICD_BY_CODE.get(c)).filter((x): x is IcdEntry => !!x);
+  return (
+    <div className="symptom-assist">
+      <Field label="Ghi nhanh triệu chứng để gợi ý mã (không lưu, xử lý ngay trên máy)">
+        <textarea rows={2} maxLength={1000} placeholder="vd. sot cao 39 do 3 ngay, ho khan, ko kho tho" value={text} onChange={(e) => setText(e.target.value)} />
+      </Field>
+      {found.length > 0 && (
+        <div className="stack small-gap">
+          <div className="chips">
+            {present.map((f) => (
+              <span key={f.id} className={`chip${f.redFlag ? ' chip-flag' : ''}`} title={f.evidence}>
+                {f.redFlag && '⚠ '}
+                {f.label}
+                {f.value && ` · ${f.value}`}
+                {f.duration && ` · ${f.duration}`}
+              </span>
+            ))}
+            {absent.map((f) => (
+              <span key={f.id} className="chip chip-neg" title={f.evidence}>
+                không {f.label.toLowerCase()}
+              </span>
+            ))}
+          </div>
+          {present.some((f) => f.redFlag) && <Notice kind="warn">Có dấu hiệu cần chú ý — đánh giá lâm sàng ngay.</Notice>}
+          {codes.length > 0 && (
+            <div className="chips">
+              <span className="muted small">Gợi ý mã:</span>
+              {codes.map((x) => (
+                <button type="button" key={x.code} className="secondary chip-btn" onClick={() => onPick(x)}>
+                  {x.code} {x.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

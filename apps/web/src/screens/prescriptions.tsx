@@ -4,7 +4,10 @@
  *  - Dược sĩ: hàng đợi đơn chờ cấp của cơ sở; cấp từng dòng tại vị trí kho đang chọn (FEFO, có Idempotency-Key).
  * Server là nơi quyết định quyền; giao diện chỉ ẩn nút.
  */
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+
+import { buildIndex } from '../lib/ai/fuzzy';
+import { FuzzyPicker } from '../lib/ai/picker';
 
 import { api } from '../lib/api';
 import { fmtDateTime } from '../lib/fhir';
@@ -22,7 +25,7 @@ export interface RxView {
   prescriber: { userId: string; displayName: string | null };
   patient?: { patientId: string; mrn: string; familyName: string; givenName: string };
 }
-interface Medication { medicationId: string; brandName: string; strength: string; form: string; unitOfMeasure: string; isActive: boolean }
+interface Medication { medicationId: string; brandName: string; genericName?: string | null; strength: string; form: string; unitOfMeasure: string; isActive: boolean }
 
 export const RX_STATUS: Record<string, string> = {
   active: 'Chờ cấp',
@@ -157,6 +160,11 @@ function NewPrescription({ encounterId, onDone, onCancel }: { encounterId: strin
   const [lines, setLines] = useState<Line[]>([blank()]);
   const [note, setNote] = useState('');
   const medOf = (id: string) => meds.data?.find((m) => m.medicationId === id);
+  // Native AI cục bộ: tìm thuốc theo biệt dược / hoạt chất, gõ không dấu, sai chính tả, viết tắt (pcm, amox…).
+  const medIndex = useMemo(
+    () => buildIndex(meds.data ?? [], (m) => ({ name: `${m.brandName} ${m.strength}`, aliases: [m.genericName ?? '', m.form].filter(Boolean) })),
+    [meds.data],
+  );
 
   const update = (idx: number, patch: Partial<Line>) =>
     setLines((ls) =>
@@ -204,6 +212,16 @@ function NewPrescription({ encounterId, onDone, onCancel }: { encounterId: strin
       {lines.map((l, idx) => (
         <fieldset key={idx} className="rx-line row wrap">
           <legend>Thuốc {idx + 1}</legend>
+          <FuzzyPicker
+            index={medIndex}
+            label="Tìm thuốc"
+            placeholder="vd. pcm, amox, omeprazol…"
+            ariaLabel={`Tìm thuốc dòng ${idx + 1}`}
+            render={(m) => medLabel(m)}
+            onPick={(m) => {
+              if (!lines.some((x, j) => j !== idx && x.medicationId === m.medicationId)) update(idx, { medicationId: m.medicationId });
+            }}
+          />
           <Field label="Thuốc *">
             <select required value={l.medicationId} onChange={(e) => update(idx, { medicationId: e.target.value })}>
               <option value="">— chọn —</option>

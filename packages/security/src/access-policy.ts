@@ -183,6 +183,27 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'decision:read': {
+    basePermission: 'decision:read',
+    description: 'Xem Decision Engine: luật, sự kiện, nhật ký hành động, lần chạy',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'decision:manage': {
+    basePermission: 'decision:manage',
+    description: 'Tạo / sửa / tạm dừng / xoá luật, thử luật và bấm chạy Decision Engine',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'notification:read': {
+    basePermission: 'notification:read',
+    description: 'Xem và xử lý hộp thông báo theo vai trò (đánh dấu đã xử lý, áp dụng / bỏ qua gợi ý)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',

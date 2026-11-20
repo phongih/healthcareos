@@ -4,10 +4,12 @@ import { createRoot } from 'react-dom/client';
 import { api } from './lib/api';
 import { claims, initAuth, login, logout } from './lib/auth';
 import { can, organizationsOf, ROLE_LABEL, rolesAt, SessionContext, type Me, type Session } from './lib/session';
+import { NotificationBell } from './lib/notifications';
 import { ErrorBox } from './lib/ui';
 import { AdminScreen } from './screens/admin';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
+import { DecisionScreen } from './screens/decision';
 import { CaseScreen, FinanceScreen, ShiftScreen } from './screens/finance';
 import { ReportsScreen } from './screens/reports';
 import { ForecastScreen } from './screens/forecast';
@@ -28,6 +30,7 @@ type Route =
   | { name: 'finance' }
   | { name: 'reports' }
   | { name: 'forecast' }
+  | { name: 'decision' }
   | { name: 'financeCase'; id: string }
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
@@ -47,6 +50,7 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/finance')) return { name: 'finance' };
   if (hash.startsWith('#/reports')) return { name: 'reports' };
   if (hash.startsWith('#/forecast')) return { name: 'forecast' };
+  if (hash.startsWith('#/decision')) return { name: 'decision' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   return { name: 'home' };
 }
@@ -76,6 +80,7 @@ function Shell({ me }: { me: Me }) {
     can.finance(roles) && { hash: '#/finance', label: 'Thu ngân', active: route.name.startsWith('finance') },
     can.reports(roles) && { hash: '#/reports', label: 'Báo cáo', active: route.name === 'reports' },
     can.forecast(roles) && { hash: '#/forecast', label: 'Dự báo', active: route.name === 'forecast' },
+    can.decision(roles) && { hash: '#/decision', label: 'Decision Engine', active: route.name === 'decision' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -113,6 +118,7 @@ function Shell({ me }: { me: Me }) {
         ) : (
           <span className="org">{orgs[0]?.name ?? 'Chưa có cơ sở'}</span>
         )}
+        {can.notifications(roles) && <NotificationBell key={orgId} />}
         <span className="user" title={[...roles].map((r) => ROLE_LABEL[r]).join(', ')}>
           {me.user.displayName ?? me.user.email ?? 'Người dùng'}
         </span>
@@ -145,6 +151,8 @@ function Shell({ me }: { me: Me }) {
           <ReportsScreen />
         ) : route.name === 'forecast' ? (
           <ForecastScreen />
+        ) : route.name === 'decision' ? (
+          <DecisionScreen />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
         ) : route.name === 'admin' ? (
