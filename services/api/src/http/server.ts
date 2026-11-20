@@ -20,6 +20,7 @@ import {
 } from '../../../../packages/security/src/tenant-context';
 import type { ReadinessProbe } from '../../../../packages/security/src/pg-readiness';
 import { buildBookingRoutes, handlePublicBooking, RateLimiter, type BookingApi, type PublicBookingApi } from './booking-routes';
+import { buildFinanceRoutes, type FinanceApi } from './finance-routes';
 import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from './clinical-routes';
 import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
 import { buildPharmacyRoutes, type PharmacyApi } from './pharmacy-routes';
@@ -60,6 +61,8 @@ export interface ApiDeps {
   readonly bookings?: BookingApi;
   /** Tuỳ chọn: cổng đặt lịch công khai /api/public/booking/<slug>/*, KHÔNG cần đăng nhập (giới hạn tần suất theo IP). */
   readonly publicBooking?: PublicBookingApi;
+  /** Tuỳ chọn: thu ngân (/api/finance/*). */
+  readonly finance?: FinanceApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
   readonly rateLimiter?: RateLimiter;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
@@ -80,6 +83,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.prescriptions ? buildPrescriptionRoutes(deps.prescriptions) : []),
     ...(deps.queue ? buildQueueRoutes(deps.queue) : []),
     ...(deps.bookings ? buildBookingRoutes(deps.bookings) : []),
+    ...(deps.finance ? buildFinanceRoutes(deps.finance) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
   const maxBody = deps.maxBodyBytes ?? 1_048_576;

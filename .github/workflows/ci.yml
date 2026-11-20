@@ -90,7 +90,7 @@ jobs:
           npx tsx scripts/seed-training.ts
           npx tsx scripts/seed-training.ts | tee second-run.txt
           grep -q 'bệnh nhân đã có (bỏ qua) *6' second-run.txt
-          ! grep -qE '^  (bệnh nhân|lô nhập|lần cấp phát theo đơn|đơn thuốc|đơn chờ cấp|phòng khám|màn hình gọi số|số thứ tự|sức chứa đặt lịch|cổng đặt lịch|lịch hẹn online) +[0-9]+$' second-run.txt
+          ! grep -qE '^  (bệnh nhân|lô nhập|lần cấp phát theo đơn|đơn thuốc|đơn chờ cấp|phòng khám|màn hình gọi số|số thứ tự|sức chứa đặt lịch|cổng đặt lịch|lịch hẹn online|cài đặt thu ngân|bảng giá) +[0-9]+$' second-run.txt
 
   # R1: image phải build được (npm ci cần package-lock.json đã commit) và chạy bằng user không phải root.
   container:

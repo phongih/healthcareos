@@ -47,6 +47,9 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
   - Có **5 lịch hẹn mẫu** ở buổi gần nhất còn nhận lịch (SĐT giả đầu `01209`); 2 người trùng hồ sơ cũ `TT00011`, `TT00012`, 3 người mới.
   - Mã đặt lịch mẫu được in ra khi chạy `setup-training.sh` (chỉ dữ liệu giả). Quên mã thì check-in từ danh sách trong ngày.
   - Chỉ check-in được **đúng ngày khám**. Nếu lịch mẫu rơi vào ngày mai, hôm nay hãy tự đặt một lịch buổi chiều (trước 16:00) để tập.
+- **Thu ngân:** bảng giá mẫu 9 dịch vụ (khám, xét nghiệm, siêu âm, X-quang, điện tim, khí dung; **giá giả**), tạm ứng mặc định **500.000đ**.
+  - **Chưa cài tài khoản nhận chuyển khoản**: số tài khoản bịa có thể trùng tài khoản thật của người khác. Muốn tập VietQR, quản lý nhập tài khoản thật của phòng khám (hoặc chỉ xem màn hình, KHÔNG chuyển tiền thật).
+  - Mỗi người thu tiền phải **mở ca** của mình (tab Thu ngân). Điều dưỡng (có policy) không thu tiền được — đúng thiết kế.
 
 ## Bài tập theo vai trò
 **Lễ tân** (`tt.letan1`)
@@ -62,6 +65,11 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
    - Vào **Tra cứu / huỷ lịch**: thử SĐT sai (không thấy), rồi SĐT đúng.
 7. Tab **Lịch hẹn**: nhập mã vừa đặt → xem hồ sơ cũ có thể trùng → chọn hồ sơ (hoặc tạo hồ sơ mới, nhập MRN `TT9xxxx`) → **Check-in & cấp số** → **In phiếu**. Kiểm tra số mới ở tab Hàng đợi.
    - Thử **Huỷ** một lịch khác trên danh sách: số chỗ của buổi đó tăng lại trên trang đặt lịch.
+8. **Thu ngân** — tab **Thu ngân**: **Mở ca** với tiền đầu ca 1.000.000đ.
+   - Ở bước check-in lịch hẹn (bài 7), đánh dấu **Thu tạm ứng 500.000đ** (tiền mặt) → nhận cả phiếu số và **phiếu thu**; in riêng từng phiếu.
+   - Tab Thu ngân → mở hồ sơ thanh toán của người vừa check-in: thêm chi phí `KB-NOI` và `XN-CTM` × 2 (330.000đ) → hệ thống gợi ý **hoàn ứng** 170.000đ → lập phiếu chi → **Đóng hồ sơ**.
+   - Thử ghi nhầm một chi phí rồi **Gỡ** (phải nhập lý do); thử lập phiếu thẻ không có mã chuẩn chi (bị chặn); lập rồi **Huỷ** một phiếu (chỉ được khi ca còn mở).
+   - Cuối buổi: **Đóng ca**, nhập tiền đếm được trong két (thử nhập lệch 10.000đ để thấy báo thiếu/thừa).
 
 **Điều dưỡng** (`tt.dieuduong1`)
 1. Mở bệnh nhân `TT00005`. Thấy CCCD bị che (nhãn "đã che").
@@ -103,6 +111,7 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
 
 **Quản lý** (`tt.quanly1`)
 0. Tab **Hàng đợi → Cài đặt hàng đợi**: xem 2 phòng; thêm phòng `NHI` "Phòng khám Nhi"; tạo một **đường dẫn màn hình** mới rồi mở nó ở tab khác, để làm màn hình TV.
+0c. Tab **Thu ngân → Cài đặt thu ngân**: sửa giá `KB-NOI` (chi phí đã ghi trước đó không đổi); thêm dịch vụ mới; xem **Báo cáo ca thu ngân** trong ngày (tiền phải có, đếm được, chênh lệch) và danh sách phiếu từng ca.
 0b. Tab **Lịch hẹn → Cài đặt đặt lịch online**: đặt số chỗ cho phòng `NHI` (vd. 5) và xem phòng xuất hiện trên trang đặt lịch; thử **Tạm ngừng** đường dẫn rồi mở trang đặt lịch (báo tạm ngừng), sau đó **Mở lại**.
 1. Mở tab Quản trị, xem policy của điều dưỡng và lịch sử phiên bản.
 2. Sửa policy, ví dụ giới hạn điều dưỡng chỉ được ghi nhiệt độ và SpO₂, rồi đăng nhập lại bằng `tt.dieuduong1` để kiểm tra.

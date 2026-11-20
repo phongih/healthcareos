@@ -141,6 +141,27 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'finance:collect': {
+    basePermission: 'finance:collect',
+    description: 'Thu ngân: mở/đóng ca, ghi chi phí, lập / huỷ phiếu thu, phiếu chi hoàn ứng, đóng hồ sơ thanh toán',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'finance:read': {
+    basePermission: 'finance:read',
+    description: 'Xem hồ sơ thanh toán, bảng giá, báo cáo ca thu ngân',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'finance:manage': {
+    basePermission: 'finance:manage',
+    description: 'Quản lý bảng giá dịch vụ và cài đặt thu ngân (tạm ứng mặc định, tài khoản nhận chuyển khoản)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',
