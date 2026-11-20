@@ -8,6 +8,7 @@
  */
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -80,7 +81,7 @@ run('E2E: JWT (JWKS) -> main.ts -> PostgreSQL', () => {
 
   beforeAll(async () => {
     sql(`CREATE DATABASE ${DB}`, 'postgres');
-    for (const f of ['001_s0_init.sql', '002_s1_clinical_init.sql', '003_person_registry.sql']) psql(DB, ['-f', `${MIG}/${f}`]);
+    for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) psql(DB, ['-f', `${MIG}/${f}`]);
     sql(SEED);
     sql(`CREATE ROLE ${APP_ROLE} LOGIN PASSWORD '${APP_PW}' IN ROLE hcos_app`, 'postgres');
 

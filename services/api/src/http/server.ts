@@ -20,6 +20,7 @@ import {
 } from '../../../../packages/security/src/tenant-context';
 import type { ReadinessProbe } from '../../../../packages/security/src/pg-readiness';
 import { buildClinicalRoutes, matchRoute, type ClinicalApi, type Route } from './clinical-routes';
+import { buildAccessPolicyRoutes, type AccessPolicyApi } from './iam-routes';
 import { buildRegistryRoutes, type RegistryApi } from './registry-routes';
 import {
   FHIR_JSON,
@@ -41,6 +42,8 @@ export interface ApiDeps {
   readonly clinical: ClinicalApi;
   /** Tuỳ chọn: bật các route Person Registry (/api/persons*). */
   readonly registry?: RegistryApi;
+  /** Tuỳ chọn: bật các route quản trị access policy (/api/access-policies*, /api/memberships/:id/access-policy). */
+  readonly accessPolicies?: AccessPolicyApi;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
   readonly readiness?: ReadinessProbe;
   readonly logger?: ApiLogger;
@@ -54,6 +57,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
   const routes: readonly Route[] = [
     ...buildClinicalRoutes(deps.clinical),
     ...(deps.registry ? buildRegistryRoutes(deps.registry) : []),
+    ...(deps.accessPolicies ? buildAccessPolicyRoutes(deps.accessPolicies) : []),
   ];
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
   const logger: ApiLogger = deps.logger ?? { error: (m, meta) => console.error(m, JSON.stringify(meta)) };

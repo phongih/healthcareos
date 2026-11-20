@@ -5,6 +5,7 @@
  * Tự tạo DB `hcos_reg_<pid>`; ứng dụng chạy bằng role `hcos_app` (RLS hiệu lực). Không đặt HCOS_IT=1 => bỏ qua.
  */
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPair, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -96,10 +97,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
 
   beforeAll(async () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
-    suFile(`${MIG}/001_s0_init.sql`);
-    suFile(`${MIG}/002_s1_clinical_init.sql`);
-    suFile(`${MIG}/003_person_registry.sql`);
-    suFile(`${MIG}/004_person_unmerge.sql`);
+    for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
 
     const kp = await generateKeyPair('RS256');

@@ -17,6 +17,7 @@ export type TenantId = Brand<string, 'TenantId'>;
 export type OrganizationId = Brand<string, 'OrganizationId'>;
 export type UserId = Brand<string, 'UserId'>;
 export type MembershipId = Brand<string, 'MembershipId'>;
+export type AccessPolicyId = Brand<string, 'AccessPolicyId'>;
 /** Danh tính con người (1 người = 1 person trong tenant). */
 export type PersonId = Brand<string, 'PersonId'>;
 /** Hồ sơ bệnh nhân tại 1 organization (1 person có thể có nhiều patient). */
@@ -134,6 +135,8 @@ export interface Membership extends TenantScoped, Versioned, Timestamped {
   readonly status: MembershipStatus;
   readonly validFrom: ISODateTime;
   readonly validTo: ISODateTime | null;
+  /** Policy thu hẹp quyền của membership (migration 007). Không có/null = quyền mặc định của vai trò. */
+  readonly accessPolicyId?: AccessPolicyId | null;
 }
 
 // ---------------------------------------------------------------------------

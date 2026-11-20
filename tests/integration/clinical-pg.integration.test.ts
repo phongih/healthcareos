@@ -7,6 +7,7 @@
  * Không đặt HCOS_IT=1 => suite bị bỏ qua.
  */
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -108,8 +109,7 @@ run('G0+G1 / PostgreSQL integration (real RLS, triggers, service)', () => {
 
   beforeAll(() => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
-    suFile(`${MIG}/001_s0_init.sql`);
-    suFile(`${MIG}/002_s1_clinical_init.sql`);
+    for (const f of readdirSync(MIG).filter((f) => /^\d+_.+\.sql$/.test(f)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
     sink = new Sink();
     svc = new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(psqlPool({ database: DB })), audit: sink });
