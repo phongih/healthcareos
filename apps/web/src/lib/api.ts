@@ -46,6 +46,8 @@ const REASON_TEXT: Record<string, string> = {
   HANDOVER_CHANGED: 'Phiếu trả vừa được người khác cập nhật — tải lại danh sách.',
   MEDICATION_NOT_DISPENSED: 'Đơn còn thuốc chưa cấp. Cấp đủ ở "Đơn chờ cấp", hoặc ghi lý do (vd. hết thuốc) để vẫn chuyển ra quầy.',
   MEDICATION_NOT_HANDED: 'Đánh dấu "Đã giao đủ thuốc" trước khi hoàn tất.',
+  DECLARED_BELOW_COMPUTED: 'Không được xác định cấp độ thấp hơn cấp tính từ danh mục dữ liệu.',
+  RATIONALE_REQUIRED: 'Cần ghi căn cứ (20–4000 ký tự).',
   REASON_REQUIRED: 'Cần ghi lý do (ít nhất 5 ký tự).',
 };
 

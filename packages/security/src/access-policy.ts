@@ -225,6 +225,20 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'governance:read': {
+    basePermission: 'governance:read',
+    description: 'Xem danh mục dữ liệu, cấp độ rủi ro an ninh dữ liệu của hệ thống và hồ sơ tự đánh giá',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'governance:assess': {
+    basePermission: 'governance:assess',
+    description: 'Ghi nhận cấp độ rủi ro an ninh dữ liệu do chủ quản xác định (không thấp hơn cấp tính từ danh mục)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'handover:read': {
     basePermission: 'handover:read',
     description: 'Xem hàng chờ quầy trả (soạn thuốc, gọi ra quầy, đã trả) và danh sách quầy',

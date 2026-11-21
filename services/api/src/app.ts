@@ -26,6 +26,7 @@ import { PgPharmacyUnitOfWork, PharmacyInventoryService } from './pharmacy/inven
 import { PgPrescriptionUnitOfWork, PrescriptionService } from './clinical/prescription.service';
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from './clinical/queue.service';
 import { HandoverService } from './clinical/handover.service';
+import { GovernanceService } from './governance/governance.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
 
 export interface RunningApp {
@@ -88,6 +89,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       integrations,
       mrn: new MrnSettingsService({ pool, audit }),
       handover: new HandoverService({ pool, audit }),
+      governance: new GovernanceService({ pool, audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),

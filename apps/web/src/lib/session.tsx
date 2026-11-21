@@ -72,6 +72,7 @@ export const can = {
   integrations: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   decision: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   handover: (r: ReadonlySet<Role>) => ['pharmacist', 'clinic_staff', 'cashier', 'clinic_admin', 'tenant_admin'].some((x) => r.has(x as Role)),
+  governance: (r: ReadonlySet<Role>) => ['clinic_admin', 'pharmacy_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   handoverManage: (r: ReadonlySet<Role>) => r.has('clinic_admin') || r.has('tenant_admin'),
   notifications: (r: ReadonlySet<Role>) =>
     ['doctor', 'pharmacist', 'clinic_staff', 'cashier', 'clinic_admin', 'pharmacy_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
