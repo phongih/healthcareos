@@ -13,6 +13,9 @@
  *   HCOS_DB_POOL_MAX    mặc định 10
  *   HCOS_READY_TIMEOUT_MS  timeout của /readyz, mặc định 2000
  *   HCOS_DECISION_INTERVAL_SEC  chu kỳ chạy Decision Engine (giây), mặc định 300; 0 = tắt bộ lập lịch (vẫn bấm "Chạy ngay" được)
+ *   HCOS_RETENTION_INTERVAL_SEC chu kỳ job lưu giữ / xoá (giây), mặc định 86400 (1 ngày); 0 = tắt (vẫn bấm "Chạy ngay" được), tối thiểu 300
+ *   HCOS_BACKUP_HORIZON_DAYS  thời hạn giữ bản sao lưu dài nhất (bucket + bản dump cục bộ), mặc định 90 — ghi vào biên nhận xoá:
+ *                             ngày "không thể khôi phục" = lúc xoá + số ngày này
  *   HCOS_INTEGRATION_KEY  khoá AES-256 (base64, đúng 32 byte) để mã hoá URL / bí mật webhook khi lưu. Không đặt => tắt tính năng tích hợp
  *                         (API vẫn chạy). Tạo: openssl rand -base64 32. Mất khoá => phải nhập lại URL các kết nối.
  *   HCOS_PUBLIC_BASE_URL  vd https://smart.id.vn — để thẻ Teams có nút "Mở trong HealthcareOS"; bắt buộc https
@@ -37,6 +40,8 @@ export interface AppConfig {
   readonly readyTimeoutMs: number;
   /** Chu kỳ chạy Decision Engine (giây); 0 = tắt bộ lập lịch. */
   readonly decisionIntervalSec: number;
+  readonly retentionIntervalSec: number;
+  readonly backupHorizonDays: number;
   /** Khoá mã hoá bí mật tích hợp (32 byte); null = tắt tích hợp. */
   readonly integrationKey: Buffer | null;
   readonly publicBaseUrl: string | null;
@@ -144,6 +149,12 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     maxBodyBytes: int('HCOS_MAX_BODY_BYTES', 1_048_576, 1024, 50 * 1_048_576),
     dbPoolMax: int('HCOS_DB_POOL_MAX', 10, 1, 200),
     readyTimeoutMs: int('HCOS_READY_TIMEOUT_MS', 2000, 100, 30_000),
+    retentionIntervalSec: (() => {
+      const v = int('HCOS_RETENTION_INTERVAL_SEC', 86_400, 0, 7 * 86_400);
+      if (v > 0 && v < 300) problems.push('HCOS_RETENTION_INTERVAL_SEC must be 0 (off) or at least 300');
+      return v;
+    })(),
+    backupHorizonDays: int('HCOS_BACKUP_HORIZON_DAYS', 90, 0, 3650),
     decisionIntervalSec: (() => {
       const v = int('HCOS_DECISION_INTERVAL_SEC', 300, 0, 86_400);
       if (v > 0 && v < 60) {

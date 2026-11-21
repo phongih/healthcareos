@@ -132,7 +132,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect(S.phone).toBe('098****321');
     expect(S.email).toBe('a***@example.vn');
     expect(a.json.identifiers.map((i: any) => i.value).sort()).toEqual(['********0001', '*OOM1']);
-    expect(scalar(`SELECT coalesce(phone,'-')||'|'||coalesce(email,'-')||'|'||(phone_enc ~ '^e1\\.1\\.')||'|'||length(phone_bidx)||'|'||phone_hint FROM patient.persons WHERE person_id='${S.personId}'`))
+    expect(scalar(`SELECT coalesce(phone,'-')||'|'||coalesce(email,'-')||'|'||(phone_enc ~ '^s1\\.')||'|'||length(phone_bidx)||'|'||phone_hint FROM patient.persons WHERE person_id='${S.personId}'`))
       .toBe('-|-|true|32|098****321');
     expect(scalar(`SELECT count(*) FROM patient.identifiers WHERE person_id='${S.personId}' AND value IS NULL AND value_enc IS NOT NULL`)).toBe('2');
 
@@ -225,10 +225,10 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect(scalar(`SELECT person_id FROM patient.patients WHERE patient_id='${patientId}'`)).toBe(Tg.personId);
     expect(scalar(`SELECT count(*) FROM patient.identifiers WHERE person_id='${Tg.personId}' AND status='active'`)).toBe('3');
     expect(scalar(`SELECT person_id FROM iam.users WHERE user_id='${U.patientUser}'`)).toBe(Tg.personId);
-    // Liên hệ chép nguyên bản mã + index từ source (không giải mã); ảnh chụp không có bản rõ.
-    expect(scalar(`SELECT (t.phone_enc = s.phone_enc AND t.phone_bidx = s.phone_bidx AND t.email_enc = s.email_enc)::text FROM patient.persons t, patient.persons s
-                    WHERE t.person_id='${Tg.personId}' AND s.person_id='${S.personId}'`)).toBe('true');
-    expect(scalar(`SELECT coalesce(source_snapshot->>'phone','-')||'|'||(source_snapshot->'contact'->>'phoneEnc' ~ '^e1\\.')::text FROM patient.person_merges`)).toBe('-|true');
+    // F17: liên hệ được mã hoá LẠI bằng khoá của target (bản mã khác, cùng blind index); ảnh chụp không có bản rõ.
+    expect(scalar(`SELECT (t.phone_enc <> s.phone_enc AND t.phone_bidx = s.phone_bidx AND t.email_enc <> s.email_enc AND t.phone_enc ~ '^s1\\.')::text
+                     FROM patient.persons t, patient.persons s WHERE t.person_id='${Tg.personId}' AND s.person_id='${S.personId}'`)).toBe('true');
+    expect(scalar(`SELECT coalesce(source_snapshot->>'phone','-')||'|'||(source_snapshot->'contact'->>'phoneEnc' ~ '^s1\\.')::text FROM patient.person_merges`)).toBe('-|true');
     expect(scalar(`SELECT reason||'|'||merged_by_user_id||'|'||(source_snapshot->>'givenName')||'|'||cardinality(moved_patient_ids) FROM patient.person_merges`))
       .toBe(`Cùng một người, đối chiếu CCCD|${U.clinicAdmin}|Nguyen|1`);
     expect(scalar(`SELECT count(*) FROM platform.outbox_events WHERE event_type='patient.person.merged'`)).toBe('1');

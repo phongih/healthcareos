@@ -12,6 +12,12 @@
  *                             lộ khoá index không giải mã được dữ liệu; lộ DEK không suy ra index. Dùng cho tìm kiếm bằng nhau / unique.
  *   Gợi ý (hint)              dạng che sẵn (091****678) để hiển thị danh sách mà không cần giải mã.
  *
+ *   Khoá chủ thể (F17)       mỗi người / giấy tờ / lịch hẹn một khoá AES-256 riêng (keyvault.subject_keys), BỌC bằng DEK của tenant.
+ *                             Bản mã mới: `s1.<base64url(iv ‖ ciphertext ‖ tag)>`, AAD = tenant + miền + loại + id chủ thể
+ *                             (không ghép bản mã sang dòng khác). Xoá theo yêu cầu = HUỶ khoá chủ thể (crypto-shredding):
+ *                             mọi bản mã của chủ thể đó, ở bất kỳ đâu, không còn mở được. Xoay DEK chỉ cần bọc lại khoá chủ thể.
+ *                             Bản mã `e1` (F16, DEK tenant) vẫn đọc được tới khi được chuyển sang `s1`.
+ *
  * Người chỉ có quyền đọc CSDL (DBA, bản sao lưu bị lộ, SQL injection) thấy bản mã + DEK đã bọc — không có KEK nên không giải mã được.
  * Giải mã chỉ diễn ra trong tiến trình ứng dụng; hiển thị bản rõ cho người dùng đi qua quyền `pii:reveal` + audit (PiiService).
  */
@@ -41,6 +47,13 @@ export class PiiCryptoError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'PiiCryptoError';
+  }
+}
+/** Khoá chủ thể đã bị huỷ (xoá theo yêu cầu / hết hạn lưu): dữ liệu không còn khôi phục được. */
+export class PiiShreddedError extends Error {
+  constructor(message = 'subject key has been destroyed') {
+    super(message);
+    this.name = 'PiiShreddedError';
   }
 }
 
@@ -164,13 +177,36 @@ export const maskFor = (domain: PiiDomain, v: string): string => (domain === 'ph
 // Bản mã
 // ---------------------------------------------------------------------------
 const TOKEN_RE = /^e1\.(\d{1,6})\.([A-Za-z0-9_-]{38,})$/;
-export const isSealed = (v: unknown): v is string => typeof v === 'string' && TOKEN_RE.test(v);
+const S_TOKEN_RE = /^s1\.([A-Za-z0-9_-]{38,})$/;
+export const isSealed = (v: unknown): v is string => typeof v === 'string' && (TOKEN_RE.test(v) || S_TOKEN_RE.test(v));
+/** 'e1' = DEK tenant (F16), 's1' = khoá chủ thể (F17). */
+export const tokenFormat = (t: string): 'e1' | 's1' => {
+  if (S_TOKEN_RE.test(t)) return 's1';
+  if (TOKEN_RE.test(t)) return 'e1';
+  throw new PiiCryptoError('not a sealed value');
+};
 export const tokenVersion = (t: string): number => {
   const m = TOKEN_RE.exec(t);
-  if (!m) throw new PiiCryptoError('not a sealed value');
+  if (!m) throw new PiiCryptoError('not a tenant-key (e1) sealed value');
   return Number(m[1]);
 };
 const dataAad = (tenant: string, domain: PiiDomain) => `hcos-pii|${tenant}|${domain}`;
+
+export type SubjectKind = 'person' | 'identifier' | 'booking';
+export interface Subject {
+  readonly kind: SubjectKind;
+  readonly id: string;
+}
+const subjectDataAad = (tenant: string, domain: PiiDomain, s: Subject) => `hcos-pii|${tenant}|${domain}|${s.kind}|${s.id}`;
+const subjectWrapAad = (tenant: string, s: Subject, dekVersion: number) => `hcos-sk|${tenant}|${s.kind}|${s.id}|${dekVersion}`;
+export function sealSubject(key: Buffer, tenant: string, domain: PiiDomain, s: Subject, plain: string): string {
+  return `s1.${gcmSeal(key, Buffer.from(plain, 'utf8'), subjectDataAad(tenant, domain, s)).toString('base64url')}`;
+}
+export function openSubject(key: Buffer, tenant: string, domain: PiiDomain, s: Subject, token: string): string {
+  const m = S_TOKEN_RE.exec(token);
+  if (!m) throw new PiiCryptoError('not a subject-key (s1) sealed value');
+  return gcmOpen(key, Buffer.from(m[1]!, 'base64url'), subjectDataAad(tenant, domain, s)).toString('utf8');
+}
 export const wrapAad = (tenant: string, purpose: KeyPurpose, version: number) => `hcos-dek|${tenant}|${purpose}|${version}`;
 
 export function sealWith(key: Buffer, version: number, tenant: string, domain: PiiDomain, plain: string): string {
@@ -234,6 +270,7 @@ export async function loadTenantKeys(db: TenantScopedDb): Promise<TenantKeyRow[]
  */
 export class TenantPii {
   private rows: TenantKeyRow[] | null = null;
+  private readonly subjects = new Map<string, Buffer>();
 
   constructor(private readonly db: TenantScopedDb, private readonly kp: KeyProvider = keyProvider()) {}
 
@@ -241,21 +278,79 @@ export class TenantPii {
     return this.db.tenantId;
   }
 
-  async seal(domain: PiiDomain, plain: string): Promise<string> {
-    const { version, key } = await this.active('data');
-    return sealWith(key, version, this.tenant, domain, plain);
+  /** Mã hoá bằng khoá của chủ thể (tạo khoá lần đầu). Chủ thể đã bị huỷ khoá => PiiShreddedError. */
+  async seal(domain: PiiDomain, plain: string, subject: Subject): Promise<string> {
+    return sealSubject(await this.subjectKey(subject, true), this.tenant, domain, subject, plain);
   }
-  async open(domain: PiiDomain, token: string): Promise<string> {
-    return openWith(await this.keyFor('data', tokenVersion(token)), this.tenant, domain, token);
+  /** Giải mã: `s1` cần chủ thể của dòng; `e1` (F16) dùng DEK tenant. */
+  async open(domain: PiiDomain, token: string, subject?: Subject): Promise<string> {
+    if (tokenFormat(token) === 'e1') return openWith(await this.keyFor('data', tokenVersion(token)), this.tenant, domain, token);
+    if (!subject) throw new PiiCryptoError('subject is required to open a subject-key value');
+    return openSubject(await this.subjectKey(subject, false), this.tenant, domain, subject, token);
   }
   async index(domain: PiiDomain, value: string): Promise<string> {
     const { key } = await this.active('index');
     return indexWith(key, domain, value);
   }
   /** seal + index + hint trong một lần (giá trị null => cả ba null). */
-  async protect(domain: PiiDomain, plain: string | null): Promise<{ enc: string | null; bidx: string | null; hint: string | null }> {
+  async protect(domain: PiiDomain, plain: string | null, subject: Subject): Promise<{ enc: string | null; bidx: string | null; hint: string | null }> {
     if (plain === null || plain === '') return { enc: null, bidx: null, hint: null };
-    return { enc: await this.seal(domain, plain), bidx: await this.index(domain, plain), hint: maskFor(domain, plain) };
+    return { enc: await this.seal(domain, plain, subject), bidx: await this.index(domain, plain), hint: maskFor(domain, plain) };
+  }
+
+  // ---- khoá chủ thể (F17) ------------------------------------------------------
+  /** Khoá chủ thể đã mở. Không cache ngoài transaction: huỷ khoá có hiệu lực ngay ở mọi tiến trình. */
+  async subjectKey(subject: Subject, create: boolean): Promise<Buffer> {
+    const ck = `${subject.kind}|${subject.id}`;
+    const hit = this.subjects.get(ck);
+    if (hit) return hit;
+    let row = await this.subjectRow(subject);
+    if (!row && create) {
+      const { version, key: dek } = await this.active('data');
+      const plain = randomBytes(32);
+      await this.db.query(
+        `INSERT INTO keyvault.subject_keys (tenant_id, subject_kind, subject_id, dek_version, wrapped_key)
+         VALUES ($1, $2, $3, $4, decode($5, 'hex')) ON CONFLICT DO NOTHING`,
+        [this.tenant, subject.kind, subject.id, version, gcmSeal(dek, plain, subjectWrapAad(this.tenant, subject, version)).toString('hex')],
+      );
+      row = await this.subjectRow(subject);
+    }
+    if (!row) throw new PiiCryptoError(`no key for ${subject.kind} ${subject.id}`);
+    if (row.status === 'shredded' || !row.wrapped) throw new PiiShreddedError();
+    const dek = await this.keyFor('data', row.dekVersion);
+    const k = gcmOpen(dek, row.wrapped, subjectWrapAad(this.tenant, subject, row.dekVersion));
+    if (k.length !== 32) throw new PiiCryptoError('subject key has wrong length');
+    this.subjects.set(ck, k);
+    return k;
+  }
+  /** Bọc lại khoá chủ thể đang dùng DEK cũ bằng DEK hiện hành (sau "Xoay DEK"). Trả số khoá đã bọc lại. */
+  async rewrapSubjectKeys(limit = 1000): Promise<number> {
+    const { version, key: dek } = await this.active('data');
+    const r = await this.db.query<{ kind: SubjectKind; id: string; v: string | number; w: string }>(
+      `SELECT subject_kind AS kind, subject_id AS id, dek_version AS v, encode(wrapped_key, 'hex') AS w FROM keyvault.subject_keys
+        WHERE tenant_id = $1 AND status = 'active' AND dek_version <> $2 ORDER BY subject_kind, subject_id LIMIT ${Math.max(1, Math.min(limit, 10000))} FOR UPDATE`,
+      [this.tenant, version],
+    );
+    for (const x of r.rows) {
+      const subject: Subject = { kind: x.kind, id: String(x.id) };
+      const old = Number(x.v);
+      const plain = gcmOpen(await this.keyFor('data', old), toBuf(x.w), subjectWrapAad(this.tenant, subject, old));
+      await this.db.query(
+        `UPDATE keyvault.subject_keys SET dek_version = $4, wrapped_key = decode($5, 'hex'), rewrapped_at = now()
+          WHERE tenant_id = $1 AND subject_kind = $2 AND subject_id = $3 AND status = 'active'`,
+        [this.tenant, subject.kind, subject.id, version, gcmSeal(dek, plain, subjectWrapAad(this.tenant, subject, version)).toString('hex')],
+      );
+    }
+    return r.rows.length;
+  }
+  private async subjectRow(subject: Subject): Promise<{ dekVersion: number; wrapped: Buffer | null; status: string } | null> {
+    const r = await this.db.query<{ v: string | number; w: string | null; status: string }>(
+      `SELECT dek_version AS v, encode(wrapped_key, 'hex') AS w, status FROM keyvault.subject_keys
+        WHERE tenant_id = $1 AND subject_kind = $2 AND subject_id = $3`,
+      [this.tenant, subject.kind, subject.id],
+    );
+    const x = r.rows[0];
+    return x ? { dekVersion: Number(x.v), wrapped: x.w ? toBuf(x.w) : null, status: x.status } : null;
   }
 
   async activeVersion(purpose: KeyPurpose): Promise<number> {

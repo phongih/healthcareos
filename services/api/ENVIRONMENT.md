@@ -16,6 +16,8 @@ Cấu hình **chỉ** qua biến môi trường lúc chạy. Image không chứa
 | `HCOS_DECISION_INTERVAL_SEC` | không | `300` | Chu kỳ chạy Decision Engine (giây); `0` = tắt, ≥ 60 |
 | `HCOS_INTEGRATION_KEY` | không | — | Khoá AES-256 (base64 32 byte, `openssl rand -base64 32`) mã hoá URL / bí mật kết nối tích hợp. Không đặt ⇒ tắt tích hợp. **Sao lưu riêng**: mất khoá ⇒ phải nhập lại URL các kết nối |
 | `HCOS_KEKS` | **có** | — | HCOS-F16: danh sách KEK `id:base64(32 byte)`, phân cách bằng dấu phẩy; KEK **đầu tiên** đang dùng để bọc DEK, các KEK sau chỉ để mở DEK cũ (khi đổi KEK). Tạo: `echo "k1:$(openssl rand -base64 32)"`. Không được trùng `HCOS_INTEGRATION_KEY`. **Mất KEK ⇒ mất SĐT / email / CCCD đã mã hoá**: sao lưu offline, tách khỏi bản sao lưu CSDL |
+| `HCOS_RETENTION_INTERVAL_SEC` | không | `86400` | HCOS-F17: chu kỳ job lưu giữ / xoá (giây); `0` = tắt (vẫn bấm "Chạy ngay" được), tối thiểu 300 |
+| `HCOS_BACKUP_HORIZON_DAYS` | không | `90` | Thời hạn giữ bản sao lưu dài nhất (vòng đời bucket); ghi vào biên nhận xoá làm ngày "không thể khôi phục". Đổi vòng đời bucket thì đổi theo |
 | `HCOS_PUBLIC_BASE_URL` | không | — | Địa chỉ https công khai (vd `https://smart.id.vn`) để thẻ Teams có nút "Mở trong HealthcareOS" |
 | `HCOS_INTEGRATION_DISPATCH_SEC` | không | `15` | Chu kỳ giao webhook (giây); `0` = tắt, ≥ 5 |
 

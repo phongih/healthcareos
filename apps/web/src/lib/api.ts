@@ -32,6 +32,12 @@ const STATUS_TEXT: Record<number, string> = {
 
 /** Lý do lỗi đã biết => câu tiếng Việt cho người dùng (thay thông điệp kỹ thuật). */
 const REASON_TEXT: Record<string, string> = {
+  FOUR_EYES: 'Người lập yêu cầu không được tự duyệt — cần một quản trị viên khác.',
+  ERASURE_ALREADY_OPEN: 'Người bệnh này đã có yêu cầu xoá đang xử lý.',
+  ALREADY_ERASED: 'Dữ liệu của người bệnh này đã được xoá.',
+  ERASURE_NOT_PENDING: 'Yêu cầu không còn ở trạng thái chờ duyệt.',
+  RETENTION_BELOW_FLOOR: 'Thời hạn thấp hơn mức tối thiểu theo quy định.',
+  PII_ERASED: 'Dữ liệu này đã bị xoá theo yêu cầu / hết hạn lưu (khoá đã huỷ) — không thể xem lại.',
   MRN_CHECK_DIGIT: 'Mã bệnh nhân sai số kiểm tra — có thể gõ nhầm một chữ số. Kiểm tra lại mã.',
   MRN_RESERVED_FORMAT: 'Mã cũ không được có dạng mã tự sinh (vd. BN26-000123-5). Bỏ trống để hệ thống tự cấp.',
   LEGACY_MRN_DISABLED: 'Cơ sở không cho nhập mã cũ — bỏ trống để hệ thống tự cấp mã.',

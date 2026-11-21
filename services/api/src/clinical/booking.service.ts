@@ -132,6 +132,8 @@ export interface Booking {
 export interface BookingView extends Booking {
   readonly servicePointCode: string;
   readonly servicePointName: string;
+  /** F17: đã ẩn danh (hết hạn lưu / xoá theo yêu cầu) — mọi trường định danh trống. */
+  readonly erasedAt?: string | null;
 }
 export type MatchKind = 'national_id' | 'phone_birthdate' | 'name_birthdate' | 'phone';
 const MATCH_ORDER: readonly MatchKind[] = ['national_id', 'phone_birthdate', 'name_birthdate', 'phone'];
@@ -193,8 +195,10 @@ export interface PublicLookupResult {
 // Repository (dùng chung cho cổng công khai và nhân viên)
 // ---------------------------------------------------------------------------
 const B_COLS =
-  'b.booking_id, b.tenant_id, b.organization_id, b.service_point_id, b.visit_date::text AS visit_date, b.period, b.family_name, b.given_name, ' +
-  'b.birth_date::text AS birth_date, b.sex, COALESCE(b.phone_hint, keyvault.mask_phone(b.phone)) AS phone, ' +
+  "b.booking_id, b.tenant_id, b.organization_id, b.service_point_id, b.visit_date::text AS visit_date, b.period, " +
+  "COALESCE(b.family_name, '(đã ẩn danh)') AS family_name, COALESCE(b.given_name, '') AS given_name, " +
+  "COALESCE(b.birth_date::text, '') AS birth_date, COALESCE(b.sex, 'unknown') AS sex, b.erased_at, " +
+  'COALESCE(b.phone_hint, keyvault.mask_phone(b.phone)) AS phone, ' +
   'COALESCE(b.national_id_hint, keyvault.mask_identifier(b.national_id)) AS national_id, b.phone_bidx, b.national_id_bidx, ' +
   'b.reason, b.consent_version, b.consent_at, b.status, b.patient_id, b.ticket_id, ' +
   'b.checked_in_at, b.cancelled_by, b.created_at, b.version, sp.code AS sp_code, sp.name AS sp_name';
@@ -206,7 +210,7 @@ const mapBooking = (r: any): BookingView => ({
   reason: r.reason ?? null, consentVersion: r.consent_version,
   consentAt: iso(r.consent_at), status: r.status, patientId: r.patient_id ?? null, ticketId: r.ticket_id ?? null,
   checkedInAt: isoOrNull(r.checked_in_at), cancelledBy: r.cancelled_by ?? null, createdAt: iso(r.created_at), version: num(r.version),
-  servicePointCode: r.sp_code, servicePointName: r.sp_name,
+  servicePointCode: r.sp_code, servicePointName: r.sp_name, erasedAt: isoOrNull(r.erased_at),
 });
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -263,15 +267,15 @@ export class PgBookingRepository extends PgQueueRepository {
     const x = r.rows[0];
     if (!x) return { phone: null, nationalId: null };
     return {
-      phone: x['phone_enc'] ? await this.pii.open('phone', x['phone_enc']) : (x['phone'] ?? null),
-      nationalId: x['national_id_enc'] ? await this.pii.open('identifier', x['national_id_enc']) : (x['national_id'] ?? null),
+      phone: x['phone_enc'] ? await this.pii.open('phone', x['phone_enc'], { kind: 'booking', id }) : (x['phone'] ?? null),
+      nationalId: x['national_id_enc'] ? await this.pii.open('identifier', x['national_id_enc'], { kind: 'booking', id }) : (x['national_id'] ?? null),
     };
   }
 
   async insertBooking(b: Booking, hash: Buffer): Promise<void> {
-    // HCOS-F16: SĐT (miền 'phone') và CCCD (miền 'identifier' — so khớp được với patient.identifiers) chỉ lưu bản mã.
-    const phone = await this.pii.protect('phone', b.phone);
-    const nid = await this.pii.protect('identifier', b.nationalId);
+    // HCOS-F16/F17: SĐT và CCCD chỉ lưu bản mã, bằng khoá riêng của lịch hẹn (huỷ khoá khi ẩn danh / xoá theo yêu cầu).
+    const phone = await this.pii.protect('phone', b.phone, { kind: 'booking', id: b.bookingId });
+    const nid = await this.pii.protect('identifier', b.nationalId, { kind: 'booking', id: b.bookingId });
     try {
       await this.db.query(
         `INSERT INTO clinical.bookings (booking_id, tenant_id, organization_id, service_point_id, visit_date, period, code_hash, family_name, given_name,

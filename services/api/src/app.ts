@@ -27,6 +27,7 @@ import { PgPrescriptionUnitOfWork, PrescriptionService } from './clinical/prescr
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from './clinical/queue.service';
 import { HandoverService } from './clinical/handover.service';
 import { GovernanceService } from './governance/governance.service';
+import { RetentionScheduler, RetentionService } from './governance/retention.service';
 import { PiiService } from './security/pii.service';
 import { configureKeyProvider } from '../../../packages/security/src/pii';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
@@ -71,6 +72,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     });
     // Không có khoá => không giải mã được URL => không chạy bộ giao.
     const dispatcher = new IntegrationDispatcher({ pool, service: integrations, intervalMs: cfg.integrationKey ? cfg.integrationDispatchSec * 1000 : 0, log });
+    const retention = new RetentionService({ pool, audit, backupHorizonDays: cfg.backupHorizonDays });
+    const retentionScheduler = new RetentionScheduler({ pool, service: retention, intervalMs: cfg.retentionIntervalSec * 1000, log });
     const server = createApiServer({
       tenant: {
         issuer: cfg.issuer,
@@ -96,6 +99,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       handover: new HandoverService({ pool, audit }),
       governance: new GovernanceService({ pool, audit }),
       pii: new PiiService({ pool, audit }),
+      retention,
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),
@@ -113,12 +117,13 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     const port = addr?.port ?? cfg.port;
     scheduler.start();
     dispatcher.start();
+    retentionScheduler.start();
 
     let stopping: Promise<void> | undefined;
     const stop = (): Promise<void> =>
       (stopping ??= new Promise<void>((resolve) => {
         server.close(() => {
-          Promise.all([scheduler.stop(), dispatcher.stop()])
+          Promise.all([scheduler.stop(), dispatcher.stop(), retentionScheduler.stop()])
             .catch(() => undefined)
             .then(() => pgPool.end())
             .then(() => resolve(), () => resolve());

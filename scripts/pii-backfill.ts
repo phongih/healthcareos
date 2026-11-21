@@ -31,9 +31,10 @@ try {
   for (const tenant of tenants) {
     const r = await backfillTenant(pool, tenant, (m) => console.log(m));
     console.log(`Tenant ${tenant}: đã mã hoá ${r.encrypted} giá trị. Bản rõ còn lại: ${r.remaining}`);
+    console.log(`  chuyển sang khoá theo người: ${r.converted}. Bản mã dạng cũ còn lại: ${r.legacyRemaining}`);
     for (const c of r.stats.columns) console.log(`  ${c.column.padEnd(32)} ${c.rows}`);
     console.log(`  ${'ảnh chụp gộp hồ sơ'.padEnd(32)} ${r.stats.snapshots}`);
-    if (r.remaining !== 0) process.exitCode = 1;
+    if (r.remaining !== 0 || r.legacyRemaining !== 0) process.exitCode = 1;
   }
 } catch (e) {
   console.error('LỖI:', e instanceof Error ? `${e.name}: ${e.message}` : e);

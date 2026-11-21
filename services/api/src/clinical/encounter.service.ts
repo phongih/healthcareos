@@ -1054,7 +1054,7 @@ export const num = (v: unknown): number => Number(v);
 
 // HCOS-F16: SĐT / email đọc ra là dạng che; dòng chưa backfill (còn bản rõ) được che bằng hàm SQL cùng quy tắc.
 export const PERSON_COLS =
-  'person_id, tenant_id, given_name, family_name, birth_date::text AS birth_date, sex, ' +
+  "person_id, tenant_id, COALESCE(given_name, '') AS given_name, COALESCE(family_name, '(đã xoá)') AS family_name, birth_date::text AS birth_date, sex, " +
   'COALESCE(phone_hint, keyvault.mask_phone(phone)) AS phone, COALESCE(email_hint, keyvault.mask_email(email)) AS email, phone_bidx, ' +
   'status, merged_into_person_id, created_at, updated_at, version';
 export const PATIENT_COLS = 'patient_id, tenant_id, person_id, organization_id, mrn, status, registered_at, created_at, updated_at, version';

@@ -66,16 +66,16 @@ async function sealedSeed(): Promise<string> {
   try {
     await c.query("SELECT set_config('app.tenant_id', $1, false)", [TA]);
     const pii = new TenantPii({ tenantId: TA, query: (s: string, p?: readonly unknown[]) => c.query(s, p ?? []) } as never);
-    const ph = await pii.protect('phone', '0912345678');
-    const nid = await pii.protect('identifier', '001050000001');
+    const ph = await pii.protect('phone', '0912345678', { kind: 'person', id: uid(2002) });
+    const nid = await pii.protect('identifier', '001050000001', { kind: 'identifier', id: uid(2004) });
     return `
 INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,name_key,phone_enc,phone_bidx,phone_hint)
   VALUES ('${uid(2002)}','${TA}','Bình','Nguyễn Thị','1952-07-07','${nameKey('Bình', 'Nguyễn Thị')}','${ph.enc}','${ph.bidx}','${ph.hint}'),
          ('${uid(2003)}','${TA}','Anh','Nguyen Van','1950-03-04','${nameKey('Anh', 'Nguyen Van')}',NULL,NULL,NULL);
 INSERT INTO patient.patients(patient_id,tenant_id,person_id,organization_id,mrn) VALUES
   ('${PAT_FAMILY}','${TA}','${uid(2002)}','${OA}','B0002'),('${PAT_CCCD}','${TA}','${uid(2003)}','${OA}','B0003');
-INSERT INTO patient.identifiers(tenant_id,person_id,type,system,value_enc,value_bidx,value_hint)
-  VALUES ('${TA}','${uid(2003)}','national_id','https://moh.gov.vn/cccd','${nid.enc}','${nid.bidx}','${nid.hint}');`;
+INSERT INTO patient.identifiers(identifier_id,tenant_id,person_id,type,system,value_enc,value_bidx,value_hint)
+  VALUES ('${uid(2004)}','${TA}','${uid(2003)}','national_id','https://moh.gov.vn/cccd','${nid.enc}','${nid.bidx}','${nid.hint}');`;
   } finally {
     c.close();
   }
@@ -219,13 +219,14 @@ run('Đặt lịch khám online / PostgreSQL', () => {
     const code = 'ABCD2345';
     const c0 = new PsqlClient({ database: DB });
     await c0.query("SELECT set_config('app.tenant_id', $1, false)", [TA]);
-    const ph = await new TenantPii({ tenantId: TA, query: (s: string, p?: readonly unknown[]) => c0.query(s, p ?? []) } as never).protect('phone', '0977000000');
+    const BK = uid(2101);
+    const ph = await new TenantPii({ tenantId: TA, query: (s: string, p?: readonly unknown[]) => c0.query(s, p ?? []) } as never).protect('phone', '0977000000', { kind: 'booking', id: BK });
     c0.close();
     su(`BEGIN;
         INSERT INTO clinical.booking_counters(tenant_id,service_point_id,visit_date,period,booked) VALUES ('${TA}','${r1}','${today}','afternoon',1)
           ON CONFLICT (tenant_id,service_point_id,visit_date,period) DO UPDATE SET booked = clinical.booking_counters.booked + 1;
-        INSERT INTO clinical.bookings(tenant_id,organization_id,service_point_id,visit_date,period,code_hash,family_name,given_name,birth_date,sex,phone_enc,phone_bidx,phone_hint,consent_version,consent_at)
-          VALUES ('${TA}','${OA}','${r1}','${today}','afternoon',sha256(convert_to('${code}','UTF8')),'Nguyễn Văn','An','1950-03-04','male','${ph.enc}','${ph.bidx}','${ph.hint}','${CONSENT_VERSION}',now());
+        INSERT INTO clinical.bookings(booking_id,tenant_id,organization_id,service_point_id,visit_date,period,code_hash,family_name,given_name,birth_date,sex,phone_enc,phone_bidx,phone_hint,consent_version,consent_at)
+          VALUES ('${BK}','${TA}','${OA}','${r1}','${today}','afternoon',sha256(convert_to('${code}','UTF8')),'Nguyễn Văn','An','1950-03-04','male','${ph.enc}','${ph.bidx}','${ph.hint}','${CONSENT_VERSION}',now());
         COMMIT;`);
     const f = (await bk.findByCode({ organizationId: OA, code: 'abcd-2345' }, C.staff))!;
     expect(await outcome(bk.checkIn(f.booking.bookingId, { patientId: PAT_OLD }, C.doc))).toBe('FORBIDDEN');

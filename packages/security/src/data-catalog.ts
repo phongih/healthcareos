@@ -240,7 +240,35 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
     columns: { summary: { note: 'Số liệu tổng hợp (số bảng theo cấp, quy mô bản ghi) — không có dữ liệu cá nhân' } },
   },
 
+  // ---- lưu giữ & xoá (F17) ---------------------------------------------------------
+  'governance.retention_settings': {
+    level: 1, category: 'internal', subject: 'none', steward: 'tenant_admin', retention: 'reference',
+    purpose: 'Thời hạn lưu giữ do chủ quản đặt (CSDL chặn thấp hơn sàn pháp lý)',
+  },
+  'governance.retention_runs': {
+    level: 1, category: 'internal', subject: 'none', steward: 'tenant_admin', retention: 'operational', purpose: 'Lần chạy job ẩn danh / xoá dữ liệu hết hạn',
+    columns: { detail: NO_PATIENT_PAYLOAD },
+  },
+  'governance.deletion_receipts': {
+    level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'audit_log',
+    purpose: 'Biên nhận xoá: chính sách, căn cứ, phạm vi (số đếm), thời điểm, kết quả, ngày không thể khôi phục — không lưu dữ liệu đã xoá',
+  },
+  'governance.erasure_requests': {
+    level: 3, category: 'personal', subject: 'patient', steward: 'clinic_admin', retention: 'audit_log',
+    purpose: 'Yêu cầu xoá dữ liệu của người bệnh (người lập ≠ người duyệt), đánh giá nghĩa vụ lưu giữ — chỉ id, không họ tên / liên hệ',
+    columns: { note: FREE_TEXT_OPS, decision_note: FREE_TEXT_OPS },
+  },
+
   // ---- keyvault (F16) ------------------------------------------------------------
+  'keyvault.subject_keys': {
+    level: 3, category: 'security', subject: 'patient', steward: 'tenant_admin', retention: 'security',
+    purpose: 'Khoá riêng của từng người / giấy tờ / lịch hẹn (F17), bọc bằng DEK tenant; huỷ khoá = xoá không khôi phục được (crypto-shredding)',
+    columns: { wrapped_key: { level: 3, category: 'security', storage: 'encrypted', note: 'Khoá chủ thể bọc AES-256-GCM bằng DEK tenant; NULL sau khi huỷ' } },
+  },
+  'keyvault.shred_events': {
+    level: 2, category: 'security', subject: 'patient', steward: 'tenant_admin', retention: 'audit_log',
+    purpose: 'Sổ huỷ khoá / ẩn danh (chỉ id) — đẩy ra ngoài bản sao lưu để phát lại sau khi khôi phục',
+  },
   'keyvault.tenant_keys': {
     level: 3, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'security',
     purpose: 'Khoá dữ liệu (DEK) và khoá blind index theo tenant, có phiên bản; chỉ lưu dạng đã bọc bằng KEK nằm ngoài CSDL',
