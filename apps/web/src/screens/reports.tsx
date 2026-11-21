@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { exportFile } from '../lib/download';
 import { fmtVnd } from '../lib/money';
-import { CATEGORY_LABEL, dmy, vnTime, type ReportData } from '../../../../packages/exports/src/report-sheets';
+import { CATEGORY_LABEL, dmy, vnTime, type ReportData } from '../lib/report-format';
 import { useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 

@@ -34,6 +34,10 @@ jobs:
       - run: if [ -s package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - run: npm run typecheck
       - run: npm run build
+      # Staging build web trong container CHỈ mount apps/web: không được import file ngoài thư mục này.
+      - name: Web builds standalone (only apps/web available)
+        run: |
+          rm -rf /tmp/web-only && cp -r . /tmp/web-only && cd /tmp/web-only && rm -rf dist && npm run build
       - name: Bundle has no inline script and references hashed assets
         run: |
           grep -Eq 'src="app-[0-9a-f]{12}\.js"' dist/index.html
