@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # HCOS-F17 | Tự kiểm chứng: xoá -> đẩy sổ huỷ (age + GCS GIẢ) -> khôi phục bản sao lưu CŨ HƠN lần xoá -> phát lại sổ -> dữ liệu lại bị xoá.
-# Chạy trên cluster PostgreSQL cục bộ bằng superuser (CSDL tạm, tự xoá). Cần: psql/createdb/pg_dump/pg_restore, age, openssl.
+# Chạy trên cluster PostgreSQL cục bộ bằng superuser (CSDL tạm, tự xoá). Cần: psql/createdb, age, openssl.
 #   ./shred-ledger-selftest.sh
 set -euo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"; MIG="$HERE/../../infrastructure/database/migrations"
@@ -31,7 +31,7 @@ for f in $(ls "$MIG"/*.sql | sort); do psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f
 TA=00000000-0000-4000-8000-000000000001; P=00000000-0000-4000-8000-0000000000a1; Q=00000000-0000-4000-8000-0000000000a2
 q "$DB" "INSERT INTO iam.tenants(tenant_id,code,name) VALUES ('$TA','ta','A');
          INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date) VALUES ('$P','$TA','Xoa','Nguyen','1980-01-01'),('$Q','$TA','Giu','Le','1990-01-01');"
-pg_dump -Fc -d "$DB" -f "$T/backup.dump"          # "bản sao lưu" chụp TRƯỚC lần xoá
+createdb -T "$DB" "$DB2"                          # "bản sao lưu" chụp TRƯỚC lần xoá (bản sao CSDL; không phụ thuộc phiên bản pg_dump)
 q "$DB" "SELECT set_config('app.tenant_id','$TA',false); SELECT governance._erase_person('$P', gen_random_uuid(), false);" >/dev/null
 [ "$(q "$DB" "SELECT status FROM patient.persons WHERE person_id='$P'")" = erased ] && ok "đã xoá trên CSDL đang chạy" || bad "không xoá được"
 
@@ -42,7 +42,6 @@ grep -q "$P" "$T/gcs/st/shred-ledger/"* && bad "sổ trên kho KHÔNG được m
 [ "$(q "$DB" "SELECT count(*) FROM keyvault.shred_events WHERE exported_at IS NULL")" = 0 ] && ok "đã đánh dấu exported_at" || bad "chưa đánh dấu exported_at"
 PGDATABASE="$DB" "$HERE/shred-ledger-offsite.sh" | grep -q "không có sự kiện mới" && ok "chạy lại: không đẩy trùng" || bad "chạy lại vẫn đẩy"
 
-createdb "$DB2"; pg_restore -d "$DB2" --exit-on-error "$T/backup.dump"
 [ "$(q "$DB2" "SELECT status FROM patient.persons WHERE person_id='$P'")" = active ] && ok "khôi phục bản cũ: dữ liệu đã xoá 'sống lại' (đúng như dự đoán)" || bad "bản khôi phục không như mong đợi"
 OUT=$(AGE_IDENTITY="$T/key.txt" PGDATABASE="$DB2" "$HERE/shred-replay.sh")
 echo "$OUT" | grep -q "applied: 1" && ok "phát lại sổ: applied 1" || bad "phát lại: $OUT"
