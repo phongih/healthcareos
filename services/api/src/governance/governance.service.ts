@@ -30,6 +30,7 @@ import { assertSameTenant, requireTenantContext, withTenantTransaction, type PgP
 import { ClinicalError, iso, num, PgClinicalRepository } from '../clinical/encounter.service';
 import { loadTenantKeys } from '../../../../packages/security/src/pii';
 import { plaintextStats } from '../security/pii.service';
+import { ACTION_LABEL, RETENTION_RULES } from '../../../../packages/security/src/retention';
 
 type Permission = 'governance:read' | 'governance:assess';
 const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
@@ -75,6 +76,14 @@ export interface CatalogView {
     readonly keys: ReadonlyArray<{ purpose: string; version: number; kekId: string; status: string; createdAt: string }>;
     readonly plaintextRemaining: ReadonlyArray<{ column: string; rows: number }>;
     readonly snapshotsPlaintext: number;
+  };
+  /** HCOS-F17: chính sách lưu giữ có hiệu lực + số liệu xoá (không có dữ liệu cá nhân). */
+  readonly retention: {
+    readonly rules: ReadonlyArray<{ id: string; label: string; action: string; days: number; floorDays: number; from: string; legalBasis: string }>;
+    readonly receipts: number;
+    readonly keysShredded: number;
+    readonly openRequests: number;
+    readonly ledgerPending: number;
   };
 }
 
@@ -131,7 +140,21 @@ export class GovernanceService {
       await repo.appendAudit(this.event(ctx, 'governance.catalog.read', 'success', user, { catalogVersion: summary.version }));
       const pt = await plaintextStats(repo.tdb);
       const keys = (await loadTenantKeys(repo.tdb)).map((k) => ({ purpose: k.purpose, version: k.version, kekId: k.kekId, status: k.status, createdAt: k.createdAt }));
+      const rs: Array<CatalogView['retention']['rules'][number]> = [];
+      for (const r of RETENTION_RULES) {
+        const d = await repo.tdb.query<{ d: string | number }>('SELECT governance.retention_days($1) AS d', [r.id]);
+        rs.push({ id: r.id, label: r.label, action: ACTION_LABEL[r.action], days: num(d.rows[0]!.d), floorDays: r.floorDays, from: r.from, legalBasis: r.legalBasis });
+      }
+      const st = await repo.tdb.query<Record<string, string | number>>(
+        `SELECT (SELECT count(*) FROM governance.deletion_receipts WHERE tenant_id = $1) AS receipts,
+                (SELECT count(*) FROM keyvault.subject_keys WHERE tenant_id = $1 AND status = 'shredded') AS shredded,
+                (SELECT count(*) FROM governance.erasure_requests WHERE tenant_id = $1 AND status IN ('pending', 'deferred')) AS open,
+                (SELECT count(*) FROM keyvault.shred_events WHERE tenant_id = $1 AND exported_at IS NULL) AS pending`,
+        [repo.tdb.tenantId],
+      );
+      const x = st.rows[0]!;
       return {
+        retention: { rules: rs, receipts: num(x['receipts']), keysShredded: num(x['shredded']), openRequests: num(x['open']), ledgerPending: num(x['pending']) },
         encryption: { keys, plaintextRemaining: pt.columns, snapshotsPlaintext: pt.snapshots },
         summary,
         tables: Object.entries(DATA_CATALOG).map(([name, t]) => ({ name, ...t })),
@@ -274,7 +297,14 @@ export function renderDossier(v: CatalogView, at: Date): string {
   for (const c of s.plainByDesign) L.push(`- \`${c.column}\` — ${c.reason}`);
   L.push('', '### 5.3 Chưa mã hoá — kế hoạch F16b (họ tên, ngày sinh, ghi chú / kết quả lâm sàng)', '');
   for (const c of s.plaintextSensitive) L.push(`- \`${c}\``);
-  L.push('', '## 6. Biện pháp đang áp dụng', '');
+  L.push('', '## 6. Lưu giữ & xoá dữ liệu', '');
+  L.push('| Dữ liệu | Hành động | Thời hạn | Sàn pháp lý | Tính từ | Căn cứ |', '|---|---|---|---|---|---|');
+  for (const r of v.retention.rules) L.push(`| ${cell(r.label)} | ${r.action} | ${r.days} ngày | ${r.floorDays} ngày | ${cell(r.from)} | ${cell(r.legalBasis)} |`);
+  L.push('', `- Biên nhận xoá đã lập: **${v.retention.receipts}**; khoá theo người đã huỷ: **${v.retention.keysShredded}**; yêu cầu xoá đang mở: **${v.retention.openRequests}**.`);
+  L.push(`- Sự kiện huỷ khoá chưa đẩy ra sổ huỷ ngoài bản sao lưu: **${v.retention.ledgerPending}**${v.retention.ledgerPending === 0 ? '.' : ' — kiểm tra cron shred-ledger.'}`);
+  L.push('- Xoá theo yêu cầu: người lập khác người duyệt (CSDL chặn); còn nghĩa vụ lưu giữ thì xoá phần không bị ràng buộc + hạn chế xử lý, tự xoá nốt khi hết hạn.');
+  L.push('- Bản sao lưu: dữ liệu đã xoá không mở được ngay trên hệ thống (khoá huỷ); bản sao lưu cũ hết hạn theo vòng đời bucket; khôi phục bắt buộc phát lại sổ huỷ.');
+  L.push('', '## 7. Biện pháp đang áp dụng', '');
   L.push('- Cách ly dữ liệu theo chủ quản bằng Row-Level Security bắt buộc (FORCE) ở CSDL; ứng dụng không chạy bằng superuser.');
   L.push('- Phân quyền theo vai trò + cơ sở; access policy chỉ thu hẹp quyền, che trường nhạy cảm.');
   L.push('- Nhật ký kiểm toán chỉ-thêm, nối chuỗi băm; ghi cả thao tác bị từ chối.');

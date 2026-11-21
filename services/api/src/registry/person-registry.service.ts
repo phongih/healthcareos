@@ -1119,8 +1119,8 @@ export class PgRegistryRepository implements RegistryRepository {
 
   async insertPerson(p: Person, keys: PersonKeys): Promise<void> {
     // HCOS-F16: SĐT / email chỉ lưu bản mã + blind index + dạng che; cột bản rõ để NULL (trigger CSDL chặn ghi bản rõ).
-    const phone = await this.pii.protect('phone', p.phone);
-    const email = await this.pii.protect('email', p.email);
+    const phone = await this.pii.protect('phone', p.phone, { kind: 'person', id: p.personId });
+    const email = await this.pii.protect('email', p.email, { kind: 'person', id: p.personId });
     try {
       await this.db.query(
         `INSERT INTO patient.persons
@@ -1175,7 +1175,7 @@ export class PgRegistryRepository implements RegistryRepository {
 
   async insertIdentifier(i: Identifier): Promise<void> {
     try {
-      const v = await this.pii.protect('identifier', i.value);
+      const v = await this.pii.protect('identifier', i.value, { kind: 'identifier', id: i.identifierId });
       await this.db.query(
         `INSERT INTO patient.identifiers
            (identifier_id, tenant_id, person_id, patient_id, type, system, value_enc, value_bidx, value_hint, status, period_start, period_end)
@@ -1224,20 +1224,28 @@ export class PgRegistryRepository implements RegistryRepository {
 
   async patchSurvivor(targetId: PersonId, p: SurvivorPatch, expectedVersion: number): Promise<Person | null> {
     try {
-      // HCOS-F16: liên hệ chép nguyên bản mã từ source (cùng tenant, cùng miền => không cần giải mã).
+      // HCOS-F17: liên hệ của source được mã hoá LẠI bằng khoá của target (bản mã gắn với chủ thể, không chép nguyên được).
+      const cur = await this.db.query<Record<string, string | null>>(
+        `SELECT t.phone_enc AS t_phone, t.email_enc AS t_email, s.phone_enc AS s_phone, s.email_enc AS s_email
+           FROM patient.persons t JOIN patient.persons s ON s.tenant_id = t.tenant_id AND s.person_id = COALESCE($3::uuid, t.person_id)
+          WHERE t.tenant_id = $1 AND t.person_id = $2`,
+        [this.t, targetId, p.contactSource ?? null],
+      );
+      const x = cur.rows[0];
+      const source = { kind: 'person' as const, id: String(p.contactSource ?? targetId) };
+      const target = { kind: 'person' as const, id: String(targetId) };
+      const copy = async (domain: 'phone' | 'email', want: boolean, tgt: string | null | undefined, src: string | null | undefined) =>
+        want && !tgt && src && source.id !== target.id ? this.pii.protect(domain, await this.pii.open(domain, src, source), target) : null;
+      const ph = x ? await copy('phone', p.phone !== null, x['t_phone'], x['s_phone']) : null;
+      const em = x ? await copy('email', p.email !== null, x['t_email'], x['s_email']) : null;
       const r = await this.db.query(
         `UPDATE patient.persons t
             SET birth_date = COALESCE(t.birth_date, $3::date), sex = COALESCE(t.sex, $4::text),
-                phone_enc  = CASE WHEN $5::boolean AND t.phone_enc IS NULL THEN s.phone_enc  ELSE t.phone_enc  END,
-                phone_bidx = CASE WHEN $5::boolean AND t.phone_enc IS NULL THEN s.phone_bidx ELSE t.phone_bidx END,
-                phone_hint = CASE WHEN $5::boolean AND t.phone_enc IS NULL THEN s.phone_hint ELSE t.phone_hint END,
-                email_enc  = CASE WHEN $6::boolean AND t.email_enc IS NULL THEN s.email_enc  ELSE t.email_enc  END,
-                email_hint = CASE WHEN $6::boolean AND t.email_enc IS NULL THEN s.email_hint ELSE t.email_hint END
-           FROM patient.persons s
-          WHERE t.tenant_id = $1 AND t.person_id = $2 AND t.version = $8 AND t.status = 'active'
-            AND s.tenant_id = $1 AND s.person_id = COALESCE($7::uuid, $2)
+                phone_enc  = COALESCE($5, t.phone_enc),  phone_bidx = COALESCE($6, t.phone_bidx), phone_hint = COALESCE($7, t.phone_hint),
+                email_enc  = COALESCE($8, t.email_enc),  email_hint = COALESCE($9, t.email_hint)
+          WHERE t.tenant_id = $1 AND t.person_id = $2 AND t.version = $10 AND t.status = 'active'
           RETURNING t.person_id`,
-        [this.t, targetId, p.birthDate, p.sex, p.phone !== null, p.email !== null, p.contactSource ?? null, expectedVersion],
+        [this.t, targetId, p.birthDate, p.sex, ph?.enc ?? null, ph?.bidx ?? null, ph?.hint ?? null, em?.enc ?? null, em?.hint ?? null, expectedVersion],
       );
       return r.rows[0] ? this.findPerson(targetId) : null;
     } catch (e) {
@@ -1369,8 +1377,8 @@ export class PgRegistryRepository implements RegistryRepository {
       if (v.contact !== undefined) {
         c = v.contact ?? { phoneEnc: null, phoneBidx: null, phoneHint: null, emailEnc: null, emailHint: null };
       } else {
-        const ph = await this.pii.protect('phone', v.phone);
-        const em = await this.pii.protect('email', v.email);
+        const ph = await this.pii.protect('phone', v.phone, { kind: 'person', id: targetId });
+        const em = await this.pii.protect('email', v.email, { kind: 'person', id: targetId });
         c = { phoneEnc: ph.enc, phoneBidx: ph.bidx, phoneHint: ph.hint, emailEnc: em.enc, emailHint: em.hint };
       }
       const r = await this.db.query(

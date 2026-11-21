@@ -9,6 +9,7 @@ import { api } from '../lib/api';
 import { downloadText } from '../lib/download';
 import { fmtDateTime } from '../lib/fhir';
 import { can, useSession } from '../lib/session';
+import { RetentionSection } from './retention';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 
 type Level = 1 | 2 | 3 | 4 | 5;
@@ -40,6 +41,7 @@ interface CatalogView {
 interface KeyRow { purpose: 'data' | 'index'; version: number; kekId: string; status: string; createdAt: string }
 interface KeyStatus {
   activeKekId: string; configuredKekIds: string[]; keys: KeyRow[]; byDataVersion: Record<string, number>;
+  legacyTenantTokens: number; subjectKeys: { active: number; shredded: number };
   plaintextRemaining: Array<{ column: string; rows: number }>; snapshotsPlaintext: number;
 }
 
@@ -64,6 +66,7 @@ const STORAGE: Record<string, string> = { plain: 'lưu rõ', hashed: 'chỉ lưu
 const LevelBadge = ({ l }: { l: Level }) => <span className={`badge lvl-${l}`}>Cấp {l}</span>;
 
 export function GovernanceScreen() {
+  const { roles } = useSession();
   const cat = useLoad(() => api<CatalogView>('GET', '/api/governance/catalog').then((r) => r.data), []);
   const history = useLoad(() => api<{ assessments: Assessment[] }>('GET', '/api/governance/assessments').then((r) => r.data.assessments), []);
   const [level, setLevel] = useState<'all' | Level>('all');
@@ -143,6 +146,8 @@ export function GovernanceScreen() {
       </div>
 
       <EncryptionCard v={v} onChange={cat.reload} />
+
+      {can.retention(roles) && <RetentionSection />}
 
       <Card title={`Danh mục dữ liệu (${rows.length}/${v.tables.length} bảng)`}>
         <div className="row wrap">
@@ -295,7 +300,7 @@ function EncryptionCard({ v, onChange }: { v: CatalogView; onChange: () => void 
       const r = await api<{ version: number; recomputed?: number }>('POST', '/api/keys/rotate', { body: { purpose } });
       done(`${PURPOSE[purpose]}: phiên bản ${r.data.version}${r.data.recomputed !== undefined ? ` — tính lại ${r.data.recomputed} index` : ''}.`);
     } else if (what === 'reencrypt') {
-      done(`Đã mã hoá lại ${await loop('/api/keys/reencrypt', 'reencrypted')} giá trị bằng DEK đang dùng.`);
+      done(`Đã mã hoá lại / bọc lại ${await loop('/api/keys/reencrypt', 'reencrypted')} mục bằng khoá hiện hành.`);
     } else if (what === 'backfill') {
       done(`Đã mã hoá ${await loop('/api/keys/backfill', 'encrypted')} giá trị còn bản rõ.`);
     } else {
@@ -312,8 +317,8 @@ function EncryptionCard({ v, onChange }: { v: CatalogView; onChange: () => void 
   return (
     <Card title={`Mã hoá theo trường (${v.summary.encrypted.length} cột)`}>
       <p className="muted small">
-        Envelope encryption AES-256-GCM: mỗi chủ quản có DEK riêng, được bọc bằng KEK nằm <strong>ngoài CSDL</strong> (biến môi trường của máy chủ ứng dụng).
-        Người chỉ đọc được CSDL / bản sao lưu thấy bản mã và DEK đã bọc — không có khoá để mở. Tìm kiếm / chống trùng dùng blind index (HMAC, khoá riêng).
+        Envelope encryption AES-256-GCM: mỗi người / giấy tờ / lịch hẹn có khoá riêng, bọc bằng DEK của chủ quản; DEK lại được bọc bằng KEK nằm
+        <strong>ngoài CSDL</strong> (biến môi trường của máy chủ ứng dụng). Xoá theo yêu cầu = huỷ khoá riêng của người đó. Người chỉ đọc được CSDL / bản sao lưu thấy bản mã và DEK đã bọc — không có khoá để mở. Tìm kiếm / chống trùng dùng blind index (HMAC, khoá riêng).
         Xem bản rõ cần quyền <code>pii:reveal</code> + lý do, mỗi lần đều ghi nhật ký.
       </p>
       {left === 0 ? (
@@ -346,15 +351,17 @@ function EncryptionCard({ v, onChange }: { v: CatalogView; onChange: () => void 
           {k && (
             <div className="muted small">
               KEK đang dùng <code>{k.activeKekId}</code> (cấu hình: {k.configuredKekIds.join(', ')}) · giá trị theo phiên bản DEK:{' '}
-              {Object.entries(k.byDataVersion).map(([ver, n]) => `v${ver}: ${n}`).join(' · ') || '—'}
+              {Object.entries(k.byDataVersion).map(([ver, n]) => `v${ver}: ${n}`).join(' · ') || '—'} · khoá theo người: {k.subjectKeys.active} đang dùng, {k.subjectKeys.shredded} đã huỷ
+              {k.legacyTenantTokens > 0 && <> · còn {k.legacyTenantTokens} bản mã dạng cũ (khoá chung)</>}
             </div>
           )}
-          {oldVersions.length > 0 && <Notice kind="warn">Còn giá trị dùng DEK cũ ({oldVersions.map((x) => `v${x}`).join(', ')}) — bấm "Mã hoá lại".</Notice>}
+          {oldVersions.length > 0 && <Notice kind="warn">Còn khoá theo người được bọc bằng DEK cũ ({oldVersions.map((x) => `v${x}`).join(', ')}) — bấm "Mã hoá lại".</Notice>}
+          {k && k.legacyTenantTokens > 0 && <Notice kind="warn">Còn {k.legacyTenantTokens} giá trị mã hoá bằng khoá chung của tenant (F16) — bấm "Mã hoá lại" để chuyển sang khoá riêng từng người (cần cho xoá theo yêu cầu).</Notice>}
           {staleKek && <Notice kind="warn">Có DEK còn bọc bằng KEK cũ — bấm "Bọc lại bằng KEK mới" trước khi gỡ KEK cũ khỏi cấu hình.</Notice>}
           <div className="row wrap">
             <button disabled={act.busy || left === 0} onClick={() => void act.run('backfill')}>Mã hoá dữ liệu cũ</button>
             <button className="secondary" disabled={act.busy} onClick={() => void act.run('rotate-data')}>Xoay DEK</button>
-            <button className="secondary" disabled={act.busy || oldVersions.length === 0} onClick={() => void act.run('reencrypt')}>Mã hoá lại</button>
+            <button className="secondary" disabled={act.busy || (oldVersions.length === 0 && !k?.legacyTenantTokens)} onClick={() => void act.run('reencrypt')}>Mã hoá lại</button>
             <button className="secondary" disabled={act.busy || !staleKek} onClick={() => void act.run('rewrap')}>Bọc lại bằng KEK mới</button>
             <button className="secondary" disabled={act.busy} onClick={() => void act.run('rotate-index')}>Xoay khoá blind index</button>
           </div>

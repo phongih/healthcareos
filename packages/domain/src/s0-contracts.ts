@@ -143,7 +143,8 @@ export interface Membership extends TenantScoped, Versioned, Timestamped {
 // Patient identity: person_id vs patient_id
 // ---------------------------------------------------------------------------
 export type Sex = 'male' | 'female' | 'other' | 'unknown';
-export type PersonStatus = 'active' | 'merged' | 'deceased' | 'inactive';
+/** 'erased' (F17): đã xoá theo yêu cầu — mọi trường định danh trống, khoá chủ thể đã huỷ. */
+export type PersonStatus = 'active' | 'merged' | 'deceased' | 'inactive' | 'erased';
 
 /** Con người thật trong tenant. Là gốc để hợp nhất (merge) trùng lặp. */
 export interface Person extends TenantScoped, Versioned, Timestamped {

@@ -76,6 +76,9 @@ export const can = {
   /** F16: xem bản rõ SĐT / email / CCCD (server kiểm tra pii:reveal tại cơ sở của bản ghi). */
   revealPii: (r: ReadonlySet<Role>) => ['clinic_staff', 'clinic_admin', 'doctor'].some((x) => r.has(x as Role)),
   keysManage: (r: ReadonlySet<Role>) => r.has('tenant_admin'),
+  /** F17: lập yêu cầu xoá dữ liệu theo đề nghị người bệnh (cần người thứ hai duyệt). */
+  erasureRequest: (r: ReadonlySet<Role>) => r.has('clinic_staff') || r.has('clinic_admin'),
+  retention: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   handoverManage: (r: ReadonlySet<Role>) => r.has('clinic_admin') || r.has('tenant_admin'),
   notifications: (r: ReadonlySet<Role>) =>
     ['doctor', 'pharmacist', 'clinic_staff', 'cashier', 'clinic_admin', 'pharmacy_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),

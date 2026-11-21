@@ -86,3 +86,7 @@ Phát hiện: mọi thứ mã hoá trước 2026-11-08 13:52:26 UTC (bản vật
 - `pitr-selftest.sh` (cluster tạm + PostgreSQL 16 thật + age thật + kho GCS GIẢ là thư mục): dữ liệu khôi phục đúng thời điểm (có nhóm A, B; không có C); không có lần archive lỗi; bản sao lưu và WAL là ciphertext. Kiểm tra phủ định: không đặt thời điểm thì có thêm C. Kiểm tra gọi lặp lại: chấp nhận đúng object đã xác minh, từ chối object bị đổi nội dung.
 - **Chưa kiểm chứng**: `gcloud` và GCS thật (lần chạy đầu trên VM là bằng chứng đầu tiên), một diễn tập khôi phục sự cố thật trên máy mới, thời gian khôi phục với dữ liệu lớn (bản sao lưu hiện ghi qua file tạm, chưa phát trực tiếp), và hành vi khi chuyển timeline nhiều lần.
 - Cũng là giới hạn: RPO ≈ 5 phút chỉ khi archive chạy tốt; không có replica nên vẫn có thời gian ngừng khi mất VM (RTO = thời gian dựng máy + tải + phát lại WAL, chưa đo).
+
+## Sau khi khôi phục: phát lại sổ huỷ khoá (HCOS-F17)
+Trước khi promote / mở API trên bản khôi phục: `AGE_IDENTITY=~/key.txt BUCKET=... PGDATABASE=<db> ./shred-replay.sh` (xem BACKUP.md).
+Thiếu bước này, người bệnh đã xoá theo yêu cầu sau thời điểm khôi phục sẽ "sống lại".

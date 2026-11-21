@@ -26,7 +26,7 @@ import {
 } from '../../../../packages/domain/src/s0-contracts';
 import { ACCESS_POLICY_CATALOG, buildGrants, decideAccess, type AccessGrant, type AccessPolicy, type PolicyAction } from '../../../../packages/security/src/access-policy';
 import { asTenantId, isUuid } from '../../../../packages/domain/src/s0-contracts';
-import { keyProvider, maskFor, TenantPii, tokenVersion, type KeyPurpose, type PiiDomain } from '../../../../packages/security/src/pii';
+import { keyProvider, maskFor, PiiShreddedError, TenantPii, tokenFormat, type KeyPurpose, type PiiDomain, type SubjectKind } from '../../../../packages/security/src/pii';
 import { assertSameTenant, requireTenantContext, withTenantTransaction, type PgPoolLike } from '../../../../packages/security/src/tenant-context';
 import { ClinicalError, PgClinicalRepository } from '../clinical/encounter.service';
 
@@ -56,20 +56,26 @@ const FIELDS: Readonly<Record<RevealKind, Readonly<Record<string, { table: strin
 };
 
 /** Cột mã hoá theo bảng (dùng cho mã hoá lại / xoay khoá index / backfill / thống kê). */
-export const SEALED_COLUMNS: ReadonlyArray<{ table: string; id: string; plain: string; enc: string; bidx: string | null; hint: string; domain: PiiDomain; extraNull?: string }> = [
-  { table: 'patient.persons', id: 'person_id', plain: 'phone', enc: 'phone_enc', bidx: 'phone_bidx', hint: 'phone_hint', domain: 'phone', extraNull: 'phone_key' },
-  { table: 'patient.persons', id: 'person_id', plain: 'email', enc: 'email_enc', bidx: null, hint: 'email_hint', domain: 'email' },
-  { table: 'patient.identifiers', id: 'identifier_id', plain: 'value', enc: 'value_enc', bidx: 'value_bidx', hint: 'value_hint', domain: 'identifier' },
-  { table: 'clinical.bookings', id: 'booking_id', plain: 'phone', enc: 'phone_enc', bidx: 'phone_bidx', hint: 'phone_hint', domain: 'phone' },
-  { table: 'clinical.bookings', id: 'booking_id', plain: 'national_id', enc: 'national_id_enc', bidx: 'national_id_bidx', hint: 'national_id_hint', domain: 'identifier' },
+export const SEALED_COLUMNS: ReadonlyArray<{
+  table: string; id: string; kind: SubjectKind; plain: string; enc: string; bidx: string | null; hint: string; domain: PiiDomain; extraNull?: string;
+}> = [
+  { table: 'patient.persons', id: 'person_id', kind: 'person', plain: 'phone', enc: 'phone_enc', bidx: 'phone_bidx', hint: 'phone_hint', domain: 'phone', extraNull: 'phone_key' },
+  { table: 'patient.persons', id: 'person_id', kind: 'person', plain: 'email', enc: 'email_enc', bidx: null, hint: 'email_hint', domain: 'email' },
+  { table: 'patient.identifiers', id: 'identifier_id', kind: 'identifier', plain: 'value', enc: 'value_enc', bidx: 'value_bidx', hint: 'value_hint', domain: 'identifier' },
+  { table: 'clinical.bookings', id: 'booking_id', kind: 'booking', plain: 'phone', enc: 'phone_enc', bidx: 'phone_bidx', hint: 'phone_hint', domain: 'phone' },
+  { table: 'clinical.bookings', id: 'booking_id', kind: 'booking', plain: 'national_id', enc: 'national_id_enc', bidx: 'national_id_bidx', hint: 'national_id_hint', domain: 'identifier' },
 ];
 
 export interface KeyStatus {
   readonly activeKekId: string;
   readonly configuredKekIds: readonly string[];
   readonly keys: ReadonlyArray<{ purpose: KeyPurpose; version: number; kekId: string; status: string; createdAt: string }>;
-  /** Số giá trị đã mã hoá theo phiên bản DEK. */
+  /** Số khoá chủ thể theo phiên bản DEK đang bọc chúng (F17). */
   readonly byDataVersion: Readonly<Record<string, number>>;
+  /** Số bản mã còn dạng `e1` (DEK tenant, F16) — chuyển sang khoá chủ thể bằng "Mã hoá lại". */
+  readonly legacyTenantTokens: number;
+  /** Khoá chủ thể: đang dùng / đã huỷ. */
+  readonly subjectKeys: { readonly active: number; readonly shredded: number };
   /** Số giá trị còn ở bản rõ (chưa backfill) theo cột. */
   readonly plaintextRemaining: ReadonlyArray<{ column: string; rows: number }>;
   readonly snapshotsPlaintext: number;
@@ -108,8 +114,9 @@ export async function backfillBatch(db: TenantScopedDb, pii: TenantPii, limit = 
     );
     for (const row of r.rows) {
       const plain = row['v']!;
-      const p = await pii.protect(c.domain, plain);
-      if ((await pii.open(c.domain, p.enc!)) !== plain) throw new ClinicalError('INVALID_STATE', 'Backfill verification failed', { reason: 'BACKFILL_VERIFY_FAILED' });
+      const subject = { kind: c.kind, id: String(row['id']) };
+      const p = await pii.protect(c.domain, plain, subject);
+      if ((await pii.open(c.domain, p.enc!, subject)) !== plain) throw new ClinicalError('INVALID_STATE', 'Backfill verification failed', { reason: 'BACKFILL_VERIFY_FAILED' });
       const sets = [`${c.enc} = $3`, `${c.hint} = $4`, `${c.plain} = NULL`];
       const params: unknown[] = [db.tenantId, row['id'], p.enc, p.hint];
       if (c.bidx) {
@@ -124,22 +131,24 @@ export async function backfillBatch(db: TenantScopedDb, pii: TenantPii, limit = 
   // Ảnh chụp gộp hồ sơ.
   if (done < limit) {
     const m = await db.query<Record<string, string>>(
-      `SELECT merge_id, source_snapshot::text AS s, target_snapshot::text AS t FROM patient.person_merges WHERE tenant_id = $1
+      `SELECT merge_id, source_person_id AS sp, target_person_id AS tp, source_snapshot::text AS s, target_snapshot::text AS t FROM patient.person_merges WHERE tenant_id = $1
           AND (source_snapshot->>'phone' IS NOT NULL OR source_snapshot->>'email' IS NOT NULL
                OR target_snapshot->>'phone' IS NOT NULL OR target_snapshot->>'email' IS NOT NULL)
         ORDER BY merge_id LIMIT ${limit - done}`,
       [db.tenantId],
     );
     for (const row of m.rows) {
-      const seal = async (raw: string | null): Promise<Record<string, unknown> | null> => {
+      const seal = async (raw: string | null, personId: string): Promise<Record<string, unknown> | null> => {
         if (raw === null) return null;
         const snap = JSON.parse(raw) as Record<string, unknown>;
-        const ph = await pii.protect('phone', (snap['phone'] as string | null | undefined) ?? null);
-        const em = await pii.protect('email', (snap['email'] as string | null | undefined) ?? null);
+        const subject = { kind: 'person' as const, id: personId };
+        const ph = await pii.protect('phone', (snap['phone'] as string | null | undefined) ?? null, subject);
+        const em = await pii.protect('email', (snap['email'] as string | null | undefined) ?? null, subject);
         return { ...snap, phone: null, email: null, contact: { phoneEnc: ph.enc, phoneBidx: ph.bidx, phoneHint: ph.hint, emailEnc: em.enc, emailHint: em.hint } };
       };
       await db.query('SELECT patient.seal_merge_snapshot($1, $2::jsonb, $3::jsonb)', [
-        row['merge_id'], JSON.stringify(await seal(row['s'] ?? null)), row['t'] === null || row['t'] === undefined ? null : JSON.stringify(await seal(row['t'])),
+        row['merge_id'], JSON.stringify(await seal(row['s'] ?? null, String(row['sp']))),
+        row['t'] === null || row['t'] === undefined ? null : JSON.stringify(await seal(row['t'], String(row['tp']))),
       ]);
       done++;
     }
@@ -147,32 +156,36 @@ export async function backfillBatch(db: TenantScopedDb, pii: TenantPii, limit = 
   return done;
 }
 
-/** Mã hoá lại các giá trị dùng DEK cũ bằng DEK đang dùng. Trả số giá trị đã mã hoá lại. */
+/**
+ * "Mã hoá lại" (F17): (1) chuyển bản mã `e1` (DEK tenant, F16) sang khoá chủ thể `s1` — kể cả khối liên hệ trong ảnh chụp gộp hồ sơ;
+ * (2) bọc lại các khoá chủ thể còn dùng DEK cũ bằng DEK hiện hành (dữ liệu không cần mã hoá lại). Trả số mục đã xử lý; gọi lặp tới khi 0.
+ */
 export async function reencryptBatch(db: TenantScopedDb, pii: TenantPii, limit = 500): Promise<number> {
-  const active = await pii.activeVersion('data');
   let done = 0;
   for (const c of SEALED_COLUMNS) {
     if (done >= limit) break;
     const r = await db.query<Record<string, string>>(
       `SELECT ${c.id} AS id, ${c.enc} AS e FROM ${c.table}
-        WHERE tenant_id = $1 AND ${c.enc} IS NOT NULL AND split_part(${c.enc}, '.', 2)::int <> $2 ORDER BY ${c.id} LIMIT ${limit - done} FOR UPDATE`,
-      [db.tenantId, active],
+        WHERE tenant_id = $1 AND ${c.enc} LIKE 'e1.%' ORDER BY ${c.id} LIMIT ${limit - done} FOR UPDATE`,
+      [db.tenantId],
     );
     for (const row of r.rows) {
-      const fresh = await pii.seal(c.domain, await pii.open(c.domain, row['e']!));
+      const subject = { kind: c.kind, id: String(row['id']) };
+      const plain = await pii.open(c.domain, row['e']!);
+      const fresh = await pii.seal(c.domain, plain, subject);
+      if ((await pii.open(c.domain, fresh, subject)) !== plain) throw new ClinicalError('INVALID_STATE', 'Re-encryption verification failed', { reason: 'BACKFILL_VERIFY_FAILED' });
       await db.query(`UPDATE ${c.table} SET ${c.enc} = $3 WHERE tenant_id = $1 AND ${c.id} = $2`, [db.tenantId, row['id'], fresh]);
       done++;
     }
   }
   if (done < limit) {
     const m = await db.query<Record<string, string>>(
-      `SELECT merge_id, source_snapshot::text AS s, target_snapshot::text AS t FROM patient.person_merges WHERE tenant_id = $1 ORDER BY merge_id`,
+      `SELECT merge_id, source_person_id AS sp, target_person_id AS tp, source_snapshot::text AS s, target_snapshot::text AS t FROM patient.person_merges
+        WHERE tenant_id = $1 AND (source_snapshot::text LIKE '%"e1.%' OR target_snapshot::text LIKE '%"e1.%') ORDER BY merge_id LIMIT ${limit - done}`,
       [db.tenantId],
     );
     for (const row of m.rows) {
-      if (done >= limit) break;
-      let changed = false;
-      const redo = async (raw: string | null | undefined): Promise<Record<string, unknown> | null> => {
+      const redo = async (raw: string | null | undefined, personId: string): Promise<Record<string, unknown> | null> => {
         if (raw === null || raw === undefined) return null;
         const snap = JSON.parse(raw) as Record<string, unknown>;
         const c = snap['contact'] as Record<string, string | null> | undefined;
@@ -180,21 +193,17 @@ export async function reencryptBatch(db: TenantScopedDb, pii: TenantPii, limit =
         const out = { ...c };
         for (const [k, domain] of [['phoneEnc', 'phone'], ['emailEnc', 'email']] as const) {
           const v = c[k];
-          if (v && tokenVersion(v) !== active) {
-            out[k] = await pii.seal(domain, await pii.open(domain, v));
-            changed = true;
-          }
+          if (v && tokenFormat(v) === 'e1') out[k] = await pii.seal(domain, await pii.open(domain, v), { kind: 'person', id: personId });
         }
         return { ...snap, contact: out };
       };
-      const s = await redo(row['s']);
-      const t = await redo(row['t']);
-      if (changed) {
-        await db.query('SELECT patient.seal_merge_snapshot($1, $2::jsonb, $3::jsonb)', [row['merge_id'], JSON.stringify(s), t === null ? null : JSON.stringify(t)]);
-        done++;
-      }
+      const sNew = await redo(row['s'], String(row['sp']));
+      const tNew = await redo(row['t'], String(row['tp']));
+      await db.query('SELECT patient.seal_merge_snapshot($1, $2::jsonb, $3::jsonb)', [row['merge_id'], JSON.stringify(sNew), tNew === null ? null : JSON.stringify(tNew)]);
+      done++;
     }
   }
+  if (done < limit) done += await pii.rewrapSubjectKeys(limit - done);
   return done;
 }
 
@@ -203,7 +212,9 @@ export async function reencryptBatch(db: TenantScopedDb, pii: TenantPii, limit =
  * Backfill toàn bộ một tenant (dùng cho scripts/pii-backfill.ts lúc triển khai): lặp theo lô tới khi hết,
  * ghi một sự kiện audit 'pii.backfill' (chỉ số đếm) và trả về số bản rõ còn lại (phải = 0).
  */
-export async function backfillTenant(pool: PgPoolLike, tenant: string, log: (m: string) => void = () => {}): Promise<{ encrypted: number; remaining: number; stats: Awaited<ReturnType<typeof plaintextStats>> }> {
+export async function backfillTenant(
+  pool: PgPoolLike, tenant: string, log: (m: string) => void = () => {},
+): Promise<{ encrypted: number; remaining: number; converted: number; legacyRemaining: number; stats: Awaited<ReturnType<typeof plaintextStats>> }> {
   const ctx: TenantContext = Object.freeze({
     tenantId: asTenantId(tenant), userSubject: 'service:pii-backfill', userId: null, personId: null, activeOrganizationId: null,
     allowedOrganizationIds: Object.freeze([]), roles: Object.freeze([]), tokenId: null, correlationId: randomUUID() as CorrelationId,
@@ -215,16 +226,26 @@ export async function backfillTenant(pool: PgPoolLike, tenant: string, log: (m: 
     if (n === 0) break;
     log(`  ${tenant}: +${n} (tổng ${total})`);
   }
+  // F17: chuyển bản mã e1 (DEK tenant) sang khoá theo chủ thể (s1) + bọc lại khoá chủ thể còn dùng DEK cũ.
+  let converted = 0;
+  for (;;) {
+    const n = await withTenantTransaction(pool, async (db) => reencryptBatch(db, new TenantPii(db), 500), ctx);
+    converted += n;
+    if (n === 0) break;
+    log(`  ${tenant}: chuyển sang khoá theo người +${n} (tổng ${converted})`);
+  }
+  let legacyRemaining = 0;
   const stats = await withTenantTransaction(pool, async (db) => {
     const st = await plaintextStats(db);
+    legacyRemaining = (await new Repo(db).countByVersion()).legacy;
     await db.query(
       `INSERT INTO platform.audit_events (tenant_id, actor_type, actor_id, action, resource_type, outcome, correlation_id, payload)
        VALUES ($1, 'service', 'pii-backfill', 'pii.backfill', 'TenantKey', 'success', $2, $3::jsonb)`,
-      [tenant, ctx.correlationId, JSON.stringify({ encrypted: total, remaining: st })],
+      [tenant, ctx.correlationId, JSON.stringify({ encrypted: total, converted, legacyRemaining, remaining: st })],
     );
     return st;
   }, ctx);
-  return { encrypted: total, remaining: stats.columns.reduce((a, c) => a + c.rows, 0) + stats.snapshots, stats };
+  return { encrypted: total, remaining: stats.columns.reduce((a, c) => a + c.rows, 0) + stats.snapshots, converted, legacyRemaining, stats };
 }
 
 export async function rotateIndexKey(db: TenantScopedDb, pii: TenantPii): Promise<{ version: number; recomputed: number }> {
@@ -236,7 +257,7 @@ export async function rotateIndexKey(db: TenantScopedDb, pii: TenantPii): Promis
     if (!c.bidx) continue;
     const r = await db.query<Record<string, string>>(`SELECT ${c.id} AS id, ${c.enc} AS e FROM ${c.table} WHERE tenant_id = $1 AND ${c.enc} IS NOT NULL`, [db.tenantId]);
     for (const row of r.rows) {
-      const idx = await pii.index(c.domain, await pii.open(c.domain, row['e']!));
+      const idx = await pii.index(c.domain, await pii.open(c.domain, row['e']!, { kind: c.kind, id: String(row['id']) }));
       await db.query(`UPDATE ${c.table} SET ${c.bidx} = $3 WHERE tenant_id = $1 AND ${c.id} = $2`, [db.tenantId, row['id'], idx]);
       n++;
     }
@@ -292,20 +313,38 @@ class Repo extends PgClinicalRepository {
     if (m.kind === 'person') return { kind: 'person', id: row.person_id };
     return row.identifier_id ? { kind: 'identifier', id: row.identifier_id } : null;
   }
-  async sealedValue(f: { table: string; enc: string; plain: string }, idCol: string, id: string): Promise<{ enc: string | null; plain: string | null } | null> {
-    const r = await this.tdb.query<Record<string, string | null>>(`SELECT ${f.enc} AS e, ${f.plain} AS p FROM ${f.table} WHERE tenant_id = $1 AND ${idCol} = $2`, [this.tdb.tenantId, id]);
-    return r.rows[0] ? { enc: r.rows[0]['e'] ?? null, plain: r.rows[0]['p'] ?? null } : null;
+  async sealedValue(f: { table: string; enc: string; plain: string }, idCol: string, id: string): Promise<{ enc: string | null; plain: string | null; erased: boolean } | null> {
+    const r = await this.tdb.query<Record<string, string | null>>(
+      `SELECT ${f.enc} AS e, ${f.plain} AS p, erased_at AS x FROM ${f.table} WHERE tenant_id = $1 AND ${idCol} = $2`,
+      [this.tdb.tenantId, id],
+    );
+    return r.rows[0] ? { enc: r.rows[0]['e'] ?? null, plain: r.rows[0]['p'] ?? null, erased: r.rows[0]['x'] !== null && r.rows[0]['x'] !== undefined } : null;
   }
-  async countByVersion(): Promise<Record<string, number>> {
+  async countByVersion(): Promise<{ byDataVersion: Record<string, number>; legacy: number; active: number; shredded: number }> {
     const out: Record<string, number> = {};
+    let legacy = 0;
     for (const c of SEALED_COLUMNS) {
-      const r = await this.tdb.query<{ v: string; n: string | number }>(
-        `SELECT split_part(${c.enc}, '.', 2) AS v, count(*) AS n FROM ${c.table} WHERE tenant_id = $1 AND ${c.enc} IS NOT NULL GROUP BY 1`,
-        [this.tdb.tenantId],
-      );
-      for (const x of r.rows) out[x.v] = (out[x.v] ?? 0) + Number(x.n);
+      const r = await this.tdb.query<{ n: string | number }>(`SELECT count(*) AS n FROM ${c.table} WHERE tenant_id = $1 AND ${c.enc} LIKE 'e1.%'`, [this.tdb.tenantId]);
+      legacy += Number(r.rows[0]!.n);
     }
-    return out;
+    const sn = await this.tdb.query<{ n: string | number }>(
+      `SELECT count(*) AS n FROM patient.person_merges WHERE tenant_id = $1 AND (source_snapshot::text LIKE '%"e1.%' OR target_snapshot::text LIKE '%"e1.%')`,
+      [this.tdb.tenantId],
+    );
+    legacy += Number(sn.rows[0]!.n);
+    const k = await this.tdb.query<{ v: string | number; status: string; n: string | number }>(
+      `SELECT dek_version AS v, status, count(*) AS n FROM keyvault.subject_keys WHERE tenant_id = $1 GROUP BY 1, 2`,
+      [this.tdb.tenantId],
+    );
+    let active = 0;
+    let shredded = 0;
+    for (const x of k.rows) {
+      if (x.status === 'active') {
+        out[String(x.v)] = (out[String(x.v)] ?? 0) + Number(x.n);
+        active += Number(x.n);
+      } else shredded += Number(x.n);
+    }
+    return { byDataVersion: out, legacy, active, shredded };
   }
 }
 
@@ -349,7 +388,15 @@ export class PiiService {
       if (!allowedAt) throw new ClinicalError('FORBIDDEN', 'Missing permission pii:reveal for this record');
       const sealed = await repo.sealedValue(f, ID_COL[kind], id);
       if (!sealed) throw new ClinicalError('NOT_FOUND', 'Record not found');
-      const value = sealed.enc ? await repo.codec.open(f.domain, sealed.enc) : sealed.plain;
+      if (sealed.erased) throw new ClinicalError('NOT_FOUND', 'Data has been erased', { reason: 'PII_ERASED' });
+      const subject = { kind: (kind === 'booking' ? 'booking' : kind === 'identifier' ? 'identifier' : 'person') as SubjectKind, id };
+      let value: string | null;
+      try {
+        value = sealed.enc ? await repo.codec.open(f.domain, sealed.enc, subject) : sealed.plain;
+      } catch (e) {
+        if (e instanceof PiiShreddedError) throw new ClinicalError('NOT_FOUND', 'Data has been erased', { reason: 'PII_ERASED' });
+        throw e;
+      }
       await repo.appendAudit(this.event(ctx, 'pii.reveal', allowedAt, 'success', user, {
         kind, recordId: id, field, reason, ...(scope.personId ? { personId: scope.personId } : {}),
       }, kind === 'booking' ? 'Booking' : 'Person', id));
@@ -366,7 +413,7 @@ export class PiiService {
         activeKekId: kp.activeKekId,
         configuredKekIds: kp.kekIds(),
         keys: rows.map((r) => ({ purpose: r.purpose, version: r.version, kekId: r.kekId, status: r.status, createdAt: r.createdAt })),
-        byDataVersion: await repo.countByVersion(),
+        ...(await repo.countByVersion().then((c) => ({ byDataVersion: c.byDataVersion, legacyTenantTokens: c.legacy, subjectKeys: { active: c.active, shredded: c.shredded } }))),
         plaintextRemaining: stats.columns,
         snapshotsPlaintext: stats.snapshots,
       };

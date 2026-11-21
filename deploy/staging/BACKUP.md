@@ -25,3 +25,12 @@ Phạm vi và giới hạn:
 Giải mã/khôi phục: `age -d -i key.txt hcos-<ts>.dump.age > hcos.dump` rồi `pg_restore`.
 Mất khoá riêng = mất khả năng khôi phục từ bản sao lưu ngoài máy: giữ khoá ở ít nhất hai nơi tách biệt.
 Đã thử với age thật và gcloud giả lập; hành vi trên GCS thật được kiểm chứng ở lần chạy đầu (script báo lỗi rõ nếu MD5 không khớp).
+
+## Khôi phục và dữ liệu đã xoá (HCOS-F17)
+Bản sao lưu chụp TRƯỚC một lần xoá theo yêu cầu / hết hạn lưu vẫn chứa dữ liệu và khoá riêng của người đó. Sau MỌI lần khôi phục
+(`pg_restore` hoặc PITR), **trước khi mở API**, phát lại sổ huỷ khoá (đẩy ra GCS mỗi 15 phút bởi `shred-ledger-offsite.sh`):
+```
+AGE_IDENTITY=~/key.txt BUCKET=hco-staging-backups-513303 PGDATABASE=<db vừa khôi phục> ./shred-replay.sh
+```
+Kết quả `applied` / `already` / `absent` theo số sự kiện; chạy lại an toàn. Vòng đời bucket (90 ngày) phải khớp `HCOS_BACKUP_HORIZON_DAYS`
+của API (ngày "không thể khôi phục" ghi trên biên nhận xoá). Tự kiểm chứng: `./shred-ledger-selftest.sh`.

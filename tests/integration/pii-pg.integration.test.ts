@@ -194,7 +194,9 @@ run('Mã hoá theo trường / PostgreSQL', () => {
     expect(await outcome(pii.rotate('data', C.mgr))).toBe('FORBIDDEN');
     expect(await pii.rotate('data', C.root)).toEqual({ purpose: 'data', version: 2 });
     const p2 = await reg.createPerson({ givenName: 'Dung', familyName: 'Lê', birthDate: '1991-03-03', phone: '0911000002' } as never, C.staff);
-    expect(su(`SELECT split_part(phone_enc, '.', 2) FROM patient.persons WHERE person_id='${p2.person.personId}'`)).toBe('2');
+    // F17: bản mã s1 bằng khoá của chính người đó; khoá người mới được bọc bằng DEK v2.
+    expect(su(`SELECT left(phone_enc, 3) FROM patient.persons WHERE person_id='${p2.person.personId}'`)).toBe('s1.');
+    expect(su(`SELECT dek_version FROM keyvault.subject_keys WHERE subject_kind='person' AND subject_id='${p2.person.personId}'`)).toBe('2');
     expect((await pii.keys(C.root)).byDataVersion['1']).toBeGreaterThan(0);
     expect(await pii.reveal({ kind: 'person', id: personId, field: 'phone', reason: 'Gọi điện báo kết quả' }, C.staff)).toEqual({ value: PHONE });
     expect((await pii.reencrypt(1000, C.root)).reencrypted).toBeGreaterThan(0);

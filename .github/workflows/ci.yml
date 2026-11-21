@@ -78,6 +78,9 @@ jobs:
           PGDATABASE=hcos_ci node scripts/migrate.mjs
           PGDATABASE=hcos_ci node scripts/migrate.mjs
       - run: npm run test:integration
+      # HCOS-F17: xoá -> đẩy sổ huỷ (age + GCS giả) -> khôi phục bản sao lưu cũ -> phát lại sổ -> dữ liệu bị xoá lại.
+      - name: Shred ledger round-trip (backup restore cannot resurrect erased data)
+        run: sudo apt-get install -y age && bash deploy/staging/shred-ledger-selftest.sh
       # Script sinh dữ liệu thực tập đi qua API thật: chạy bằng role đăng nhập thuộc hcos_app (RLS có hiệu lực), chạy 2 lần để kiểm tra idempotent.
       - name: Training seed (staging) runs through the real API
         run: |
@@ -94,6 +97,7 @@ jobs:
           # HCOS-F16: script backfill (driver pg thật) chạy được và báo 0 bản rõ còn lại.
           npx tsx scripts/pii-backfill.ts 00000000-0000-4000-8000-0000000000a1 | tee backfill.txt
           grep -q 'Bản rõ còn lại: 0' backfill.txt
+          grep -q 'Bản mã dạng cũ còn lại: 0' backfill.txt
           test "$(psql -X -tA -d hcos_training -c "SELECT count(*) FROM patient.persons WHERE phone IS NOT NULL OR email IS NOT NULL")" = 0
           ! grep -qE '^  (bệnh nhân|lô nhập|lần cấp phát theo đơn|đơn thuốc|đơn chờ cấp|phòng khám|màn hình gọi số|số thứ tự|sức chứa đặt lịch|cổng đặt lịch|lịch hẹn online|cài đặt thu ngân|bảng giá|sức khám mỗi buổi|luật Decision Engine) +[0-9]+$' second-run.txt
 
