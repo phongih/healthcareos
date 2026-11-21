@@ -29,7 +29,7 @@ import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/s
 import { BookingService, PgBookingUnitOfWork, PublicBookingService, periodOpen, vnNow } from '../services/api/src/clinical/booking.service';
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
 import { HandoverService } from '../services/api/src/clinical/handover.service';
-import { configureKeyProvider, LocalKeyProvider } from '../packages/security/src/pii';
+import { configureKeyProvider, LocalKeyProvider, maskPhone } from '../packages/security/src/pii';
 import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
 import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analytics/forecast.service';
@@ -494,8 +494,12 @@ async function seedBooking(): Promise<void> {
     period = periodOpen(date, 'morning', now) ? 'morning' : periodOpen(date, 'afternoon', now) ? 'afternoon' : null;
   }
   if (!period) return;
-  const existing = (await call<{ bookings: Array<{ phone: string }> }>(LT, 'GET', `/api/bookings?organization=${ORG}&date=${date}`)).data.bookings;
-  if (existing.some((b) => b.phone.startsWith('01209'))) {
+  const trainingPhone = (i: number) => `01209${String(10000 + i).slice(-5)}`;
+  // F16: danh sách chỉ trả SĐT đã che (vd. 012****000) — so khớp theo gợi ý che của SĐT mẫu.
+  const hints = new Set(Array.from({ length: 20 }, (_, i) => maskPhone(trainingPhone(i))));
+  const existing = (await call<{ bookings: Array<{ phone: string | null; familyName: string; givenName: string }> }>(LT, 'GET', `/api/bookings?organization=${ORG}&date=${date}`)).data.bookings;
+  const newNames = new Set(BOOKING_NEW.map((p) => `${p.familyName} ${p.givenName}`));
+  if (existing.some((b) => b.phone !== null && hints.has(b.phone) && newNames.has(`${b.familyName} ${b.givenName}`))) {
     bump('lịch hẹn đã có (bỏ qua)');
     return;
   }
@@ -515,7 +519,7 @@ async function seedBooking(): Promise<void> {
     if (!room) break;
     const r = await fetch(`${BASE}/api/public/booking/${slug}/bookings`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...p, servicePointId: room.servicePointId, visitDate: date, period, phone: `01209${String(10000 + i).slice(-5)}`, consent: true, consentVersion: opts.consentVersion }),
+      body: JSON.stringify({ ...p, servicePointId: room.servicePointId, visitDate: date, period, phone: trainingPhone(i), consent: true, consentVersion: opts.consentVersion }),
     });
     const text = await r.text();
     if (!r.ok) throw new HttpError(r.status, text);
