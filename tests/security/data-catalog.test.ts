@@ -40,7 +40,8 @@ describe('Danh mục dữ liệu', () => {
   });
 
   it('nhãn hiệu lực: cột thừa hưởng bảng, ghi đè khi có', () => {
-    expect(labelOf('patient.persons', 'phone')).toMatchObject({ level: 3, category: 'personal', explicit: true, storage: 'plain' });
+    expect(labelOf('patient.persons', 'phone')).toMatchObject({ level: 3, category: 'personal', explicit: true, storage: 'retired' });
+    expect(labelOf('patient.persons', 'phone_enc')).toMatchObject({ level: 3, storage: 'encrypted' });
     expect(labelOf('patient.persons', 'created_at')).toMatchObject({ level: 3, explicit: false });
     expect(labelOf('integration.endpoints', 'url_ciphertext')?.storage).toBe('encrypted');
     expect(labelOf('nope.table')).toBeNull();
@@ -59,8 +60,14 @@ describe('Danh mục dữ liệu', () => {
     expect(problems).toEqual([]);
     for (const t of ['clinical.encounters', 'clinical.conditions', 'clinical.observations', 'clinical.prescriptions']) expect(DATA_CATALOG[t]!.level).toBe(3);
     const s = summarize();
-    expect(s.plaintextSensitive).toContain('patient.persons.phone');
-    expect(s.plaintextSensitive).toContain('patient.identifiers.value');
+    // HCOS-F16: SĐT / email / số giấy tờ đã mã hoá; cột bản rõ cũ 'retired' không còn trong danh sách việc.
+    expect(s.encrypted).toContain('patient.persons.phone_enc');
+    expect(s.encrypted).toContain('patient.identifiers.value_enc');
+    expect(s.encrypted).toContain('clinical.bookings.national_id_enc');
+    expect(s.plaintextSensitive).not.toContain('patient.persons.phone');
+    expect(s.plaintextSensitive).not.toContain('patient.identifiers.value');
+    expect(s.plaintextSensitive).toContain('patient.persons.given_name'); // F16b
+    expect(s.plainByDesign.map((x) => x.column)).toContain('patient.patients.mrn');
     expect(s.plaintextSensitive).not.toContain('integration.endpoints.url_ciphertext');
   });
 });

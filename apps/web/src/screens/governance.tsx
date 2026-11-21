@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { downloadText } from '../lib/download';
 import { fmtDateTime } from '../lib/fhir';
+import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 
 type Level = 1 | 2 | 3 | 4 | 5;
@@ -21,12 +22,25 @@ interface Assessment {
   assessedByName: string | null; assessedAt: string;
 }
 interface CatalogView {
-  summary: { version: string; systemLevel: Level; tables: number; byLevel: Record<string, number>; plaintextSensitive: string[] };
+  summary: {
+    version: string; systemLevel: Level; tables: number; byLevel: Record<string, number>; plaintextSensitive: string[];
+    plainByDesign: Array<{ column: string; reason: string }>; encrypted: string[];
+  };
   tables: TableRow[];
   scale: Array<{ table: string; label: string; rows: number }>;
   latest: Assessment | null;
   needsAssessment: boolean;
   canAssess: boolean;
+  encryption: {
+    keys: KeyRow[];
+    plaintextRemaining: Array<{ column: string; rows: number }>;
+    snapshotsPlaintext: number;
+  };
+}
+interface KeyRow { purpose: 'data' | 'index'; version: number; kekId: string; status: string; createdAt: string }
+interface KeyStatus {
+  activeKekId: string; configuredKekIds: string[]; keys: KeyRow[]; byDataVersion: Record<string, number>;
+  plaintextRemaining: Array<{ column: string; rows: number }>; snapshotsPlaintext: number;
 }
 
 const LEVEL_TEXT: Record<Level, string> = {
@@ -46,7 +60,7 @@ const RETENTION: Record<string, string> = {
   medical_record: 'Hồ sơ bệnh án', financial_record: 'Chứng từ tài chính', contact: 'Liên hệ — xoá khi hết mục đích', operational: 'Vận hành ngắn hạn',
   audit_log: 'Nhật ký kiểm toán', security: 'Bí mật / khoá', reference: 'Danh mục',
 };
-const STORAGE: Record<string, string> = { plain: 'lưu rõ', hashed: 'chỉ lưu băm', encrypted: 'mã hoá', derived: 'khoá dẫn xuất' };
+const STORAGE: Record<string, string> = { plain: 'lưu rõ', hashed: 'chỉ lưu băm', encrypted: 'mã hoá', derived: 'khoá dẫn xuất', retired: 'đã bỏ (chỉ còn bản mã)' };
 const LevelBadge = ({ l }: { l: Level }) => <span className={`badge lvl-${l}`}>Cấp {l}</span>;
 
 export function GovernanceScreen() {
@@ -113,12 +127,22 @@ export function GovernanceScreen() {
           <p className="muted small">Chỉ đếm dữ liệu của chủ quản này. Quy mô tích tụ là một căn cứ khi xét lên cấp cao hơn.</p>
         </Card>
         <Card title={`Cột nhạy cảm còn lưu dạng rõ (${s.plaintextSensitive.length})`}>
-          <p className="muted small">Cột cá nhân / sức khoẻ cấp ≥ 3 chưa mã hoá — đầu vào cho kế hoạch mã hoá theo trường (F16). Hiện chỉ được bảo vệ bằng RLS + phân quyền.</p>
+          <p className="muted small">Cột cá nhân / sức khoẻ cấp ≥ 3 chưa mã hoá theo trường — kế hoạch F16b (họ tên, ngày sinh, dữ liệu lâm sàng). Hiện được bảo vệ bằng RLS + phân quyền.</p>
           <div className="gov-cols">
             {s.plaintextSensitive.map((c) => <code key={c}>{c}</code>)}
           </div>
+          {s.plainByDesign.length > 0 && (
+            <>
+              <p className="muted small">Lưu rõ có chủ đích:</p>
+              <ul className="small">
+                {s.plainByDesign.map((x) => <li key={x.column}><code>{x.column}</code> — {x.reason}</li>)}
+              </ul>
+            </>
+          )}
         </Card>
       </div>
+
+      <EncryptionCard v={v} onChange={cat.reload} />
 
       <Card title={`Danh mục dữ liệu (${rows.length}/${v.tables.length} bảng)`}>
         <div className="row wrap">
@@ -232,5 +256,113 @@ function AssessForm({ computed, onDone }: { computed: Level; onDone: () => void 
       </div>
       <ErrorBox error={save.error} />
     </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HCOS-F16: mã hoá theo trường — bằng chứng (mọi người xem tab) + thao tác khoá (chỉ quản trị hệ thống).
+// ---------------------------------------------------------------------------
+const PURPOSE: Record<string, string> = { data: 'Dữ liệu (DEK)', index: 'Blind index' };
+
+function EncryptionCard({ v, onChange }: { v: CatalogView; onChange: () => void }) {
+  const { roles } = useSession();
+  const manage = can.keysManage(roles);
+  const ks = useLoad(() => (manage ? api<KeyStatus>('GET', '/api/keys').then((r) => r.data) : Promise.resolve(null)), [manage]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const done = (m: string) => {
+    setMsg(m);
+    ks.reload();
+    onChange();
+  };
+  const loop = async (path: string, field: 'reencrypted' | 'encrypted'): Promise<number> => {
+    let total = 0;
+    for (let i = 0; i < 200; i++) {
+      const r = await api<Record<string, number>>('POST', path, { body: { limit: 500 } });
+      const n = r.data[field] ?? 0;
+      total += n;
+      if (n === 0) break;
+    }
+    return total;
+  };
+  const act = useAction(async (what: 'rotate-data' | 'rotate-index' | 'reencrypt' | 'rewrap' | 'backfill') => {
+    setMsg(null);
+    if (what === 'rotate-data' || what === 'rotate-index') {
+      const purpose = what === 'rotate-data' ? 'data' : 'index';
+      const warn = purpose === 'data'
+        ? 'Tạo DEK phiên bản mới: dữ liệu ghi mới dùng khoá mới; dữ liệu cũ vẫn đọc được cho tới khi "Mã hoá lại". Tiếp tục?'
+        : 'Xoay khoá blind index: khoá các bảng liên quan và tính lại mọi index trong một giao dịch (vài giây với dữ liệu nhỏ). Tiếp tục?';
+      if (!confirm(warn)) return;
+      const r = await api<{ version: number; recomputed?: number }>('POST', '/api/keys/rotate', { body: { purpose } });
+      done(`${PURPOSE[purpose]}: phiên bản ${r.data.version}${r.data.recomputed !== undefined ? ` — tính lại ${r.data.recomputed} index` : ''}.`);
+    } else if (what === 'reencrypt') {
+      done(`Đã mã hoá lại ${await loop('/api/keys/reencrypt', 'reencrypted')} giá trị bằng DEK đang dùng.`);
+    } else if (what === 'backfill') {
+      done(`Đã mã hoá ${await loop('/api/keys/backfill', 'encrypted')} giá trị còn bản rõ.`);
+    } else {
+      const r = await api<{ rewrapped: number; kekId: string }>('POST', '/api/keys/rewrap', {});
+      done(`Đã bọc lại ${r.data.rewrapped} khoá bằng KEK ${r.data.kekId}.`);
+    }
+  });
+  const e = v.encryption;
+  const left = e.plaintextRemaining.reduce((a, c) => a + c.rows, 0) + e.snapshotsPlaintext;
+  const k = ks.data;
+  const oldVersions = k ? Object.keys(k.byDataVersion).filter((x) => !k.keys.some((y) => y.purpose === 'data' && y.status === 'active' && String(y.version) === x)) : [];
+  const staleKek = k ? k.keys.some((y) => y.kekId !== k.activeKekId) : false;
+
+  return (
+    <Card title={`Mã hoá theo trường (${v.summary.encrypted.length} cột)`}>
+      <p className="muted small">
+        Envelope encryption AES-256-GCM: mỗi chủ quản có DEK riêng, được bọc bằng KEK nằm <strong>ngoài CSDL</strong> (biến môi trường của máy chủ ứng dụng).
+        Người chỉ đọc được CSDL / bản sao lưu thấy bản mã và DEK đã bọc — không có khoá để mở. Tìm kiếm / chống trùng dùng blind index (HMAC, khoá riêng).
+        Xem bản rõ cần quyền <code>pii:reveal</code> + lý do, mỗi lần đều ghi nhật ký.
+      </p>
+      {left === 0 ? (
+        <Notice kind="ok">Không còn giá trị nào lưu bản rõ trong các cột đã mã hoá.</Notice>
+      ) : (
+        <Notice kind="warn">
+          Còn {left} giá trị bản rõ chưa mã hoá ({[...e.plaintextRemaining.filter((c) => c.rows > 0).map((c) => `${c.column}: ${c.rows}`), ...(e.snapshotsPlaintext ? [`ảnh chụp gộp hồ sơ: ${e.snapshotsPlaintext}`] : [])].join(' · ')}).
+          {manage ? ' Bấm "Mã hoá dữ liệu cũ".' : ' Nhờ quản trị hệ thống chạy mã hoá dữ liệu cũ.'}
+        </Notice>
+      )}
+      <div className="row wrap top">
+        <table>
+          <thead><tr><th>Khoá</th><th>Phiên bản</th><th>KEK</th><th>Trạng thái</th><th>Tạo lúc</th></tr></thead>
+          <tbody>
+            {e.keys.length === 0 && <tr><td colSpan={5} className="muted">Chưa có khoá (tạo tự động ở lần ghi đầu tiên).</td></tr>}
+            {e.keys.map((x) => (
+              <tr key={`${x.purpose}-${x.version}`} className={x.status === 'active' ? '' : 'muted-row'}>
+                <td>{PURPOSE[x.purpose] ?? x.purpose}</td><td>{x.version}</td><td><code>{x.kekId}</code></td>
+                <td>{x.status === 'active' ? 'đang dùng' : 'đã thay'}</td><td>{fmtDateTime(x.createdAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="gov-cols">
+          {v.summary.encrypted.map((c) => <code key={c}>{c}</code>)}
+        </div>
+      </div>
+      {manage && (
+        <div className="stack small-gap">
+          {k && (
+            <div className="muted small">
+              KEK đang dùng <code>{k.activeKekId}</code> (cấu hình: {k.configuredKekIds.join(', ')}) · giá trị theo phiên bản DEK:{' '}
+              {Object.entries(k.byDataVersion).map(([ver, n]) => `v${ver}: ${n}`).join(' · ') || '—'}
+            </div>
+          )}
+          {oldVersions.length > 0 && <Notice kind="warn">Còn giá trị dùng DEK cũ ({oldVersions.map((x) => `v${x}`).join(', ')}) — bấm "Mã hoá lại".</Notice>}
+          {staleKek && <Notice kind="warn">Có DEK còn bọc bằng KEK cũ — bấm "Bọc lại bằng KEK mới" trước khi gỡ KEK cũ khỏi cấu hình.</Notice>}
+          <div className="row wrap">
+            <button disabled={act.busy || left === 0} onClick={() => void act.run('backfill')}>Mã hoá dữ liệu cũ</button>
+            <button className="secondary" disabled={act.busy} onClick={() => void act.run('rotate-data')}>Xoay DEK</button>
+            <button className="secondary" disabled={act.busy || oldVersions.length === 0} onClick={() => void act.run('reencrypt')}>Mã hoá lại</button>
+            <button className="secondary" disabled={act.busy || !staleKek} onClick={() => void act.run('rewrap')}>Bọc lại bằng KEK mới</button>
+            <button className="secondary" disabled={act.busy} onClick={() => void act.run('rotate-index')}>Xoay khoá blind index</button>
+          </div>
+          {msg && <Notice kind="ok">{msg}</Notice>}
+          <ErrorBox error={act.error ?? ks.error} />
+          <p className="muted small">Đổi KEK: thêm KEK mới vào đầu <code>HCOS_KEKS</code> (giữ KEK cũ phía sau), khởi động lại API, bấm "Bọc lại", rồi mới gỡ KEK cũ.</p>
+        </div>
+      )}
+    </Card>
   );
 }

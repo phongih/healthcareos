@@ -225,6 +225,20 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'pii:reveal': {
+    basePermission: 'pii:reveal',
+    description: 'Xem bản rõ SĐT / email / số giấy tờ đã mã hoá của một bản ghi (bắt buộc lý do, có audit)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'keys:manage': {
+    basePermission: 'keys:manage',
+    description: 'Quản lý khoá mã hoá: xoay DEK / khoá index, mã hoá lại, bọc lại bằng KEK mới, mã hoá dữ liệu cũ',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'governance:read': {
     basePermission: 'governance:read',
     description: 'Xem danh mục dữ liệu, cấp độ rủi ro an ninh dữ liệu của hệ thống và hồ sơ tự đánh giá',

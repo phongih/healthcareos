@@ -367,3 +367,12 @@ tr.warn-row td { background: #fffbeb; }
 .gov-cols code { font-size: 12px; background: #f3f4f6; padding: 1px 6px; border-radius: 4px; }
 .gov-table td { vertical-align: top; }
 tr.gov-cols-row > td { background: #f9fafb; }
+
+/* F16: giá trị cá nhân che mặc định + nút "Hiện" */
+.reveal { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.reveal .masked { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.reveal .plain { font-variant-numeric: tabular-nums; font-weight: 600; background: var(--warn-bg); padding: 0 4px; border-radius: 3px; }
+button.linkish { background: none; border: 0; padding: 0; color: var(--brand); text-decoration: underline; cursor: pointer; font-size: 12px; }
+button.linkish:disabled { color: #888; cursor: default; }
+.reveal .err { color: var(--danger); }
+@media print { .reveal button { display: none; } }

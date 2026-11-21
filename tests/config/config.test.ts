@@ -7,6 +7,7 @@ const OK = {
   HCOS_JWT_ISSUER: 'https://idp.example.vn/',
   HCOS_JWT_AUDIENCE: 'hcos-api',
   HCOS_JWKS_URL: 'https://idp.example.vn/.well-known/jwks.json',
+  HCOS_KEKS: 't1:' + Buffer.alloc(32, 7).toString('base64'),
 };
 const problems = (env: Record<string, string | undefined>): string[] => {
   try { loadConfig(env); } catch (e) { if (e instanceof ConfigError) return [...e.problems]; throw e; }
@@ -33,7 +34,8 @@ describe('loadConfig', () => {
 
   it('reports ALL missing security settings at once (no silent defaults)', () => {
     const p = problems({});
-    expect(p).toHaveLength(4);
+    expect(p).toHaveLength(5);
+    expect(p).toContain('HCOS_KEKS is required');
     expect(p.some((x) => x.startsWith('HCOS_JWT_ISSUER'))).toBe(true);
   });
 

@@ -3,10 +3,11 @@ import { useState, type FormEvent } from 'react';
 
 import { api, ApiError } from '../lib/api';
 import {
-  CCCD_SYSTEM, classLabel, cccdOf, ENCOUNTER_CLASSES, entries, fmtDate, fmtDateTime, idOf, isRedacted, mrnOf, patientName, phoneOf,
+  CCCD_SYSTEM, classLabel, cccdOf, emailOf, ENCOUNTER_CLASSES, entries, fmtDate, fmtDateTime, idOf, isRedacted, mrnOf, patientName, phoneOf,
   STATUS_LABEL, type Bundle, type FhirEncounter, type FhirPatient,
 } from '../lib/fhir';
 import { MrnField, MrnSettingsCard } from '../lib/mrn';
+import { Reveal } from '../lib/reveal';
 import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, navigate, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
 import { IssueTicket } from './queue';
@@ -292,9 +293,15 @@ export function PatientDetail({ id }: { id: string }) {
             <dt>Giới</dt>
             <dd>{genderLabel(p.gender) || '—'}</dd>
             <dt>Điện thoại</dt>
-            <dd>{phoneOf(p) || '—'}</dd>
+            <dd><Reveal masked={phoneOf(p)} target={{ kind: 'patient', id: p.id!, field: 'phone' }} allowed={can.revealPii(roles)} /></dd>
+            {emailOf(p) && (
+              <>
+                <dt>Email</dt>
+                <dd><Reveal masked={emailOf(p)} target={{ kind: 'patient', id: p.id!, field: 'email' }} allowed={can.revealPii(roles)} /></dd>
+              </>
+            )}
             <dt>CCCD</dt>
-            <dd>{cccdOf(p) || '—'}</dd>
+            <dd><Reveal masked={cccdOf(p)} target={{ kind: 'patient', id: p.id!, field: 'nationalId' }} allowed={can.revealPii(roles)} /></dd>
             <dt>Trạng thái</dt>
             <dd>{p.active ? 'Đang hoạt động' : 'Ngừng'}</dd>
           </dl>

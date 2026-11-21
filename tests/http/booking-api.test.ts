@@ -29,6 +29,7 @@ const bookings: BookingApi = {
   async getById(id) { hit('getById', id); return { booking: { bookingId: id }, candidates: [] } as never; },
   async checkIn(id, i) { hit('checkIn', { id, i }); return { booking: {}, ticket: {} } as never; },
   async cancel(id) { hit('cancel', id); return {} as never; },
+  async registerPatient(id, i) { hit('registerPatient', { id, i }); return { patientId: 'p', mrn: 'BN26-000001-3' }; },
   async setBookingCapacity(id, c, v) { hit('capacity', { id, c, v }); return { version: v + 1 } as never; },
   async getPortal(o) { hit('getPortal', o); return null; },
   async createPortal(i) { hit('createPortal', i); return { version: 1 } as never; },

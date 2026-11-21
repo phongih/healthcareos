@@ -27,6 +27,8 @@ import { PgPrescriptionUnitOfWork, PrescriptionService } from './clinical/prescr
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from './clinical/queue.service';
 import { HandoverService } from './clinical/handover.service';
 import { GovernanceService } from './governance/governance.service';
+import { PiiService } from './security/pii.service';
+import { configureKeyProvider } from '../../../packages/security/src/pii';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
 
 export interface RunningApp {
@@ -41,6 +43,8 @@ export const jsonLog: LogFn = (r) => console.log(JSON.stringify(r));
 
 export async function startApp(env: Readonly<Record<string, string | undefined>>, log: LogFn = jsonLog): Promise<RunningApp> {
   const cfg = loadConfig(env);
+  // HCOS-F16: KEK chỉ nằm trong bộ nhớ tiến trình (từ biến môi trường), không bao giờ ghi vào CSDL.
+  configureKeyProvider(cfg.keyProvider);
 
   const pgPool = new pg.Pool({
     connectionString: cfg.databaseUrl,
@@ -57,6 +61,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     await assertSafeDatabaseRole(pool);
 
     const audit = new PgAuditSink(pool);
+    const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit });
     const decision = new DecisionEngineService({
       uow: new PgDecisionUnitOfWork(pool), audit, intervalMinutes: cfg.decisionIntervalSec > 0 ? Math.round(cfg.decisionIntervalSec / 60) : null,
     });
@@ -75,13 +80,13 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         audit,
       },
       clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
-      registry: new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit }),
+      registry,
       accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
       pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
       prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
       queue: new QueueService({ uow: new PgQueueUnitOfWork(pool), audit }),
       queueBoard: new PgQueueBoard(pool),
-      bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
+      bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit, registrar: (input, ctx) => registry.registerPersonAndPatient(input as never, ctx) }),
       publicBooking: new PublicBookingService({ pool, audit }),
       finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
       forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
@@ -90,6 +95,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       mrn: new MrnSettingsService({ pool, audit }),
       handover: new HandoverService({ pool, audit }),
       governance: new GovernanceService({ pool, audit }),
+      pii: new PiiService({ pool, audit }),
       readiness: new PgReadinessProbe(pool, {
         timeoutMs: cfg.readyTimeoutMs,
         onError: (name) => log({ level: 'warn', msg: 'readiness check failed', error: name }),

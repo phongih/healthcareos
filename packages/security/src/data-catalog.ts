@@ -25,8 +25,8 @@ export type DataCategory = 'reference' | 'internal' | 'security' | 'personal' | 
 export type DataSubject = 'patient' | 'staff' | 'organization' | 'none';
 export type Steward = 'clinic_admin' | 'pharmacy_admin' | 'tenant_admin';
 export type RetentionClass = 'medical_record' | 'financial_record' | 'contact' | 'operational' | 'audit_log' | 'security' | 'reference';
-/** Cách cột đang được lưu (F16 sẽ mã hoá các cột nhạy cảm còn 'plain'). */
-export type Storage = 'plain' | 'hashed' | 'encrypted' | 'derived';
+/** Cách cột đang được lưu. 'retired' = cột bản rõ cũ: CSDL chặn ghi giá trị mới, backfill (F16) xoá giá trị cũ, sẽ DROP sau. */
+export type Storage = 'plain' | 'hashed' | 'encrypted' | 'derived' | 'retired';
 
 export interface ColumnLabel {
   readonly level?: RiskLevel;
@@ -34,6 +34,8 @@ export interface ColumnLabel {
   readonly storage?: Storage;
   /** Vì sao cột này khác bảng / cần chú ý. */
   readonly note: string;
+  /** Quyết định CÓ CHỦ ĐÍCH giữ dạng rõ (không mã hoá) + lý do / biện pháp thay thế. */
+  readonly plainReason?: string;
 }
 export interface TableLabel {
   readonly level: RiskLevel;
@@ -88,6 +90,11 @@ const FREE_TEXT_OPS: ColumnLabel = { category: 'internal', note: 'Ghi chú nghi�
 const SNAPSHOT_HEALTH: ColumnLabel = { level: 3, category: 'personal_sensitive', note: 'Ảnh chụp bản ghi (có thể chứa dữ liệu sức khoẻ / định danh)' };
 const NO_PATIENT_PAYLOAD: ColumnLabel = { note: 'Thiết kế không chứa dữ liệu bệnh nhân (chỉ số liệu tổng hợp / id)' };
 const HASH = (note: string): ColumnLabel => ({ storage: 'hashed', note });
+// HCOS-F16: bộ ba cột cho một trường đã mã hoá + cột bản rõ cũ.
+const RETIRED = (what: string): ColumnLabel => ({ level: 3, category: 'personal', storage: 'retired', note: `${what} bản rõ cũ — CSDL chặn ghi mới; scripts/pii-backfill.ts mã hoá rồi xoá` });
+const ENC = (what: string): ColumnLabel => ({ level: 3, category: 'personal', storage: 'encrypted', note: `${what} — AES-256-GCM, DEK theo tenant bọc bằng KEK ngoài CSDL` });
+const BIDX = (what: string): ColumnLabel => ({ level: 3, category: 'personal', storage: 'hashed', note: `Blind index ${what} (HMAC, khoá index riêng) — chỉ so khớp bằng nhau` });
+const HINT = (what: string): ColumnLabel => ({ level: 3, category: 'personal', storage: 'derived', note: `${what} dạng che để hiển thị (vd. 091****678)` });
 
 // ---------------------------------------------------------------------------
 // Danh mục (sắp theo schema.bảng)
@@ -104,8 +111,9 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
       family_name: NAME(), given_name: NAME(),
       birth_date: { level: 3, category: 'personal', note: 'Ngày sinh' },
       sex: { level: 3, category: 'personal', note: 'Giới tính' },
-      phone: { level: 3, category: 'personal', note: 'SĐT liên hệ — ứng viên mã hoá (F16)' },
-      national_id: { level: 3, category: 'personal', note: 'Số CCCD (nếu khai) — ứng viên mã hoá (F16)' },
+      phone: RETIRED('SĐT'), national_id: RETIRED('CCCD'),
+      phone_enc: ENC('SĐT liên hệ'), phone_bidx: BIDX('SĐT'), phone_hint: HINT('SĐT'),
+      national_id_enc: ENC('Số CCCD'), national_id_bidx: BIDX('CCCD'), national_id_hint: HINT('CCCD'),
       reason: { level: 3, category: 'personal_sensitive', note: 'Lý do khám do người đặt tự khai (triệu chứng)' },
     },
   },
@@ -232,6 +240,13 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
     columns: { summary: { note: 'Số liệu tổng hợp (số bảng theo cấp, quy mô bản ghi) — không có dữ liệu cá nhân' } },
   },
 
+  // ---- keyvault (F16) ------------------------------------------------------------
+  'keyvault.tenant_keys': {
+    level: 3, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'security',
+    purpose: 'Khoá dữ liệu (DEK) và khoá blind index theo tenant, có phiên bản; chỉ lưu dạng đã bọc bằng KEK nằm ngoài CSDL',
+    columns: { wrapped_key: { level: 3, category: 'security', storage: 'encrypted', note: 'DEK bọc AES-256-GCM bằng KEK (không mở được nếu chỉ có CSDL / bản sao lưu)' } },
+  },
+
   // ---- iam ------------------------------------------------------------
   'iam.access_policies': { level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'reference', purpose: 'Access policy thu hẹp quyền' },
   'iam.access_policy_versions': { level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'audit_log', purpose: 'Lịch sử access policy' },
@@ -274,14 +289,22 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
   'patient.identifiers': {
     level: 3, category: 'personal', subject: 'patient', steward: 'clinic_admin', retention: 'medical_record',
     purpose: 'Giấy tờ định danh (CCCD, BHYT, MRN cũ)',
-    columns: { value: { level: 3, category: 'personal', note: 'Số giấy tờ — ứng viên mã hoá (F16)' } },
+    columns: {
+      value: RETIRED('Số giấy tờ'),
+      value_enc: ENC('Số giấy tờ (CCCD, BHYT, hộ chiếu…)'), value_bidx: BIDX('số giấy tờ (chống trùng, tra cứu)'), value_hint: HINT('Số giấy tờ'),
+    },
   },
   'patient.mrn_counters': { level: 1, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'operational', purpose: 'Cấp mã bệnh nhân tự sinh' },
   'patient.mrn_settings': { level: 1, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'reference', purpose: 'Cài đặt mã bệnh nhân' },
   'patient.patients': {
     level: 3, category: 'personal', subject: 'patient', steward: 'clinic_admin', retention: 'medical_record',
     purpose: 'Hồ sơ bệnh nhân tại cơ sở',
-    columns: { mrn: { level: 3, category: 'personal', note: 'Mã bệnh nhân (không chứa dữ liệu cá nhân, nhưng định danh được)' } },
+    columns: {
+      mrn: {
+        level: 3, category: 'personal', note: 'Mã bệnh nhân (không chứa dữ liệu cá nhân, nhưng định danh được)',
+        plainReason: 'Mã tra cứu tự sinh, không chứa thông tin cá nhân; cần tìm chính xác và in trên phiếu — bảo vệ bằng RLS + phân quyền',
+      },
+    },
   },
   'patient.person_merges': {
     level: 3, category: 'personal', subject: 'patient', steward: 'clinic_admin', retention: 'audit_log',
@@ -300,10 +323,11 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
       given_name: NAME(), family_name: NAME(),
       birth_date: { level: 3, category: 'personal', note: 'Ngày sinh' },
       sex: { level: 3, category: 'personal', note: 'Giới tính' },
-      phone: { level: 3, category: 'personal', note: 'SĐT — ứng viên mã hoá (F16)' },
-      email: { level: 3, category: 'personal', note: 'Email — ứng viên mã hoá (F16)' },
-      name_key: { level: 3, category: 'personal', storage: 'derived', note: 'Khoá so khớp họ tên (chuẩn hoá) — sẽ thay bằng chỉ mục băm (F16)' },
-      phone_key: { level: 3, category: 'personal', storage: 'derived', note: 'Khoá so khớp SĐT — sẽ thay bằng chỉ mục băm (F16)' },
+      phone: RETIRED('SĐT'), email: RETIRED('Email'),
+      phone_key: { level: 3, category: 'personal', storage: 'retired', note: 'Khoá so khớp SĐT dạng rõ cũ — thay bằng phone_bidx (F16)' },
+      phone_enc: ENC('SĐT'), phone_bidx: BIDX('SĐT'), phone_hint: HINT('SĐT'),
+      email_enc: ENC('Email'), email_hint: HINT('Email'),
+      name_key: { level: 3, category: 'personal', storage: 'derived', note: 'Khoá so khớp họ tên (chuẩn hoá) — mã hoá họ tên ở F16b' },
     },
   },
 
@@ -339,14 +363,20 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
     purpose: 'Chống gửi trùng: lưu kết quả lần đầu để trả lại',
     columns: {
       request_hash: HASH('Băm nội dung yêu cầu'),
-      response: { level: 3, category: 'personal_sensitive', note: 'Kết quả API lần đầu (có thể chứa dữ liệu bệnh nhân) — nên xoá sớm (F17)' },
+      response: {
+        level: 3, category: 'personal_sensitive', note: 'Kết quả API lần đầu (có thể chứa dữ liệu bệnh nhân)',
+        plainReason: 'Dữ liệu tạm để chống gửi trùng — xử lý bằng thời hạn lưu ngắn (F17), không mã hoá',
+      },
     },
   },
   'platform.outbox_events': {
     level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'tenant_admin', retention: 'operational',
     purpose: 'Sự kiện miền (đợt khám tạo / đóng…) chờ phát',
     columns: {
-      payload: { level: 3, note: 'Chỉ id (bệnh nhân, đợt khám) — vẫn cho biết ai đến khám khi nào' },
+      payload: {
+        level: 3, note: 'Chỉ id (bệnh nhân, đợt khám) — vẫn cho biết ai đến khám khi nào',
+        plainReason: 'Chỉ chứa id (không có họ tên / liên hệ) — xử lý bằng thời hạn lưu ngắn (F17)',
+      },
       last_error: FREE_TEXT_OPS,
     },
   },
@@ -424,19 +454,28 @@ export interface CatalogSummary {
   readonly systemLevel: RiskLevel;
   readonly tables: number;
   readonly byLevel: Readonly<Record<RiskLevel, number>>;
-  /** Cột cấp ≥ 3 thuộc nhóm cá nhân / nhạy cảm còn lưu dạng rõ — đầu vào cho F16. */
+  /** Cột cấp ≥ 3 thuộc nhóm cá nhân / nhạy cảm còn lưu dạng rõ, CHƯA có quyết định — việc còn lại (F16b). */
   readonly plaintextSensitive: readonly string[];
+  /** Cột nhạy cảm giữ dạng rõ CÓ CHỦ ĐÍCH, kèm lý do. */
+  readonly plainByDesign: ReadonlyArray<{ readonly column: string; readonly reason: string }>;
+  /** Cột đã mã hoá. */
+  readonly encrypted: readonly string[];
 }
 export function summarize(catalog: Readonly<Record<string, TableLabel>> = DATA_CATALOG): CatalogSummary {
   const byLevel: Record<RiskLevel, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   const plaintextSensitive: string[] = [];
+  const plainByDesign: Array<{ column: string; reason: string }> = [];
+  const encrypted: string[] = [];
   for (const [name, t] of Object.entries(catalog)) {
     byLevel[t.level]++;
     for (const [c, l] of Object.entries(t.columns ?? {})) {
       const level = l.level ?? t.level;
       const category = l.category ?? t.category;
-      if (level >= 3 && (category === 'personal' || category === 'personal_sensitive') && (l.storage ?? 'plain') === 'plain') plaintextSensitive.push(`${name}.${c}`);
+      if ((l.storage ?? 'plain') === 'encrypted') encrypted.push(`${name}.${c}`);
+      if (level < 3 || (category !== 'personal' && category !== 'personal_sensitive') || (l.storage ?? 'plain') !== 'plain') continue;
+      if (l.plainReason) plainByDesign.push({ column: `${name}.${c}`, reason: l.plainReason });
+      else plaintextSensitive.push(`${name}.${c}`);
     }
   }
-  return { version: catalogVersion(catalog), systemLevel: systemLevel(catalog), tables: Object.keys(catalog).length, byLevel, plaintextSensitive };
+  return { version: catalogVersion(catalog), systemLevel: systemLevel(catalog), tables: Object.keys(catalog).length, byLevel, plaintextSensitive, plainByDesign, encrypted };
 }

@@ -118,7 +118,7 @@ describe('phân loại + thử lại', () => {
 });
 
 describe('cấu hình', () => {
-  const OK = { HCOS_DATABASE_URL: 'postgres://hcos_api:x@127.0.0.1:5432/hcos', HCOS_JWT_ISSUER: 'https://i/', HCOS_JWT_AUDIENCE: 'a', HCOS_JWKS_URL: 'https://i/jwks' };
+  const OK = { HCOS_DATABASE_URL: 'postgres://hcos_api:x@127.0.0.1:5432/hcos', HCOS_JWT_ISSUER: 'https://i/', HCOS_JWT_AUDIENCE: 'a', HCOS_JWKS_URL: 'https://i/jwks', HCOS_KEKS: 't1:' + Buffer.alloc(32, 7).toString('base64') };
   it('mặc định: tích hợp tắt, giao mỗi 15 giây', () => {
     expect(loadConfig(OK)).toMatchObject({ integrationKey: null, publicBaseUrl: null, integrationDispatchSec: 15 });
   });

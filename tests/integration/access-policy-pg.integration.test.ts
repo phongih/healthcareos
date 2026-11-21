@@ -57,9 +57,11 @@ const suScalar = (sql: string) => execFileSync('psql', ['-X', '-tA', '-d', DB, '
 const SEED = `
 INSERT INTO iam.tenants(tenant_id,code,name) VALUES ('${TA}','ta','A'),('${TB}','tb','B');
 INSERT INTO iam.organizations(organization_id,tenant_id,type,code,name) VALUES ('${OA}','${TA}','clinic','c1','C1'),('${OB}','${TB}','clinic','c1','C1');
-INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,phone) VALUES
-  ('${PA1}','${TA}','An','Nguyen','1990-05-17','0900000000'),('${PB1}','${TB}','Zed','Le',NULL,NULL);
-INSERT INTO patient.identifiers(tenant_id,person_id,type,system,value) VALUES ('${TA}','${PA1}','national_id','https://moh.gov.vn/cccd','079090000777');
+INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,phone_enc,phone_bidx,phone_hint) VALUES
+  ('${PA1}','${TA}','An','Nguyen','1990-05-17','e1.1.' || repeat('A', 40), md5('p1'), '090****000'),('${PB1}','${TB}','Zed','Le',NULL,NULL,NULL,NULL);
+-- F16: chỉ lưu bản mã (giá trị giả đúng định dạng — bài này không cần mở ra).
+INSERT INTO patient.identifiers(tenant_id,person_id,type,system,value_enc,value_bidx,value_hint)
+  VALUES ('${TA}','${PA1}','national_id','https://moh.gov.vn/cccd','e1.1.' || repeat('B', 40), md5('i1'), '********0777');
 INSERT INTO iam.users(user_id,tenant_id,external_subject,display_name) VALUES
   ('${U.admin}','${TA}','${sub(U.admin)}','Admin'),('${U.doc}','${TA}','${sub(U.doc)}','Doc'),('${U.doc2}','${TA}','${sub(U.doc2)}','Doc2'),
   ('${U.nurse}','${TA}','${sub(U.nurse)}','Nurse'),('${U.adminB}','${TB}','${sub(U.adminB)}','AdminB');

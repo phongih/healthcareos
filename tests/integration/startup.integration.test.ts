@@ -42,6 +42,7 @@ const baseEnv = (url: string, port: number): Record<string, string> => ({
   HCOS_JWT_ISSUER: 'https://idp.hcos.test/',
   HCOS_JWT_AUDIENCE: 'hcos-api',
   HCOS_JWKS_URL: 'http://127.0.0.1:9/jwks', // không dùng trong test này (không xác thực JWT thật)
+  HCOS_KEKS: 't1:' + Buffer.alloc(32, 7).toString('base64'),
   HCOS_PORT: String(port),
   HCOS_READY_TIMEOUT_MS: '1500',
 });

@@ -28,6 +28,8 @@ import {
 } from '../../../../packages/security/src/data-catalog';
 import { assertSameTenant, requireTenantContext, withTenantTransaction, type PgPoolLike } from '../../../../packages/security/src/tenant-context';
 import { ClinicalError, iso, num, PgClinicalRepository } from '../clinical/encounter.service';
+import { loadTenantKeys } from '../../../../packages/security/src/pii';
+import { plaintextStats } from '../security/pii.service';
 
 type Permission = 'governance:read' | 'governance:assess';
 const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
@@ -68,11 +70,17 @@ export interface CatalogView {
   /** Danh mục đã đổi kể từ lần đánh giá gần nhất (hoặc chưa đánh giá lần nào) => cần đánh giá lại. */
   readonly needsAssessment: boolean;
   readonly canAssess: boolean;
+  /** HCOS-F16: bằng chứng mã hoá — khoá (chỉ siêu dữ liệu) và số giá trị còn bản rõ (phải bằng 0 sau backfill). */
+  readonly encryption: {
+    readonly keys: ReadonlyArray<{ purpose: string; version: number; kekId: string; status: string; createdAt: string }>;
+    readonly plaintextRemaining: ReadonlyArray<{ column: string; rows: number }>;
+    readonly snapshotsPlaintext: number;
+  };
 }
 
 class Repo extends PgClinicalRepository {
-  constructor(db: TenantScopedDb) {
-    super(db);
+  constructor(readonly tdb: TenantScopedDb) {
+    super(tdb);
   }
   async scale(): Promise<ScaleRow[]> {
     const out: ScaleRow[] = [];
@@ -121,7 +129,10 @@ export class GovernanceService {
       const latest = (await repo.assessments(1))[0] ?? null;
       const canAssess = this.allowed(grants, user, 'governance:assess');
       await repo.appendAudit(this.event(ctx, 'governance.catalog.read', 'success', user, { catalogVersion: summary.version }));
+      const pt = await plaintextStats(repo.tdb);
+      const keys = (await loadTenantKeys(repo.tdb)).map((k) => ({ purpose: k.purpose, version: k.version, kekId: k.kekId, status: k.status, createdAt: k.createdAt }));
       return {
+        encryption: { keys, plaintextRemaining: pt.columns, snapshotsPlaintext: pt.snapshots },
         summary,
         tables: Object.entries(DATA_CATALOG).map(([name, t]) => ({ name, ...t })),
         scale: await repo.scale(),
@@ -223,11 +234,12 @@ export class GovernanceService {
 // Hồ sơ Markdown
 // ---------------------------------------------------------------------------
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const vnTime = (d: Date) => new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'medium' }).format(d);
 export function renderDossier(v: CatalogView, at: Date): string {
   const s = v.summary;
   const L: string[] = [];
   L.push('# Hồ sơ tự đánh giá cấp độ rủi ro an ninh dữ liệu — HealthcareOS', '');
-  L.push(`- Thời điểm lập: ${at.toISOString()}`);
+  L.push(`- Thời điểm lập: ${vnTime(at)} (giờ Việt Nam)`);
   L.push(`- Phiên bản danh mục dữ liệu: \`${s.version}\``);
   L.push(`- Căn cứ: Luật An ninh dữ liệu (Quốc hội thông qua 20/11/2026, hiệu lực 01/7/2027); Luật Bảo vệ dữ liệu cá nhân (hiệu lực 01/01/2026).`);
   L.push('- Chủ quản dữ liệu: cơ sở khám chữa bệnh sử dụng hệ thống. Nhà cung cấp phần mềm / hạ tầng là bên xử lý, không nhận chuyển giao trách nhiệm.', '');
@@ -235,7 +247,7 @@ export function renderDossier(v: CatalogView, at: Date): string {
   L.push(`**Cấp tính từ danh mục: ${s.systemLevel}** — ${LEVEL_LABEL[s.systemLevel]}.`, '');
   L.push('Nguyên tắc: hệ thống xử lý nhiều cấp độ phải đáp ứng yêu cầu bảo vệ theo cấp độ CAO NHẤT phát sinh. Cấp độ rủi ro không thay thế phân loại dữ liệu cốt lõi / quan trọng theo pháp luật về dữ liệu.', '');
   if (v.latest) {
-    L.push(`Lần xác định gần nhất: **cấp ${v.latest.declaredLevel}** (tính được ${v.latest.computedLevel}) — ${v.latest.assessedByName ?? v.latest.assessedBy}, ${v.latest.assessedAt}.`);
+    L.push(`Lần xác định gần nhất: **cấp ${v.latest.declaredLevel}** (tính được ${v.latest.computedLevel}) — ${v.latest.assessedByName ?? v.latest.assessedBy}, ${vnTime(new Date(v.latest.assessedAt))}.`);
     L.push(`Căn cứ: ${v.latest.rationale}`);
     if (v.needsAssessment) L.push('', '> ⚠ Danh mục đã thay đổi sau lần xác định này — cần đánh giá lại.');
   } else {
@@ -249,13 +261,25 @@ export function renderDossier(v: CatalogView, at: Date): string {
   for (const t of [...v.tables].sort((a, b) => b.level - a.level || a.name.localeCompare(b.name))) {
     L.push(`| \`${t.name}\` | ${t.level} | ${CATEGORY_LABEL[t.category]} | ${STEWARD_LABEL[t.steward]} | ${cell(RETENTION_LABEL[t.retention])} | ${cell(t.purpose)} |`);
   }
-  L.push('', '## 5. Cột cá nhân / nhạy cảm cấp ≥ 3 còn lưu dạng rõ (kế hoạch mã hoá F16)', '');
+  L.push('', '## 5. Mã hoá theo trường', '');
+  L.push('### 5.1 Đã mã hoá (AES-256-GCM, DEK theo chủ quản, bọc bằng KEK nằm ngoài CSDL; tìm kiếm bằng blind index HMAC khoá riêng)', '');
+  for (const c of s.encrypted) L.push(`- \`${c}\``);
+  const left = v.encryption.plaintextRemaining.reduce((a, c) => a + c.rows, 0) + v.encryption.snapshotsPlaintext;
+  L.push('', `Bản rõ cũ còn lại trong CSDL của chủ quản: **${left}** giá trị${left === 0 ? ' (đã mã hoá xong dữ liệu cũ).' : ' — cần chạy scripts/pii-backfill.ts.'}`);
+  if (v.encryption.keys.length) {
+    L.push('', '| Khoá | Phiên bản | KEK | Trạng thái | Tạo lúc |', '|---|---|---|---|---|');
+    for (const k of v.encryption.keys) L.push(`| ${k.purpose === 'data' ? 'Dữ liệu (DEK)' : 'Blind index'} | ${k.version} | ${k.kekId} | ${k.status === 'active' ? 'đang dùng' : 'đã thay'} | ${vnTime(new Date(k.createdAt))} |`);
+  }
+  L.push('', '### 5.2 Giữ dạng rõ có chủ đích', '');
+  for (const c of s.plainByDesign) L.push(`- \`${c.column}\` — ${c.reason}`);
+  L.push('', '### 5.3 Chưa mã hoá — kế hoạch F16b (họ tên, ngày sinh, ghi chú / kết quả lâm sàng)', '');
   for (const c of s.plaintextSensitive) L.push(`- \`${c}\``);
   L.push('', '## 6. Biện pháp đang áp dụng', '');
   L.push('- Cách ly dữ liệu theo chủ quản bằng Row-Level Security bắt buộc (FORCE) ở CSDL; ứng dụng không chạy bằng superuser.');
   L.push('- Phân quyền theo vai trò + cơ sở; access policy chỉ thu hẹp quyền, che trường nhạy cảm.');
   L.push('- Nhật ký kiểm toán chỉ-thêm, nối chuỗi băm; ghi cả thao tác bị từ chối.');
   L.push('- Dữ liệu lâm sàng không sửa / xoá trực tiếp; mọi thay đổi lưu lịch sử.');
+  L.push('- SĐT, email, số giấy tờ mã hoá theo trường; người đọc được CSDL / bản sao lưu không giải mã được (KEK ngoài CSDL). Xem bản rõ cần quyền riêng `pii:reveal` + lý do, mỗi lần đều ghi kiểm toán.');
   L.push('- Không gửi dữ liệu bệnh nhân tới dịch vụ AI đám mây; kết nối ngoài (Teams, webhook) không mang dữ liệu bệnh nhân; URL / khoá kết nối mã hoá AES-256-GCM.');
   L.push('- Sao lưu hằng đêm có kiểm tra khôi phục (gồm chuỗi băm kiểm toán).');
   L.push('', '---', 'Hồ sơ sinh tự động từ danh mục trong mã nguồn; CI chặn mọi thay đổi CSDL chưa được gắn nhãn.');

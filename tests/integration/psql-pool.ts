@@ -9,6 +9,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 import type { PgPoolLike } from '../../packages/security/src/tenant-context';
+import { configureKeyProvider, hasKeyProvider, LocalKeyProvider } from '../../packages/security/src/pii';
+
+// HCOS-F16: test tích hợp dùng KEK ngẫu nhiên trong bộ nhớ (mỗi tiến trình test một KEK).
+if (!hasKeyProvider()) configureKeyProvider(LocalKeyProvider.ephemeral('it'));
 
 const MARK = '@@END@@';
 const NULL_TOKEN = '__NULL__';
