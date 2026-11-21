@@ -9,9 +9,10 @@ import { api, ApiError } from '../lib/api';
 import { entries, fmtDateTime, mrnOf, patientName, type Bundle, type FhirPatient } from '../lib/fhir';
 import { fmtVnd, parseVnd, vndInWords } from '../lib/money';
 import { QrCode } from '../lib/qr-view';
-import { useSession } from '../lib/session';
+import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, navigate, useAction, useIntentKey, useLoad } from '../lib/ui';
 import { transferNote, vietQrPayload } from '../lib/vietqr';
+import { CaseSuppliesCard } from './equipment';
 
 // ---------------------------------------------------------------------------
 // Kiểu dữ liệu (khớp API)
@@ -348,7 +349,7 @@ const balanceText = (b: number) => (b === 0 ? 'Đủ' : b < 0 ? `Còn thu ${fmtV
 // ---------------------------------------------------------------------------
 /** embedded: nhúng trong màn khác (vd. Quầy trả) — ẩn link quay lại; onChange gọi sau mỗi lần dữ liệu hồ sơ đổi. */
 export function CaseScreen({ id, embedded, onChange }: { id: string; embedded?: boolean; onChange?: () => void }) {
-  const { orgId, me } = useSession();
+  const { orgId, me, roles } = useSession();
   const orgName = me.memberships.find((m) => m.organization.organizationId === orgId)?.organization.name ?? '';
   const c = useLoad(() => api<CaseDetail>('GET', `/api/finance/cases/${id}`).then((r) => r.data), [id]);
   const items = useLoad(() => api<{ items: PriceItem[] }>('GET', `/api/finance/price-items?organization=${orgId}`).then((r) => r.data.items.filter((i) => i.isActive)), [orgId]);
@@ -528,6 +529,7 @@ export function CaseScreen({ id, embedded, onChange }: { id: string; embedded?: 
         )}
         <FinanceError error={cancel.error} />
       </Card>
+      {!open && can.supplies(roles) && <CaseSuppliesCard caseId={d.caseId} />}
     </div>
   );
 }

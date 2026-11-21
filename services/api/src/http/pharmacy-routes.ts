@@ -103,6 +103,7 @@ export function buildPharmacyRoutes(api: PharmacyApi): readonly Route[] {
           form: str(o, 'form', 64, true),
           unitOfMeasure: str(o, 'unitOfMeasure', 32, true),
           ...optional(o, ['substanceId', 36], ['genericName', 200], ['route', 64], ['barcode', 64]),
+          ...(o['itemKind'] === undefined ? {} : { itemKind: o['itemKind'] === 'supply' ? 'supply' : o['itemKind'] === 'drug' ? 'drug' : bad("itemKind must be 'drug' or 'supply'") }),
         };
         const m = await api.createMedication(payload, input.ctx);
         return json(201, m, { location: `/fhir/Medication/${m.medicationId}` });

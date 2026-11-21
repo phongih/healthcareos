@@ -25,7 +25,7 @@ export interface RxView {
   prescriber: { userId: string; displayName: string | null };
   patient?: { patientId: string; mrn: string; familyName: string; givenName: string };
 }
-interface Medication { medicationId: string; brandName: string; genericName?: string | null; strength: string; form: string; unitOfMeasure: string; isActive: boolean }
+interface Medication { medicationId: string; brandName: string; genericName?: string | null; strength: string; form: string; unitOfMeasure: string; isActive: boolean; itemKind?: 'drug' | 'supply' }
 
 export const RX_STATUS: Record<string, string> = {
   active: 'Chờ cấp',
@@ -154,7 +154,8 @@ function suggested(l: Line, med: Medication | undefined): string {
 
 function NewPrescription({ encounterId, onDone, onCancel }: { encounterId: string; onDone: () => void; onCancel: () => void }) {
   const meds = useLoad(
-    () => api<{ medications: Medication[] }>('GET', '/api/pharmacy/medications?active=true&_count=200').then((r) => r.data.medications),
+    // F19: vật tư tiêu hao không kê đơn (trừ theo định mức dịch vụ).
+    () => api<{ medications: Medication[] }>('GET', '/api/pharmacy/medications?active=true&_count=200').then((r) => r.data.medications.filter((m) => m.itemKind !== 'supply')),
     [],
   );
   const [lines, setLines] = useState<Line[]>([blank()]);

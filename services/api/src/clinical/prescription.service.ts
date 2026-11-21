@@ -553,7 +553,7 @@ export class PgPrescriptionRepository extends PgClinicalRepository implements Pr
     if (ids.length === 0) return [];
     const r = await this.db.query<Record<string, unknown>>(
       `SELECT medication_id, tenant_id, brand_name, generic_name, strength, form, unit_of_measure, is_active
-         FROM pharmacy.medications WHERE tenant_id = $1 AND medication_id = ANY($2::uuid[])`,
+         FROM pharmacy.medications WHERE tenant_id = $1 AND medication_id = ANY($2::uuid[]) AND item_kind = 'drug'`, // F19: vật tư không kê đơn
       [this.t, uuidArray(ids)],
     );
     return r.rows.map((x: Record<string, unknown>) => ({

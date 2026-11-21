@@ -63,6 +63,8 @@ export interface Medication extends TenantScoped, Timestamped {
   readonly unitOfMeasure: string;
   readonly barcode?: string;
   readonly isActive: boolean;
+  /** HCOS-F19: 'supply' = vật tư tiêu hao (không kê đơn được, trừ theo định mức dịch vụ). Mặc định 'drug'. */
+  readonly itemKind?: 'drug' | 'supply';
 }
 
 export interface StockLocation extends TenantScoped, Timestamped {

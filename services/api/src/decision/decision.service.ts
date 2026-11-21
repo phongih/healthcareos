@@ -490,6 +490,44 @@ export class PgDecisionRepository extends PgForecastRepository {
     );
     return r.rows.map((x) => ({ userId: x['created_by'] as string, name: (x['display_name'] as string | null) ?? null, total: n(x['total']), cancelled: n(x['cancelled']) }));
   }
+  /** HCOS-F19: chế độ kiểm định của thiết bị chưa thanh lý. */
+  async deviceRegimes(org: OrganizationId): Promise<Array<{ deviceId: string; assetCode: string; name: string; room: string | null; regime: string; mandatory: boolean; state: string; validUntil: string | null; today: string }>> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT d.device_id, d.asset_code, d.name, sp.code AS room, s.regime, s.mandatory, s.state, s.valid_until::text AS valid_until, (now() AT TIME ZONE '${TZ}')::date::text AS today
+         FROM equipment.regime_status s JOIN equipment.devices d ON d.tenant_id = s.tenant_id AND d.device_id = s.device_id
+         LEFT JOIN clinical.service_points sp ON sp.tenant_id = d.tenant_id AND sp.service_point_id = d.service_point_id
+        WHERE s.tenant_id = $1 AND d.organization_id = $2 AND d.status <> 'retired'`,
+      [this.t, org],
+    );
+    return r.rows.map((x) => ({
+      deviceId: x['device_id'] as string, assetCode: x['asset_code'] as string, name: x['name'] as string, room: (x['room'] as string | null) ?? null, regime: x['regime'] as string,
+      mandatory: x['mandatory'] === true || x['mandatory'] === 't', state: x['state'] as string, validUntil: x['valid_until'] ? String(x['valid_until']).slice(0, 10) : null,
+      today: String(x['today']).slice(0, 10),
+    }));
+  }
+  async devicesOutOfService(org: OrganizationId): Promise<Array<{ deviceId: string; assetCode: string; name: string; room: string | null; status: string; since: string }>> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT d.device_id, d.asset_code, d.name, sp.code AS room, d.status, d.status_since
+         FROM equipment.devices d LEFT JOIN clinical.service_points sp ON sp.tenant_id = d.tenant_id AND sp.service_point_id = d.service_point_id
+        WHERE d.tenant_id = $1 AND d.organization_id = $2 AND d.status IN ('broken', 'maintenance')`,
+      [this.t, org],
+    );
+    return r.rows.map((x) => ({
+      deviceId: x['device_id'] as string, assetCode: x['asset_code'] as string, name: x['name'] as string, room: (x['room'] as string | null) ?? null,
+      status: x['status'] as string, since: iso(x['status_since']),
+    }));
+  }
+  async openShortfalls(org: OrganizationId, now: Date): Promise<Array<{ medicationId: string; name: string; unit: string; qty: number; lines: number; oldest: string }>> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT c.medication_id, m.brand_name, m.unit_of_measure, sum(c.quantity) AS qty, count(*) AS lines, min(c.created_at) AS oldest
+         FROM equipment.supply_consumptions c JOIN pharmacy.medications m ON m.tenant_id = c.tenant_id AND m.medication_id = c.medication_id
+        WHERE c.tenant_id = $1 AND c.organization_id = $2 AND c.source = 'shortfall' AND c.created_at > $3::timestamptz - interval '30 days'
+          AND NOT EXISTS (SELECT 1 FROM equipment.supply_shortfall_resolutions r WHERE r.tenant_id = c.tenant_id AND r.consumption_id = c.consumption_id)
+        GROUP BY 1, 2, 3`,
+      [this.t, org, now.toISOString()],
+    );
+    return r.rows.map((x) => ({ medicationId: x['medication_id'] as string, name: x['brand_name'] as string, unit: x['unit_of_measure'] as string, qty: n(x['qty']), lines: n(x['lines']), oldest: iso(x['oldest']) }));
+  }
   /** Lịch hẹn theo tuần lùi: tuần 0 = 7 ngày trước hôm nay, 1..8 = các tuần trước đó. */
   async bookingWeeks(org: OrganizationId, today: string): Promise<Array<{ week: number; total: number; noShow: number }>> {
     const r = await this.db.query<Record<string, unknown>>(
@@ -705,6 +743,44 @@ const COLLECTORS: Readonly<Record<string, Collector>> = {
       link: '#/reports',
     }];
   },
+  async device_inspection(repo, org) {
+    return (await repo.deviceRegimes(org)).map((r) => {
+      const overdue = ['overdue', 'failed', 'missing', 'reinspect'].includes(r.state);
+      const days = r.validUntil ? daysBetween(r.today, r.validUntil) : null;
+      const what = REGIME_LABEL[r.regime] ?? r.regime;
+      const why = r.state === 'missing' ? 'chưa kiểm định lần nào' : r.state === 'failed' ? 'lần gần nhất KHÔNG ĐẠT' : r.state === 'reinspect' ? 'đã sửa chữa lớn, chưa kiểm định lại'
+        : r.state === 'overdue' ? `hết hạn ${ddmm(r.validUntil!)}/${r.validUntil!.slice(0, 4)}` : `hết hạn ${ddmm(r.validUntil!)}/${r.validUntil!.slice(0, 4)} (còn ${days} ngày)`;
+      return {
+        subjectKey: `device:${r.deviceId}:${r.regime}`,
+        metrics: { days_to_due: overdue && r.state !== 'overdue' ? -1 : days, overdue: overdue ? 1 : 0, mandatory: r.mandatory ? 1 : 0 },
+        title: `${r.assetCode} ${r.name}${r.room ? ` (${r.room})` : ''}: ${what.toLowerCase()} ${why}`,
+        detail: overdue && r.mandatory ? 'Máy đang bị chặn chỉ định cho tới khi ghi kết quả kiểm định đạt.' : null,
+        link: `#/tb/${r.assetCode}`,
+      };
+    });
+  },
+  async device_out_of_service(repo, org, now) {
+    return (await repo.devicesOutOfService(org)).map((d) => ({
+      subjectKey: `device:${d.deviceId}:${d.status}:${d.since}`,
+      metrics: { out_of_service: 1, broken: d.status === 'broken' ? 1 : 0, hours_out: round2((now.getTime() - Date.parse(d.since)) / 3_600_000) },
+      title: `${d.assetCode} ${d.name}${d.room ? ` (${d.room})` : ''}: ${d.status === 'broken' ? 'HỎNG' : 'đang bảo trì'} — không chỉ định dịch vụ dùng máy này`,
+      // Mô tả lỗi là văn bản tự do của nhân viên: KHÔNG đưa vào sự kiện (sự kiện P1–P2 có thể được gửi ra Teams / đối tác).
+      detail: 'Xem mô tả lỗi và nhật ký trên trang thiết bị trong HealthcareOS.',
+      link: `#/tb/${d.assetCode}`,
+    }));
+  },
+  async supply_shortfall(repo, org, now) {
+    return (await repo.openShortfalls(org, now)).map((s) => ({
+      subjectKey: `supply:${s.medicationId}`,
+      metrics: { shortfall_qty: s.qty, lines: s.lines, oldest_hours: round2((now.getTime() - Date.parse(s.oldest)) / 3_600_000) },
+      title: `${s.name}: thiếu ${fmt(s.qty, 0)} ${s.unit} khi tất toán (${s.lines} dòng chờ đối soát)`,
+      detail: 'Kiểm tra nhập kho / chuyển kho vào tủ vật tư, rồi đối soát ở tab Thiết bị & vật tư.',
+      link: '#/equipment',
+    }));
+  },
+};
+const REGIME_LABEL: Readonly<Record<string, string>> = {
+  atkt: 'Kiểm định an toàn & tính năng kỹ thuật', do_luong: 'Kiểm định phương tiện đo', buc_xa: 'Kiểm định an toàn bức xạ', ap_luc: 'Kiểm định thiết bị áp lực', hieu_chuan: 'Hiệu chuẩn',
 };
 // Mọi detector trong danh mục phải có bộ thu thập.
 for (const d of DETECTORS) if (!COLLECTORS[d.id]) throw new Error(`Detector ${d.id} has no collector`);

@@ -16,7 +16,7 @@ export interface MetricSpec {
   readonly label: string;
   readonly unit: string;
 }
-export type DetectorGroup = 'clinical' | 'operations' | 'pharmacy' | 'finance';
+export type DetectorGroup = 'clinical' | 'operations' | 'pharmacy' | 'finance' | 'equipment';
 export interface DetectorSpec {
   readonly id: string;
   readonly group: DetectorGroup;
@@ -53,7 +53,7 @@ export const DETECTORS: readonly DetectorSpec[] = [
     suggestion: 'Mở dự báo tải',
   },
   {
-    id: 'stock_low', group: 'pharmacy', label: 'Thuốc dưới điểm đặt hàng',
+    id: 'stock_low', group: 'pharmacy', label: 'Thuốc / vật tư dưới điểm đặt hàng',
     description: 'Tồn khả dụng so với điểm đặt hàng lại (ROP) có hiệu chỉnh xu hướng ICD-10.',
     method: 'ROP = tiêu thụ ngày × thời gian chờ hàng + tồn an toàn (z × σ × √L); chỉ xét thuốc có tiêu thụ.',
     metrics: [
@@ -126,6 +126,30 @@ export const DETECTORS: readonly DetectorSpec[] = [
     metrics: [m('visits', 'Lượt khám hôm qua'), m('baseline_median', 'Trung vị cùng thứ'), m('robust_z', 'Điểm bất thường (z)'), m('abs_robust_z', 'Độ lệch (|z|)')],
     targets: ['clinic_admin', 'executive'],
     suggestion: 'Mở báo cáo',
+  },
+  {
+    id: 'device_inspection', group: 'equipment', label: 'Thiết bị đến hạn / quá hạn kiểm định',
+    description: 'Từng chế độ kiểm định / hiệu chuẩn đang áp dụng của thiết bị chưa thanh lý.',
+    method: 'Hạn = "hiệu lực đến" của lần gần nhất. Quá hạn cũng gồm: chưa kiểm định lần nào, kết quả không đạt, sửa chữa lớn sau lần gần nhất.',
+    metrics: [m('days_to_due', 'Còn', 'ngày'), m('overdue', 'Quá hạn / không đạt / chưa có (1 = có)'), m('mandatory', 'Bắt buộc (1 = có)')],
+    targets: ['clinic_admin', 'clinic_staff', 'doctor', 'executive'],
+    suggestion: 'Mở trang thiết bị',
+  },
+  {
+    id: 'device_out_of_service', group: 'equipment', label: 'Thiết bị hỏng / đang bảo trì',
+    description: 'Thiết bị đang ở trạng thái Hỏng hoặc Bảo trì (không được chỉ định dịch vụ dùng máy).',
+    method: 'Trạng thái lấy từ nhật ký thiết bị (báo hỏng qua QR, bắt đầu bảo trì).',
+    metrics: [m('out_of_service', 'Ngừng dùng (1 = có)'), m('broken', 'Hỏng (1 = có)'), m('hours_out', 'Đã ngừng', 'giờ')],
+    targets: ['clinic_admin', 'clinic_staff', 'doctor', 'executive'],
+    suggestion: 'Mở trang thiết bị',
+  },
+  {
+    id: 'supply_shortfall', group: 'equipment', label: 'Vật tư thiếu khi tất toán',
+    description: 'Dòng vật tư theo định mức không đủ tồn ở kho trừ lúc tất toán, chưa đối soát.',
+    method: 'Tổng số lượng thiếu chưa đối soát theo từng vật tư (30 ngày).',
+    metrics: [m('shortfall_qty', 'Thiếu'), m('lines', 'Số dòng'), m('oldest_hours', 'Dòng cũ nhất', 'giờ')],
+    targets: ['pharmacy_admin', 'clinic_admin', 'executive'],
+    suggestion: 'Mở vật tư',
   },
 ];
 export const DETECTOR_BY_ID: ReadonlyMap<string, DetectorSpec> = new Map(DETECTORS.map((d) => [d.id, d]));

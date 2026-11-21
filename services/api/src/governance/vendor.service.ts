@@ -86,7 +86,7 @@ export class VendorService extends GovernanceBase<Permission> {
       const p = await this.principal(repo, ctx);
       this.need(p.grants, p.user, 'vendor:read');
       const r = await repo.tdb.query(
-        `SELECT a.*, u.display_name AS assessed_by_name FROM governance.vendor_assessments a LEFT JOIN iam.users u ON u.tenant_id = a.tenant_id AND u.user_id = a.assessed_by
+        `SELECT a.*, a.valid_from::text AS valid_from, a.valid_until::text AS valid_until, u.display_name AS assessed_by_name FROM governance.vendor_assessments a LEFT JOIN iam.users u ON u.tenant_id = a.tenant_id AND u.user_id = a.assessed_by
           WHERE a.tenant_id = $1 AND a.vendor_id = $2 ORDER BY a.assessed_at DESC`,
         [repo.tenantId, id],
       );

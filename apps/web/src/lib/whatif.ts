@@ -13,6 +13,8 @@ export interface WhatIfBase {
   examShare: number;
   fixedCostsMonthly: number;
   variableCostPct: number;
+  /** HCOS-F19: khấu hao thiết bị / tháng (chi phí không bằng tiền, cộng vào chi phí cố định khi tính lãi và hòa vốn). */
+  depreciationMonthly?: number;
 }
 export interface WhatIfLevers {
   /** % thay đổi số lịch đặt online (−50 … +100). */
@@ -52,8 +54,9 @@ export function simulate(b: WhatIfBase, l: WhatIfLevers): WhatIfResult {
   const revenue = visits * rpv;
   const variableCost = revenue * v;
   const contribution = rpv * (1 - v);
-  const profit = revenue - variableCost - b.fixedCostsMonthly;
-  const breakEvenRevenue = b.fixedCostsMonthly / (1 - v);
+  const fixed = b.fixedCostsMonthly + Math.max(0, b.depreciationMonthly ?? 0);
+  const profit = revenue - variableCost - fixed;
+  const breakEvenRevenue = fixed / (1 - v);
   return {
     visits: Math.round(visits * 10) / 10,
     bookedVisits: Math.round(bookedVisits * 10) / 10,
@@ -64,7 +67,7 @@ export function simulate(b: WhatIfBase, l: WhatIfLevers): WhatIfResult {
     contributionPerVisit: Math.round(contribution),
     profit: Math.round(profit),
     breakEvenRevenue: Math.round(breakEvenRevenue),
-    breakEvenVisits: contribution > 0 ? Math.ceil(b.fixedCostsMonthly / contribution) : null,
+    breakEvenVisits: contribution > 0 ? Math.ceil(fixed / contribution) : null,
     safetyMargin: revenue > 0 ? Math.round(((revenue - breakEvenRevenue) / revenue) * 1000) / 1000 : null,
   };
 }

@@ -13,6 +13,7 @@
  *     tỷ trọng phí khám, chi phí cố định / tháng, % chi phí biến đổi.
  * Mọi tham số tự ước từ dữ liệu đều trả kèm "nguồn" (dữ liệu / mặc định) và cờ đủ dữ liệu.
  */
+import { depreciation } from '../equipment/depreciation';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -93,6 +94,8 @@ export interface LoadForecast {
 }
 export interface InventoryLine {
   readonly medicationId: string;
+  /** HCOS-F19: 'supply' = vật tư tiêu hao (tiêu thụ = xuất theo định mức khi tất toán). */
+  readonly kind: 'drug' | 'supply';
   readonly name: string;
   readonly unit: string;
   readonly available: number;
@@ -134,6 +137,12 @@ export interface CashflowBase {
   readonly actualRevenueLast30: number;
   readonly fixedCostsMonthly: number;
   readonly variableCostPct: number;
+  /** HCOS-F19: khấu hao tháng này của thiết bị chưa thanh lý (đường thẳng); không phải chi tiền mặt. */
+  readonly depreciationMonthly: number;
+  readonly depreciatingDevices: number;
+  /** HCOS-F19: giá vốn vật tư theo định mức đã trừ khi tất toán, 30 ngày gần nhất. */
+  readonly supplyCogsLast30: number;
+  readonly supplyCogsPerCase: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -362,7 +371,7 @@ export class PgForecastRepository extends PgClinicalRepository {
          FROM pharmacy.stock_movements m
          JOIN pharmacy.stock_locations l ON l.location_id = m.source_location_id AND l.tenant_id = m.tenant_id
          JOIN pharmacy.batches b ON b.batch_id = m.batch_id AND b.tenant_id = m.tenant_id
-        WHERE m.tenant_id = $1 AND l.organization_id = $2 AND m.movement_type = 'dispense'
+        WHERE m.tenant_id = $1 AND l.organization_id = $2 AND m.movement_type IN ('dispense', 'consume')
           AND (m.occurred_at AT TIME ZONE '${TZ}')::date BETWEEN $3::date AND $4::date
         GROUP BY 1, 2`,
       [this.t, org, from, to],
@@ -378,12 +387,30 @@ export class PgForecastRepository extends PgClinicalRepository {
     );
     return (r.rows[0]?.['d'] as string | null) ?? null;
   }
-  async medications(): Promise<Map<string, { name: string; unit: string }>> {
+  async medications(): Promise<Map<string, { name: string; unit: string; kind: 'drug' | 'supply' }>> {
     const r = await this.db.query<Record<string, unknown>>(
-      `SELECT medication_id, brand_name, strength, unit_of_measure FROM pharmacy.medications WHERE tenant_id = $1 AND is_active`,
+      `SELECT medication_id, brand_name, strength, unit_of_measure, item_kind FROM pharmacy.medications WHERE tenant_id = $1 AND is_active`,
       [this.t],
     );
-    return new Map(r.rows.map((x) => [x['medication_id'] as string, { name: `${x['brand_name']}`, unit: x['unit_of_measure'] as string }]));
+    return new Map(r.rows.map((x) => [x['medication_id'] as string, { name: `${x['brand_name']}`, unit: x['unit_of_measure'] as string, kind: x['item_kind'] === 'supply' ? 'supply' : 'drug' }]));
+  }
+  /** HCOS-F19: thiết bị có khấu hao (chưa thanh lý hoặc thanh lý trong tháng). */
+  async depreciableDevices(org: OrganizationId): Promise<Array<{ cost: number; life: number; inServiceOn: string; retiredOn: string | null }>> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT cost, useful_life_months, in_service_on::text AS in_service_on, retired_on::text AS retired_on FROM equipment.devices
+        WHERE tenant_id = $1 AND organization_id = $2 AND cost IS NOT NULL AND cost > 0`,
+      [this.t, org],
+    );
+    return r.rows.map((x) => ({ cost: n(x['cost']), life: n(x['useful_life_months']), inServiceOn: String(x['in_service_on']).slice(0, 10), retiredOn: x['retired_on'] ? String(x['retired_on']).slice(0, 10) : null }));
+  }
+  /** HCOS-F19: giá vốn vật tư đã trừ (theo ngày tất toán). */
+  async supplyCogs(org: OrganizationId, from: string, to: string): Promise<{ cost: number; cases: number }> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT COALESCE(sum(cost), 0) AS cost, count(DISTINCT case_id) AS cases FROM equipment.supply_consumptions
+        WHERE tenant_id = $1 AND organization_id = $2 AND (created_at AT TIME ZONE '${TZ}')::date BETWEEN $3::date AND $4::date`,
+      [this.t, org, from, to],
+    );
+    return { cost: Math.round(n(r.rows[0]?.['cost'])), cases: n(r.rows[0]?.['cases']) };
   }
   /** Số chẩn đoán ICD-10 theo mã (theo ngày khám): 7 ngày gần nhất và 21 ngày trước đó. */
   async icdCounts(org: OrganizationId, today: string): Promise<Array<{ code: string; display: string | null; last7: number; prior21: number }>> {
@@ -584,7 +611,7 @@ export async function computeInventory(repo: PgForecastRepository, org: Organiza
     const calc = reorderLine({ available, daily: series, trendFactor, leadTimeDays: settings.leadTimeDays, z, reviewDays: REVIEW_DAYS });
     const unitCost = myBatches.length ? Math.max(...myBatches.map((b) => b.unitCost)) : null;
     lines.push({
-      medicationId: id, name: m.name, unit: m.unit, available, trendFactor: r2(trendFactor),
+      medicationId: id, kind: m.kind, name: m.name, unit: m.unit, available, trendFactor: r2(trendFactor),
       trendCodes: myLinks.map((l) => ({ code: l.code, ratio: r2(ratio.get(l.code) ?? 1) })).filter((c) => c.ratio !== 1).sort((a, b) => b.ratio - a.ratio).slice(0, 3),
       ...calc,
       estimatedOrderValue: calc.suggestedOrder && unitCost ? Math.round(calc.suggestedOrder * unitCost) : null,
@@ -738,6 +765,9 @@ export class ForecastService {
       const st = await repo.revenueStats(org, from, to);
       const settings = await repo.getSettings(org);
       const hist = await repo.visitHistory(org, from, to);
+      const devices = await repo.depreciableDevices(org);
+      const dep = devices.map((d) => depreciation({ cost: d.cost, usefulLifeMonths: d.life, inServiceOn: d.inServiceOn, retiredOn: d.retiredOn }, today).thisMonth);
+      const sc = await repo.supplyCogs(org, addDays(today, -29), today);
       await repo.appendAudit(this.event(ctx, 'forecast.cashflow', org, 'success', p.user, {}));
       return {
         horizonDays: 30,
@@ -746,6 +776,8 @@ export class ForecastService {
         examShare: st.cases > 0 ? r2(st.examCases / st.cases) : 0, avgExamPrice: st.examQty > 0 ? Math.round(st.examRevenue / st.examQty) : null,
         actualVisitsLast30: hist.reduce((a, h) => a + h.count, 0), actualRevenueLast30: st.revenue,
         fixedCostsMonthly: settings.fixedCostsMonthly, variableCostPct: settings.variableCostPct,
+        depreciationMonthly: dep.reduce((a, x) => a + x, 0), depreciatingDevices: dep.filter((x) => x > 0).length,
+        supplyCogsLast30: sc.cost, supplyCogsPerCase: sc.cases > 0 ? Math.round(sc.cost / sc.cases) : null,
       };
     });
   }
