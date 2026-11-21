@@ -117,7 +117,10 @@ run('Danh mục dữ liệu / PostgreSQL', () => {
     expect(await g.listAssessments(C.rootB)).toEqual([]);
     const md = await g.dossier(C.mgr);
     expect(md).toContain('Cấp tính từ danh mục: 3');
-    expect(md).toContain('`patient.persons.phone`');
+    expect(md).toContain('`patient.persons.phone_enc`');
+    expect(md).toContain('Bản rõ cũ còn lại trong CSDL của chủ quản: **0**');
+    expect(md).toContain('`patient.patients.mrn` — Mã tra cứu tự sinh');
+    expect(md).toContain('(giờ Việt Nam)');
     expect(md).toContain('Lần xác định gần nhất: **cấp 3**');
     expect(su(`SELECT count(*) FROM platform.audit_events WHERE action='governance.assessment.create' AND outcome='success'`)).toBe('1');
   });

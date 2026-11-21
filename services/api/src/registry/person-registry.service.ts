@@ -101,6 +101,7 @@ import {
   withTenantTransaction,
   type PgPoolLike,
 } from '../../../../packages/security/src/tenant-context';
+import { TenantPii } from '../../../../packages/security/src/pii';
 
 // ---------------------------------------------------------------------------
 // Ports
@@ -122,17 +123,30 @@ export interface IdentifierMatch {
 export interface SurvivorPatch {
   readonly birthDate: string | null;
   readonly sex: Sex | null;
+  /** Khác null = lấy SĐT / email của source (repo PostgreSQL chép bản mã từ source, không giải mã). */
   readonly phone: string | null;
   readonly email: string | null;
   readonly phoneKey: string | null;
+  /** HCOS-F16: person nguồn để chép bản mã liên hệ. */
+  readonly contactSource?: PersonId;
+}
+/** HCOS-F16: liên hệ đã mã hoá (lưu trong ảnh chụp gộp hồ sơ để hoàn tác mà không cần bản rõ). */
+export interface SealedContact {
+  readonly phoneEnc: string | null;
+  readonly phoneBidx: string | null;
+  readonly phoneHint: string | null;
+  readonly emailEnc: string | null;
+  readonly emailHint: string | null;
 }
 
 /** Mọi method tự lọc theo tenant (và bị RLS bảo vệ) trong transaction hiện tại. */
 export interface TargetRestore {
   readonly birthDate: string | null;
   readonly sex: Sex | null;
+  /** Ảnh chụp cũ (trước F16) mới có bản rõ ở đây; ảnh chụp mới dùng `contact`. */
   readonly phone: string | null;
   readonly email: string | null;
+  readonly contact?: SealedContact | null;
 }
 
 export interface RegistryRepository {
@@ -144,6 +158,10 @@ export interface RegistryRepository {
   insertPerson(p: Person, keys: PersonKeys): Promise<void>;
   findCandidates(q: CandidateQuery): Promise<Person[]>;
   findIdentifierMatches(keys: ReadonlyArray<{ system: string; value: string }>): Promise<IdentifierMatch[]>;
+  /** HCOS-F16: khoá so khớp SĐT (PostgreSQL: blind index; repo giả: chính SĐT chuẩn hoá). */
+  phoneIndex(phone: string): Promise<string>;
+  /** HCOS-F16: liên hệ đã mã hoá của person (undefined khi repo không mã hoá). */
+  sealedContact(personId: PersonId): Promise<SealedContact | undefined>;
   listIdentifiers(personId: PersonId): Promise<Identifier[]>;
   insertIdentifier(i: Identifier): Promise<void>;
   findIdentifier(id: string): Promise<Identifier | null>;
@@ -236,6 +254,9 @@ async function mrnCall<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 const MAX_IDENTIFIERS = 10;
+/** Ảnh chụp có liên hệ mã hoá: bỏ dạng che phone/email (CSDL chỉ cho phép khối `contact` mã hoá). Repo không mã hoá => giữ nguyên. */
+const withContact = (c: SealedContact | undefined): { contact?: SealedContact; phone?: null; email?: null } =>
+  c === undefined ? {} : { phone: null, email: null, contact: c };
 const MAX_CANDIDATES = 20;
 
 export type PersonView = {
@@ -332,7 +353,10 @@ export class PersonRegistryService {
         possibleDuplicates: ranked.filter((c) => c.level === 'possible').length,
       }),
     );
-    return { person, identifiers, possibleDuplicates: ranked.filter((c) => c.level === 'possible') };
+    // HCOS-F16: trả lại bản đã lưu (SĐT / email / số giấy tờ ở dạng che) — không vọng lại bản rõ.
+    const stored = (await repo.findPerson(person.personId)) ?? person;
+    const storedIds = identifiers.length ? (await repo.listIdentifiers(person.personId)).filter((i) => identifiers.some((x) => x.identifierId === i.identifierId)) : identifiers;
+    return { person: stored, identifiers: storedIds, possibleDuplicates: ranked.filter((c) => c.level === 'possible') };
   }
 
   // ---- Duplicate search ----------------------------------------------------
@@ -391,7 +415,7 @@ export class PersonRegistryService {
       await repo.appendAudit(
         this.event(ctx, { ...meta, resourceId: identifier.identifierId }, 'success', principal.user, { type: identifier.type }),
       );
-      return identifier;
+      return (await repo.findIdentifier(identifier.identifierId)) ?? identifier;
     });
   }
 
@@ -502,8 +526,12 @@ export class PersonRegistryService {
 
       const sourceIds = (await repo.listIdentifiers(source.personId)).filter((i) => i.status === 'active');
       const targetKeys = new Set(
-        (await repo.listIdentifiers(target.personId)).filter((i) => i.status === 'active').map((i) => identifierKey(i.system, i.value)),
+        (await repo.listIdentifiers(target.personId)).filter((i) => i.status === 'active').map((i) => identifierKey(i.system, i.valueIndex ?? i.value)),
       );
+
+      // HCOS-F16: chụp liên hệ đã mã hoá TRƯỚC khi gộp (target sắp nhận liên hệ của source).
+      const sourceContact = await repo.sealedContact(source.personId);
+      const targetContact = await repo.sealedContact(target.personId);
 
       // 1) Đánh dấu source đã merge (trigger DB bảo đảm target active cùng tenant).
       const marked = await repo.markPersonMerged(source.personId, target.personId, source.version);
@@ -516,6 +544,7 @@ export class PersonRegistryService {
         phone: target.phone === null ? source.phone : null,
         email: target.email === null ? source.email : null,
         phoneKey: target.phone === null && source.phone !== null ? normalizePhone(source.phone) : null,
+        contactSource: source.personId,
       };
       const patchedTarget = await repo.patchSurvivor(target.personId, patch, target.version);
       if (!patchedTarget) throw new VersionConflictError('Person', target.personId, target.version);
@@ -527,7 +556,7 @@ export class PersonRegistryService {
       const moved: string[] = [];
       const retired: string[] = [];
       for (const id of sourceIds) {
-        if (targetKeys.has(identifierKey(id.system, id.value))) {
+        if (targetKeys.has(identifierKey(id.system, id.valueIndex ?? id.value))) {
           const r = await repo.updateIdentifierStatus(id.identifierId, 'inactive', id.version);
           if (!r) throw new VersionConflictError('Identifier', id.identifierId, id.version);
           retired.push(id.identifierId);
@@ -551,13 +580,13 @@ export class PersonRegistryService {
         targetPersonId: target.personId,
         reason,
         mergedByUserId: principal.user.userId,
-        sourceSnapshot: { ...source },
+        sourceSnapshot: { ...source, ...withContact(sourceContact) },
         movedPatientIds,
         movedIdentifierIds: moved,
         retiredIdentifierIds: retired,
         repointedUserIds,
         mergedAt: this.now(),
-        targetSnapshot: { ...target },
+        targetSnapshot: { ...target, ...withContact(targetContact) },
         targetVersionAfter: patchedTarget.version,
       });
 
@@ -684,6 +713,7 @@ export class PersonRegistryService {
           sex: (snap['sex'] as Sex | null | undefined) ?? null,
           phone: (snap['phone'] as string | null | undefined) ?? null,
           email: (snap['email'] as string | null | undefined) ?? null,
+          ...(snap['contact'] !== undefined ? { contact: snap['contact'] as SealedContact | null } : {}),
         },
         target.version,
       );
@@ -899,7 +929,7 @@ export class PersonRegistryService {
       }
     }
 
-    const self: MatchProfile = { nameKey: draft.nameKey, birthDate: draft.birthDate, phoneKey: draft.phoneKey };
+    const self: MatchProfile = { nameKey: draft.nameKey, birthDate: draft.birthDate, phoneKey: draft.phoneKey ? await repo.phoneIndex(draft.phoneKey) : null };
     const out: DuplicateCandidate[] = [];
     for (const cand of byId.values()) {
       assertSameTenant(cand, ctx);
@@ -907,7 +937,7 @@ export class PersonRegistryService {
       const profile: MatchProfile = {
         nameKey: buildNameKey(cand.givenName, cand.familyName),
         birthDate: cand.birthDate,
-        phoneKey: normalizePhone(cand.phone),
+        phoneKey: cand.phoneIndex ?? normalizePhone(cand.phone),
         sharesIdentifier: idMatched.has(cand.personId),
       };
       const r = scoreMatch(self, profile);
@@ -1011,6 +1041,7 @@ export class PersonRegistryService {
 // ===========================================================================
 const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   identifiers_active_system_value_uk: 'IDENTIFIER_TAKEN',
+  identifiers_active_system_bidx_uk: 'IDENTIFIER_TAKEN',
   persons_pkey: 'ID_COLLISION',
   person_merges_source_uk: 'ALREADY_MERGED',
   person_unmerges_merge_uk: 'ALREADY_UNMERGED',
@@ -1036,7 +1067,27 @@ const pgUuidArray = (ids: readonly string[]): string => `{${ids.join(',')}}`;
 const CAND_LIMIT = 200;
 
 export class PgRegistryRepository implements RegistryRepository {
+  private piiCodec: TenantPii | null = null;
   constructor(private readonly db: TenantScopedDb) {}
+
+  /** HCOS-F16: mã hoá / blind index của tenant hiện tại. */
+  private get pii(): TenantPii {
+    return (this.piiCodec ??= new TenantPii(this.db));
+  }
+
+  async phoneIndex(phone: string): Promise<string> {
+    return this.pii.index('phone', phone);
+  }
+
+  async sealedContact(personId: PersonId): Promise<SealedContact | undefined> {
+    const r = await this.db.query<Record<string, string | null>>(
+      `SELECT phone_enc, phone_bidx, phone_hint, email_enc, email_hint FROM patient.persons WHERE tenant_id = $1 AND person_id = $2`,
+      [this.t, personId],
+    );
+    const x = r.rows[0];
+    if (!x) return undefined;
+    return { phoneEnc: x['phone_enc'] ?? null, phoneBidx: x['phone_bidx'] ?? null, phoneHint: x['phone_hint'] ?? null, emailEnc: x['email_enc'] ?? null, emailHint: x['email_hint'] ?? null };
+  }
 
   private get t(): string {
     return this.db.tenantId;
@@ -1067,12 +1118,17 @@ export class PgRegistryRepository implements RegistryRepository {
   }
 
   async insertPerson(p: Person, keys: PersonKeys): Promise<void> {
+    // HCOS-F16: SĐT / email chỉ lưu bản mã + blind index + dạng che; cột bản rõ để NULL (trigger CSDL chặn ghi bản rõ).
+    const phone = await this.pii.protect('phone', p.phone);
+    const email = await this.pii.protect('email', p.email);
     try {
       await this.db.query(
         `INSERT INTO patient.persons
-           (person_id, tenant_id, given_name, family_name, birth_date, sex, phone, email, status, name_key, phone_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [p.personId, p.tenantId, p.givenName, p.familyName, p.birthDate, p.sex, p.phone, p.email, p.status, keys.nameKey, keys.phoneKey],
+           (person_id, tenant_id, given_name, family_name, birth_date, sex, status, name_key,
+            phone_enc, phone_bidx, phone_hint, email_enc, email_hint)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [p.personId, p.tenantId, p.givenName, p.familyName, p.birthDate, p.sex, p.status, keys.nameKey,
+         phone.enc, phone.bidx, phone.hint, email.enc, email.hint],
       );
     } catch (e) {
       translatePgError(e);
@@ -1085,10 +1141,10 @@ export class PgRegistryRepository implements RegistryRepository {
       `SELECT ${PERSON_COLS} FROM patient.persons
         WHERE tenant_id = $1 AND status = 'active'
           AND (   ($2::date IS NOT NULL AND birth_date = $2::date)
-               OR ($3::text IS NOT NULL AND phone_key = $3::text)
+               OR ($3::text IS NOT NULL AND phone_bidx = $3::text)
                OR ($4::text IS NOT NULL AND name_key  = $4::text))
         LIMIT ${CAND_LIMIT}`,
-      [this.t, q.birthDate, q.phoneKey, q.nameKey],
+      [this.t, q.birthDate, q.phoneKey === null ? null : await this.pii.index('phone', q.phoneKey), q.nameKey],
     );
     return r.rows.map(mapPerson);
   }
@@ -1096,13 +1152,14 @@ export class PgRegistryRepository implements RegistryRepository {
   async findIdentifierMatches(keys: ReadonlyArray<{ system: string; value: string }>): Promise<IdentifierMatch[]> {
     if (keys.length === 0) return [];
     const params: unknown[] = [this.t];
-    const tuples = keys.map((k) => {
-      params.push(k.system, k.value);
-      return `($${params.length - 1}, $${params.length})`;
-    });
+    const tuples: string[] = [];
+    for (const k of keys) {
+      params.push(k.system, await this.pii.index('identifier', k.value));
+      tuples.push(`($${params.length - 1}, $${params.length})`);
+    }
     const r = await this.db.query<{ person_id: PersonId; system: string; value: string }>(
-      `SELECT person_id, system, value FROM patient.identifiers
-        WHERE tenant_id = $1 AND status = 'active' AND (system, value) IN (${tuples.join(', ')})`,
+      `SELECT person_id, system, value_hint AS value FROM patient.identifiers
+        WHERE tenant_id = $1 AND status = 'active' AND (system, value_bidx) IN (${tuples.join(', ')})`,
       params,
     );
     return r.rows.map((x) => ({ personId: x.person_id, system: x.system, value: x.value }));
@@ -1118,11 +1175,12 @@ export class PgRegistryRepository implements RegistryRepository {
 
   async insertIdentifier(i: Identifier): Promise<void> {
     try {
+      const v = await this.pii.protect('identifier', i.value);
       await this.db.query(
         `INSERT INTO patient.identifiers
-           (identifier_id, tenant_id, person_id, patient_id, type, system, value, status, period_start, period_end)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [i.identifierId, i.tenantId, i.personId, i.patientId, i.type, i.system, i.value, i.status, i.periodStart, i.periodEnd],
+           (identifier_id, tenant_id, person_id, patient_id, type, system, value_enc, value_bidx, value_hint, status, period_start, period_end)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [i.identifierId, i.tenantId, i.personId, i.patientId, i.type, i.system, v.enc, v.bidx, v.hint, i.status, i.periodStart, i.periodEnd],
       );
     } catch (e) {
       translatePgError(e);
@@ -1166,14 +1224,22 @@ export class PgRegistryRepository implements RegistryRepository {
 
   async patchSurvivor(targetId: PersonId, p: SurvivorPatch, expectedVersion: number): Promise<Person | null> {
     try {
+      // HCOS-F16: liên hệ chép nguyên bản mã từ source (cùng tenant, cùng miền => không cần giải mã).
       const r = await this.db.query(
-        `UPDATE patient.persons
-            SET birth_date = COALESCE(birth_date, $3::date), sex = COALESCE(sex, $4::text), phone = COALESCE(phone, $5::text),
-                email = COALESCE(email, $6::text), phone_key = COALESCE(phone_key, $7::text)
-          WHERE tenant_id = $1 AND person_id = $2 AND version = $8 AND status = 'active' RETURNING ${PERSON_COLS}`,
-        [this.t, targetId, p.birthDate, p.sex, p.phone, p.email, p.phoneKey, expectedVersion],
+        `UPDATE patient.persons t
+            SET birth_date = COALESCE(t.birth_date, $3::date), sex = COALESCE(t.sex, $4::text),
+                phone_enc  = CASE WHEN $5::boolean AND t.phone_enc IS NULL THEN s.phone_enc  ELSE t.phone_enc  END,
+                phone_bidx = CASE WHEN $5::boolean AND t.phone_enc IS NULL THEN s.phone_bidx ELSE t.phone_bidx END,
+                phone_hint = CASE WHEN $5::boolean AND t.phone_enc IS NULL THEN s.phone_hint ELSE t.phone_hint END,
+                email_enc  = CASE WHEN $6::boolean AND t.email_enc IS NULL THEN s.email_enc  ELSE t.email_enc  END,
+                email_hint = CASE WHEN $6::boolean AND t.email_enc IS NULL THEN s.email_hint ELSE t.email_hint END
+           FROM patient.persons s
+          WHERE t.tenant_id = $1 AND t.person_id = $2 AND t.version = $8 AND t.status = 'active'
+            AND s.tenant_id = $1 AND s.person_id = COALESCE($7::uuid, $2)
+          RETURNING t.person_id`,
+        [this.t, targetId, p.birthDate, p.sex, p.phone !== null, p.email !== null, p.contactSource ?? null, expectedVersion],
       );
-      return r.rows[0] ? mapPerson(r.rows[0]) : null;
+      return r.rows[0] ? this.findPerson(targetId) : null;
     } catch (e) {
       return translatePgError(e);
     }
@@ -1298,11 +1364,21 @@ export class PgRegistryRepository implements RegistryRepository {
 
   async restoreTarget(targetId: PersonId, v: TargetRestore, expectedVersion: number): Promise<Person | null> {
     try {
+      // Ảnh chụp mới (F16) có `contact` đã mã hoá; ảnh chụp cũ còn bản rõ => mã hoá lúc khôi phục.
+      let c: SealedContact;
+      if (v.contact !== undefined) {
+        c = v.contact ?? { phoneEnc: null, phoneBidx: null, phoneHint: null, emailEnc: null, emailHint: null };
+      } else {
+        const ph = await this.pii.protect('phone', v.phone);
+        const em = await this.pii.protect('email', v.email);
+        c = { phoneEnc: ph.enc, phoneBidx: ph.bidx, phoneHint: ph.hint, emailEnc: em.enc, emailHint: em.hint };
+      }
       const r = await this.db.query(
         `UPDATE patient.persons
-            SET birth_date = $3::date, sex = $4::text, phone = $5::text, email = $6::text, phone_key = $7::text
-          WHERE tenant_id = $1 AND person_id = $2 AND version = $8 AND status = 'active' RETURNING ${PERSON_COLS}`,
-        [this.t, targetId, v.birthDate, v.sex, v.phone, v.email, normalizePhone(v.phone), expectedVersion],
+            SET birth_date = $3::date, sex = $4::text, phone = NULL, email = NULL, phone_key = NULL,
+                phone_enc = $5, phone_bidx = $6, phone_hint = $7, email_enc = $8, email_hint = $9
+          WHERE tenant_id = $1 AND person_id = $2 AND version = $10 AND status = 'active' RETURNING ${PERSON_COLS}`,
+        [this.t, targetId, v.birthDate, v.sex, c.phoneEnc, c.phoneBidx, c.phoneHint, c.emailEnc, c.emailHint, expectedVersion],
       );
       return r.rows[0] ? mapPerson(r.rows[0]) : null;
     } catch (e) {

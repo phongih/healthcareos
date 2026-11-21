@@ -29,6 +29,7 @@ import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/s
 import { BookingService, PgBookingUnitOfWork, PublicBookingService, periodOpen, vnNow } from '../services/api/src/clinical/booking.service';
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
 import { HandoverService } from '../services/api/src/clinical/handover.service';
+import { configureKeyProvider, LocalKeyProvider } from '../packages/security/src/pii';
 import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
 import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analytics/forecast.service';
@@ -132,16 +133,20 @@ const pgPool = new pg.Pool({ connectionString: url, max: 4 });
 const pool = pgPool as unknown as PgPoolLike;
 const audit = new PgAuditSink(pool);
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+// HCOS-F16: KEK lấy từ hcos.env (HCOS_KEKS) như API — seed ghi dữ liệu đã mã hoá giống hệt người dùng thật.
+if (!process.env['HCOS_KEKS']) throw new Error('Thiếu HCOS_KEKS (KEK mã hoá dữ liệu) trong hcos.env');
+configureKeyProvider(LocalKeyProvider.parse(process.env['HCOS_KEKS']));
+const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit });
 const handler = createApiHandler({
   tenant: { issuer: ISS, audience: AUD, key: publicKey as never, algorithms: ['RS256'] },
   clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
-  registry: new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit }),
+  registry,
   accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
   pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
   prescriptions: new PrescriptionService({ uow: new PgPrescriptionUnitOfWork(pool), audit }),
   queue: new QueueService({ uow: new PgQueueUnitOfWork(pool), audit }),
   queueBoard: new PgQueueBoard(pool),
-  bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit }),
+  bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit, registrar: (input, ctx) => registry.registerPersonAndPatient(input as never, ctx) }),
   publicBooking: new PublicBookingService({ pool, audit }),
   finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
   forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),

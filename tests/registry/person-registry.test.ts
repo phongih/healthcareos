@@ -142,6 +142,8 @@ class MemRepo implements RegistryRepository {
       (q.phoneKey !== null && this.s.keys[p.personId]?.phoneKey === q.phoneKey) ||
       (q.nameKey !== null && this.s.keys[p.personId]?.nameKey === q.nameKey))).map((p) => ({ ...p }));
   }
+  async phoneIndex(phone: string) { return phone; }
+  async sealedContact() { return undefined; }
   async findIdentifierMatches(keys: ReadonlyArray<{ system: string; value: string }>): Promise<IdentifierMatch[]> {
     const wanted = new Set(keys.map((k) => identifierKey(k.system, k.value)));
     return this.vis(this.s.identifiers)

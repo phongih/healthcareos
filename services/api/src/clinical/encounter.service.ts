@@ -20,6 +20,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { LEGACY_MRN_RE, MrnError, normalizeMrnQuery, resolveMrn } from '../registry/mrn';
+import { TenantPii } from '../../../../packages/security/src/pii';
 
 import {
   asPatientId,
@@ -1024,6 +1025,7 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   queue_tickets_one_active_uk: 'PATIENT_ALREADY_QUEUED',
   service_points_code_uk: 'SERVICE_POINT_CODE_TAKEN',
   bookings_one_per_phone_day_uk: 'PHONE_ALREADY_BOOKED',
+  bookings_one_per_phone_bidx_day_uk: 'PHONE_ALREADY_BOOKED',
   bookings_code_uk: 'CODE_COLLISION',
   booking_portals_slug_uk: 'SLUG_TAKEN',
   booking_portals_org_uk: 'PORTAL_EXISTS',
@@ -1050,8 +1052,11 @@ export const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() 
 export const isoOrNull = (v: unknown): string | null => (v === null || v === undefined ? null : iso(v));
 export const num = (v: unknown): number => Number(v);
 
+// HCOS-F16: SĐT / email đọc ra là dạng che; dòng chưa backfill (còn bản rõ) được che bằng hàm SQL cùng quy tắc.
 export const PERSON_COLS =
-  'person_id, tenant_id, given_name, family_name, birth_date::text AS birth_date, sex, phone, email, status, merged_into_person_id, created_at, updated_at, version';
+  'person_id, tenant_id, given_name, family_name, birth_date::text AS birth_date, sex, ' +
+  'COALESCE(phone_hint, keyvault.mask_phone(phone)) AS phone, COALESCE(email_hint, keyvault.mask_email(email)) AS email, phone_bidx, ' +
+  'status, merged_into_person_id, created_at, updated_at, version';
 export const PATIENT_COLS = 'patient_id, tenant_id, person_id, organization_id, mrn, status, registered_at, created_at, updated_at, version';
 export const USER_COLS =
   'user_id, tenant_id, external_subject, email, display_name, person_id, status, last_login_at, created_at, updated_at, version';
@@ -1065,12 +1070,13 @@ const OBSERVATION_COLS =
   'observation_id, tenant_id, patient_id, encounter_id, status, code_system, code, display, value_numeric, value_unit, value_ucum_code, value_string, effective_at, supersedes_observation_id, recorded_by_user_id, recorded_at, created_at, updated_at, version';
 
 export const IDENTIFIER_COLS =
-  'identifier_id, tenant_id, person_id, patient_id, type, system, value, status, period_start::text AS period_start, period_end::text AS period_end, created_at, updated_at, version';
+  'identifier_id, tenant_id, person_id, patient_id, type, system, COALESCE(value_hint, keyvault.mask_identifier(value)) AS value, value_bidx, ' +
+  'status, period_start::text AS period_start, period_end::text AS period_end, created_at, updated_at, version';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const mapPerson = (r: any): Person => ({
   tenantId: r.tenant_id, personId: r.person_id, givenName: r.given_name, familyName: r.family_name,
-  birthDate: r.birth_date ?? null, sex: r.sex, phone: r.phone, email: r.email, status: r.status,
+  birthDate: r.birth_date ?? null, sex: r.sex, phone: r.phone ?? null, email: r.email ?? null, phoneIndex: r.phone_bidx ?? null, status: r.status,
   mergedIntoPersonId: r.merged_into_person_id, createdAt: iso(r.created_at), updatedAt: iso(r.updated_at), version: num(r.version),
 });
 export const mapPatient = (r: any): Patient => ({
@@ -1134,14 +1140,20 @@ const mapObservation = (r: any): Observation => ({
 });
 export const mapIdentifier = (r: any): Identifier => ({
   tenantId: r.tenant_id, identifierId: r.identifier_id, personId: r.person_id, patientId: r.patient_id ?? null,
-  type: r.type, system: r.system, value: r.value, status: r.status,
+  type: r.type, system: r.system, value: r.value, valueIndex: r.value_bidx ?? null, status: r.status,
   periodStart: r.period_start ?? null, periodEnd: r.period_end ?? null,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at), version: num(r.version),
 });
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 export class PgClinicalRepository implements ClinicalRepository {
+  private piiCodec: TenantPii | null = null;
   constructor(protected readonly db: TenantScopedDb) {}
+
+  /** HCOS-F16: mã hoá / blind index của tenant hiện tại (khoá tải lười trong transaction). */
+  protected get pii(): TenantPii {
+    return (this.piiCodec ??= new TenantPii(this.db));
+  }
 
   protected get t(): string {
     return this.db.tenantId;
@@ -1169,13 +1181,13 @@ export class PgClinicalRepository implements ClinicalRepository {
           AND ($6::text IS NULL OR EXISTS (
                 SELECT 1 FROM patient.identifiers i
                  WHERE i.tenant_id = patients.tenant_id AND i.person_id = patients.person_id
-                   AND i.status = 'active' AND i.system = $6::text AND i.value = ANY($7::text[])))
+                   AND i.status = 'active' AND i.system = $6::text AND i.value_bidx = ANY($7::text[])))
         ORDER BY registered_at, patient_id
         LIMIT $8`,
       [
         this.t, q.organizationId, q.mrn, q.nameKey, q.birthDate,
         q.identifier ? q.identifier.system : null,
-        q.identifier ? `{${q.identifier.values.map((v) => '"' + v.replace(/(["\\])/g, '\\$1') + '"').join(',')}}` : null,
+        q.identifier ? `{${(await Promise.all(q.identifier.values.map((v) => this.pii.index('identifier', v)))).join(',')}}` : null,
         q.limit,
       ],
     );

@@ -37,6 +37,7 @@ import {
 import { nameKey, normalizePhone } from '../../../../packages/domain/src/person-registry';
 import { ACCESS_POLICY_CATALOG, buildGrants, decideAccess, type AccessDecision, type AccessGrant, type AccessPolicy, type PolicyAction } from '../../../../packages/security/src/access-policy';
 import { assertOrganizationAllowed, assertSameTenant, requireTenantContext, withTenantTransaction, type PgPoolLike } from '../../../../packages/security/src/tenant-context';
+import { sameIndex } from '../../../../packages/security/src/pii';
 import { ClinicalError, iso, isoOrNull, num, translatePgError } from './encounter.service';
 import { PgQueueRepository, PRIORITY_REASONS, type PriorityReason, type QueueTicket, type ServicePoint, type TicketView } from './queue.service';
 
@@ -111,8 +112,12 @@ export interface Booking {
   readonly givenName: string;
   readonly birthDate: string;
   readonly sex: 'male' | 'female' | 'other' | 'unknown';
+  /** HCOS-F16: khi đọc từ CSDL là dạng che (091****678); bản rõ chỉ có ở đầu vào. */
   readonly phone: string;
   readonly nationalId: string | null;
+  /** Blind index (so khớp hồ sơ cũ, tra cứu công khai). */
+  readonly phoneIndex?: string | null;
+  readonly nationalIdIndex?: string | null;
   readonly reason: string | null;
   readonly consentVersion: string;
   readonly consentAt: string;
@@ -189,13 +194,16 @@ export interface PublicLookupResult {
 // ---------------------------------------------------------------------------
 const B_COLS =
   'b.booking_id, b.tenant_id, b.organization_id, b.service_point_id, b.visit_date::text AS visit_date, b.period, b.family_name, b.given_name, ' +
-  'b.birth_date::text AS birth_date, b.sex, b.phone, b.national_id, b.reason, b.consent_version, b.consent_at, b.status, b.patient_id, b.ticket_id, ' +
+  'b.birth_date::text AS birth_date, b.sex, COALESCE(b.phone_hint, keyvault.mask_phone(b.phone)) AS phone, ' +
+  'COALESCE(b.national_id_hint, keyvault.mask_identifier(b.national_id)) AS national_id, b.phone_bidx, b.national_id_bidx, ' +
+  'b.reason, b.consent_version, b.consent_at, b.status, b.patient_id, b.ticket_id, ' +
   'b.checked_in_at, b.cancelled_by, b.created_at, b.version, sp.code AS sp_code, sp.name AS sp_name';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mapBooking = (r: any): BookingView => ({
   tenantId: r.tenant_id, bookingId: r.booking_id, organizationId: r.organization_id, servicePointId: r.service_point_id,
   visitDate: String(r.visit_date), period: r.period, familyName: r.family_name, givenName: r.given_name, birthDate: String(r.birth_date),
-  sex: r.sex, phone: r.phone, nationalId: r.national_id ?? null, reason: r.reason ?? null, consentVersion: r.consent_version,
+  sex: r.sex, phone: r.phone, nationalId: r.national_id ?? null, phoneIndex: r.phone_bidx ?? null, nationalIdIndex: r.national_id_bidx ?? null,
+  reason: r.reason ?? null, consentVersion: r.consent_version,
   consentAt: iso(r.consent_at), status: r.status, patientId: r.patient_id ?? null, ticketId: r.ticket_id ?? null,
   checkedInAt: isoOrNull(r.checked_in_at), cancelledBy: r.cancelled_by ?? null, createdAt: iso(r.created_at), version: num(r.version),
   servicePointCode: r.sp_code, servicePointName: r.sp_name,
@@ -241,14 +249,36 @@ export class PgBookingRepository extends PgQueueRepository {
     );
   }
 
+  /** HCOS-F16: blind index SĐT (tra cứu công khai bằng mã + SĐT). */
+  indexPhone(phone: string): Promise<string> {
+    return this.pii.index('phone', phone);
+  }
+
+  /** HCOS-F16: giải mã SĐT / CCCD của lịch hẹn — CHỈ dùng nội bộ khi tạo hồ sơ từ lịch hẹn (không trả ra API). */
+  async openContact(id: string): Promise<{ phone: string | null; nationalId: string | null }> {
+    const r = await this.db.query<Record<string, string | null>>(
+      `SELECT phone, national_id, phone_enc, national_id_enc FROM clinical.bookings WHERE tenant_id = $1 AND booking_id = $2`,
+      [this.t, id],
+    );
+    const x = r.rows[0];
+    if (!x) return { phone: null, nationalId: null };
+    return {
+      phone: x['phone_enc'] ? await this.pii.open('phone', x['phone_enc']) : (x['phone'] ?? null),
+      nationalId: x['national_id_enc'] ? await this.pii.open('identifier', x['national_id_enc']) : (x['national_id'] ?? null),
+    };
+  }
+
   async insertBooking(b: Booking, hash: Buffer): Promise<void> {
+    // HCOS-F16: SĐT (miền 'phone') và CCCD (miền 'identifier' — so khớp được với patient.identifiers) chỉ lưu bản mã.
+    const phone = await this.pii.protect('phone', b.phone);
+    const nid = await this.pii.protect('identifier', b.nationalId);
     try {
       await this.db.query(
         `INSERT INTO clinical.bookings (booking_id, tenant_id, organization_id, service_point_id, visit_date, period, code_hash, family_name, given_name,
-           birth_date, sex, phone, national_id, reason, consent_version, consent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, decode($7, 'hex'), $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+           birth_date, sex, phone_enc, phone_bidx, phone_hint, national_id_enc, national_id_bidx, national_id_hint, reason, consent_version, consent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, decode($7, 'hex'), $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [b.bookingId, b.tenantId, b.organizationId, b.servicePointId, b.visitDate, b.period, hash.toString('hex'), b.familyName, b.givenName,
-         b.birthDate, b.sex, b.phone, b.nationalId, b.reason, b.consentVersion, b.consentAt],
+         b.birthDate, b.sex, phone.enc, phone.bidx, phone.hint, nid.enc, nid.bidx, nid.hint, b.reason, b.consentVersion, b.consentAt],
       );
     } catch (e) {
       translatePgError(e);
@@ -309,17 +339,17 @@ export class PgBookingRepository extends PgQueueRepository {
       `WITH c AS (
          SELECT pt.patient_id, pt.mrn, ps.family_name, ps.given_name, ps.birth_date,
                 ($3::text IS NOT NULL AND EXISTS (SELECT 1 FROM patient.identifiers i WHERE i.tenant_id = ps.tenant_id AND i.person_id = ps.person_id
-                   AND i.type = 'national_id' AND i.status = 'active' AND i.value = $3)) AS by_id,
-                (ps.phone_key IS NOT NULL AND ps.phone_key = $6 AND ps.birth_date = $5::date) AS by_phone_dob,
+                   AND i.type = 'national_id' AND i.status = 'active' AND i.value_bidx = $3)) AS by_id,
+                ($6::text IS NOT NULL AND ps.phone_bidx = $6 AND ps.birth_date = $5::date) AS by_phone_dob,
                 (ps.name_key = $4 AND ps.birth_date = $5::date) AS by_name,
-                (ps.phone_key IS NOT NULL AND ps.phone_key = $6) AS by_phone
+                ($6::text IS NOT NULL AND ps.phone_bidx = $6) AS by_phone
            FROM patient.patients pt JOIN patient.persons ps ON ps.tenant_id = pt.tenant_id AND ps.person_id = pt.person_id
           WHERE pt.tenant_id = $1 AND pt.organization_id = $2 AND pt.status = 'active' AND ps.status = 'active')
        SELECT patient_id, mrn, family_name, given_name, birth_date::text AS birth_date, by_id, by_phone_dob, by_name, by_phone
          FROM c WHERE by_id OR by_phone_dob OR by_name OR by_phone
         ORDER BY by_id DESC, by_phone_dob DESC, by_name DESC, by_phone DESC, mrn
         LIMIT 10`,
-      [this.t, organizationId, b.nationalId, nameKey(b.givenName, b.familyName), b.birthDate, normalizePhone(b.phone)],
+      [this.t, organizationId, b.nationalIdIndex ?? null, nameKey(b.givenName, b.familyName), b.birthDate, b.phoneIndex ?? null],
     );
     const t = (v: unknown) => v === true || v === 't';
     return r.rows.map((x) => {
@@ -479,7 +509,7 @@ export class PublicBookingService {
     if (!portal || !c || !p) return null;
     return this.tx(portal, 'public.booking.lookup', async (repo) => {
       const b = await repo.findBookingByCode(portal.organizationId, codeHash(c));
-      if (!b || b.phone !== p) return { value: null, audit: null };
+      if (!b || !sameIndex(b.phoneIndex, await repo.indexPhone(p))) return { value: null, audit: null };
       return { value: { status: b.status, visitDate: b.visitDate, period: b.period, servicePointName: b.servicePointName, givenName: b.givenName }, audit: null };
     });
   }
@@ -491,7 +521,7 @@ export class PublicBookingService {
     if (!portal || !c || !p) return null;
     return this.tx(portal, 'public.booking.cancel', async (repo) => {
       const b = await repo.findBookingByCode(portal.organizationId, codeHash(c));
-      if (!b || b.phone !== p) return { value: null, audit: null };
+      if (!b || !sameIndex(b.phoneIndex, await repo.indexPhone(p))) return { value: null, audit: null };
       if (b.status !== 'booked') throw new ClinicalError('INVALID_STATE', `Booking is ${b.status}`, { reason: 'NOT_CANCELLABLE' });
       if (!periodOpen(b.visitDate, b.period, this.clock())) throw new ClinicalError('INVALID_STATE', 'Session already closed', { reason: 'NOT_CANCELLABLE' });
       const saved = await repo.updateBookingStatus(b.bookingId, 'cancelled', { cancelledBy: 'patient' });
@@ -589,10 +619,55 @@ export class PgBookingUnitOfWork implements BookingUnitOfWork {
   }
 }
 
+/** Tạo người bệnh + hồ sơ tại cơ sở (Person Registry) — tiêm từ ngoài để tái dùng kiểm tra trùng / cấp MRN. */
+export type PatientRegistrar = (
+  input: {
+    organizationId: OrganizationId;
+    mrn?: string;
+    person: { givenName: string; familyName: string; birthDate: string; sex: Booking['sex']; phone: string | null; identifiers: Array<{ type: 'national_id'; system: string; value: string }> };
+  },
+  ctx: TenantContext,
+) => Promise<{ patient: { patientId: string; mrn: string } }>;
+
+export const CCCD_SYSTEM = 'https://moh.gov.vn/cccd';
+
 export class BookingService {
   private readonly clock: () => Date;
-  constructor(private readonly deps: { uow: BookingUnitOfWork; audit: AuditSink; clock?: () => Date }) {
+  constructor(private readonly deps: { uow: BookingUnitOfWork; audit: AuditSink; clock?: () => Date; registrar?: PatientRegistrar }) {
     this.clock = deps.clock ?? (() => new Date());
+  }
+
+  /**
+   * HCOS-F16: tạo hồ sơ người bệnh từ lịch hẹn MÀ KHÔNG đưa SĐT / CCCD bản rõ ra trình duyệt. Server giải mã trong bộ nhớ rồi
+   * chuyển cho Person Registry (kiểm tra trùng, cấp MRN, mã hoá lại). Quyền: như check-in (queue:issue).
+   */
+  async registerPatient(bookingId: string, input: { mrn?: string | null }, ctx: TenantContext = requireTenantContext()): Promise<{ patientId: string; mrn: string }> {
+    if (!this.deps.registrar) throw new ClinicalError('INVALID_STATE', 'Patient registration is not configured');
+    const prepared = await this.tx(ctx, { action: 'booking.register_patient', resourceId: bookingId }, async (repo) => {
+      const b = await this.loadBooking(repo, ctx, bookingId);
+      const p = await this.principal(repo, ctx, b.organizationId);
+      this.decide(p, 'queue:issue');
+      if (b.status !== 'booked') throw new ClinicalError('INVALID_STATE', `Booking is ${b.status}`, { reason: 'BOOKING_NOT_ACTIVE' });
+      const contact = await repo.openContact(b.bookingId);
+      await repo.appendAudit(this.event(ctx, { action: 'booking.register_patient', resourceId: b.bookingId, organizationId: b.organizationId }, 'success', p.user, {
+        decrypted: ['phone', ...(contact.nationalId ? ['nationalId'] : [])], purpose: 'create_patient_record',
+      }));
+      return { b, contact };
+    });
+    const { b, contact } = prepared;
+    const mrn = typeof input.mrn === 'string' && input.mrn.trim() ? input.mrn.trim() : undefined;
+    const r = await this.deps.registrar(
+      {
+        organizationId: b.organizationId,
+        ...(mrn ? { mrn } : {}),
+        person: {
+          givenName: b.givenName, familyName: b.familyName, birthDate: b.birthDate, sex: b.sex, phone: contact.phone,
+          identifiers: contact.nationalId ? [{ type: 'national_id', system: CCCD_SYSTEM, value: contact.nationalId }] : [],
+        },
+      },
+      ctx,
+    );
+    return { patientId: r.patient.patientId, mrn: r.patient.mrn };
   }
 
   async listForDay(q: { organizationId: string; date?: string }, ctx: TenantContext = requireTenantContext()): Promise<BookingView[]> {

@@ -128,8 +128,13 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect(a.status).toBe(201);
     expect(a.etag).toBe('W/"1"');
     S = a.json.person;
-    expect(S.phone).toBe('0987654321');
-    expect(a.json.identifiers.map((i: any) => i.value).sort()).toEqual(['079090000001', 'BOOM1']);
+    // HCOS-F16: phản hồi trả dạng che, CSDL chỉ có bản mã + blind index.
+    expect(S.phone).toBe('098****321');
+    expect(S.email).toBe('a***@example.vn');
+    expect(a.json.identifiers.map((i: any) => i.value).sort()).toEqual(['********0001', '*OOM1']);
+    expect(scalar(`SELECT coalesce(phone,'-')||'|'||coalesce(email,'-')||'|'||(phone_enc ~ '^e1\\.1\\.')||'|'||length(phone_bidx)||'|'||phone_hint FROM patient.persons WHERE person_id='${S.personId}'`))
+      .toBe('-|-|true|32|098****321');
+    expect(scalar(`SELECT count(*) FROM patient.identifiers WHERE person_id='${S.personId}' AND value IS NULL AND value_enc IS NOT NULL`)).toBe('2');
 
     const dup = await http('POST', '/api/persons', T.nurse(), { givenName: 'Văn An', familyName: 'Nguyễn', birthDate: '1990-05-17', identifiers: [BHYT] });
     expect(dup.status).toBe(409);
@@ -143,7 +148,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     });
     expect(ok.status).toBe(201);
     Tg = ok.json.person;
-    expect(scalar(`SELECT name_key||'|'||coalesce(phone_key,'-') FROM patient.persons WHERE person_id='${S.personId}'`)).toBe('an nguyen van|0987654321');
+    expect(scalar(`SELECT name_key||'|'||coalesce(phone_key,'-') FROM patient.persons WHERE person_id='${S.personId}'`)).toBe('an nguyen van|-');
   });
 
   it('enforces identifier uniqueness in the database (409), and exposes search to pharmacists', async () => {
@@ -183,7 +188,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
 
   it('a failure in the middle of a merge rolls back EVERYTHING (real transaction)', async () => {
     su(`CREATE FUNCTION public.boom() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-          IF OLD.value = 'BOOM1' AND NEW.person_id <> OLD.person_id THEN RAISE EXCEPTION 'boom'; END IF; RETURN NEW; END $$;
+          IF OLD.system = 'urn:test:boom' AND NEW.person_id <> OLD.person_id THEN RAISE EXCEPTION 'boom'; END IF; RETURN NEW; END $$;
         CREATE TRIGGER zz_boom BEFORE UPDATE ON patient.identifiers FOR EACH ROW EXECUTE FUNCTION public.boom();`);
     const snapshot = () => scalar(`SELECT
       (SELECT string_agg(status||':'||version, ',' ORDER BY person_id) FROM patient.persons) || '#' ||
@@ -214,13 +219,16 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ sourcePersonId: S.personId, targetPersonId: Tg.personId, movedPatientIds: [patientId], repointedUserIds: [U.patientUser] });
     expect(r.json.movedIdentifierIds).toHaveLength(2);
-    expect(r.json.target).toMatchObject({ version: Tg.version + 1, sex: 'male', phone: '0987654321', email: 'an@example.vn', givenName: 'Văn An' });
+    expect(r.json.target).toMatchObject({ version: Tg.version + 1, sex: 'male', phone: '098****321', email: 'a***@example.vn', givenName: 'Văn An' });
 
     expect(scalar(`SELECT status||'|'||merged_into_person_id FROM patient.persons WHERE person_id='${S.personId}'`)).toBe(`merged|${Tg.personId}`);
     expect(scalar(`SELECT person_id FROM patient.patients WHERE patient_id='${patientId}'`)).toBe(Tg.personId);
     expect(scalar(`SELECT count(*) FROM patient.identifiers WHERE person_id='${Tg.personId}' AND status='active'`)).toBe('3');
     expect(scalar(`SELECT person_id FROM iam.users WHERE user_id='${U.patientUser}'`)).toBe(Tg.personId);
-    expect(scalar(`SELECT phone_key FROM patient.persons WHERE person_id='${Tg.personId}'`)).toBe('0987654321');
+    // Liên hệ chép nguyên bản mã + index từ source (không giải mã); ảnh chụp không có bản rõ.
+    expect(scalar(`SELECT (t.phone_enc = s.phone_enc AND t.phone_bidx = s.phone_bidx AND t.email_enc = s.email_enc)::text FROM patient.persons t, patient.persons s
+                    WHERE t.person_id='${Tg.personId}' AND s.person_id='${S.personId}'`)).toBe('true');
+    expect(scalar(`SELECT coalesce(source_snapshot->>'phone','-')||'|'||(source_snapshot->'contact'->>'phoneEnc' ~ '^e1\\.')::text FROM patient.person_merges`)).toBe('-|true');
     expect(scalar(`SELECT reason||'|'||merged_by_user_id||'|'||(source_snapshot->>'givenName')||'|'||cardinality(moved_patient_ids) FROM patient.person_merges`))
       .toBe(`Cùng một người, đối chiếu CCCD|${U.clinicAdmin}|Nguyen|1`);
     expect(scalar(`SELECT count(*) FROM platform.outbox_events WHERE event_type='patient.person.merged'`)).toBe('1');
@@ -245,7 +253,9 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
   it('database guards hold against direct writes (merged immutable, merge target rules, append-only history, identifier immutability)', async () => {
     const code = (p: Promise<unknown>) => p.then(() => 'OK', (e: { code?: string }) => e.code ?? 'ERR');
     await asApp(TA, async (c) => {
-      expect(await code(c.query("UPDATE patient.persons SET phone = '0900000000' WHERE person_id = $1", [S.personId]))).toBe('55000');
+      expect(await code(c.query("UPDATE patient.persons SET given_name = 'Khác' WHERE person_id = $1", [S.personId]))).toBe('55000');
+      // HCOS-F16: không ghi được bản rõ (kể cả với người chưa gộp).
+      expect(await code(c.query("UPDATE patient.persons SET phone = '0900000000' WHERE person_id = $1", [Tg.personId]))).toBe('42501');
       expect(await code(c.query("UPDATE patient.persons SET status='merged', merged_into_person_id=$2 WHERE person_id=$1", [D.personId, S.personId]))).toBe('55000'); // đích đã merge
       expect(await code(c.query("UPDATE patient.persons SET status='merged', merged_into_person_id=$1 WHERE person_id=$1", [D.personId]))).toBe('55000'); // tự merge
       expect(await code(c.query('UPDATE patient.persons SET merged_into_person_id=$2 WHERE person_id=$1', [D.personId, Tg.personId]))).toBe('55000'); // không qua merge
@@ -265,7 +275,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     // Định danh "nhập nhầm" là trạng thái cuối.
     const added = await http('POST', `/api/persons/${D.personId}/identifiers`, T.nurse(), { type: 'passport', system: 'urn:passport:vn', value: 'b1234567' });
     expect(added.status).toBe(201);
-    expect(added.json.value).toBe('B1234567');
+    expect(added.json.value).toBe('****4567'); // HCOS-F16: dạng che (chuẩn hoá chữ hoa trước khi mã hoá)
     expect((await http('POST', `/api/identifiers/${added.json.identifierId}/retire`, T.nurse(), { status: 'entered_in_error' })).status).toBe(428);
     expect((await http('POST', `/api/identifiers/${added.json.identifierId}/retire`, T.nurse(), { status: 'entered_in_error' }, { 'if-match': 'W/"7"' })).status).toBe(412);
     expect((await http('POST', `/api/identifiers/${added.json.identifierId}/retire`, T.nurse(), { status: 'entered_in_error' }, { 'if-match': added.etag! })).status).toBe(200);
@@ -299,11 +309,11 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
 
   it('unmerges for real: restores source/target/patients/identifiers/users, writes history + outbox; guarded by role and versions', async () => {
     const { src, tgt, patientId: pid } = await mkPair(1);
-    const sid = scalar(`SELECT identifier_id FROM patient.identifiers WHERE person_id='${src.personId}' AND value='SRC1'`);
+    const sid = scalar(`SELECT identifier_id FROM patient.identifiers WHERE person_id='${src.personId}' AND system='urn:test:u1'`);
     su(`UPDATE iam.users SET person_id='${src.personId}' WHERE user_id='${U.tenantAdmin}'`);
     const m = await doMerge(src, tgt);
     expect(m.status).toBe(200);
-    expect(scalar(`SELECT phone FROM patient.persons WHERE person_id='${tgt.personId}'`)).toBe('0901000011'); // target nhận phone của source
+    expect(scalar(`SELECT phone_hint FROM patient.persons WHERE person_id='${tgt.personId}'`)).toBe('090****011'); // target nhận phone (bản mã) của source
 
     const u = `/api/persons/${src.personId}/unmerge`;
     expect((await http('POST', u, T.nurse(), unmergeBody(src, tgt))).status).toBe(403);
@@ -321,7 +331,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect(r.json).toMatchObject({ restoredPatientIds: [pid], restoredIdentifierIds: [sid], restoredUserIds: [U.tenantAdmin], leftInactiveIdentifierIds: [] });
     expect(r.etag).toBe(`W/"${ver(src.personId)}"`);
     expect(scalar(`SELECT status||'|'||coalesce(merged_into_person_id::text,'-') FROM patient.persons WHERE person_id='${src.personId}'`)).toBe('active|-');
-    expect(scalar(`SELECT coalesce(phone,'-')||'|'||coalesce(email,'-')||'|'||coalesce(sex,'-')||'|'||coalesce(phone_key,'-') FROM patient.persons WHERE person_id='${tgt.personId}'`)).toBe('-|-|-|-'); // target về đúng như trước merge
+    expect(scalar(`SELECT coalesce(phone_enc,'-')||'|'||coalesce(email_enc,'-')||'|'||coalesce(sex,'-')||'|'||coalesce(phone_bidx,'-') FROM patient.persons WHERE person_id='${tgt.personId}'`)).toBe('-|-|-|-'); // target về đúng như trước merge
     expect(scalar(`SELECT person_id FROM patient.patients WHERE patient_id='${pid}'`)).toBe(src.personId);
     expect(scalar(`SELECT person_id FROM patient.identifiers WHERE identifier_id='${sid}'`)).toBe(src.personId);
     expect(scalar(`SELECT person_id FROM iam.users WHERE user_id='${U.tenantAdmin}'`)).toBe(src.personId);
@@ -349,7 +359,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
       (SELECT count(*) FROM patient.person_unmerges) || '#' || (SELECT person_id FROM patient.patients WHERE patient_id='${pid}')`);
     const u = `/api/persons/${src.personId}/unmerge`;
 
-    su(`UPDATE patient.persons SET email='doi@example.vn' WHERE person_id='${tgt.personId}'`); // target bị sửa sau merge
+    su(`UPDATE patient.persons SET sex='other' WHERE person_id='${tgt.personId}'`); // target bị sửa sau merge
     let before = snap();
     let r = await http('POST', u, T.clinicAdmin(), unmergeBody(src, tgt));
     expect(r.status).toBe(409);
@@ -373,7 +383,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     const { src, tgt, patientId: pid } = await mkPair(4);
     await doMerge(src, tgt);
     su(`CREATE FUNCTION public.boom2() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-          IF OLD.value = 'SRC4' AND NEW.person_id <> OLD.person_id THEN RAISE EXCEPTION 'boom2'; END IF; RETURN NEW; END $$;
+          IF OLD.system = 'urn:test:u4' AND NEW.person_id <> OLD.person_id THEN RAISE EXCEPTION 'boom2'; END IF; RETURN NEW; END $$;
         CREATE TRIGGER zz_boom2 BEFORE UPDATE ON patient.identifiers FOR EACH ROW EXECUTE FUNCTION public.boom2();`);
     const snap = () => scalar(`SELECT (SELECT string_agg(status||':'||version, ',' ORDER BY person_id) FROM patient.persons) || '#' ||
       (SELECT count(*) FROM patient.person_unmerges) || '#' || (SELECT person_id FROM patient.patients WHERE patient_id='${pid}')`);
@@ -434,7 +444,7 @@ run('Person Registry / HTTP -> service -> PostgreSQL', () => {
     expect(r.json.managingOrganization.reference).toBe(`Organization/${OA}`);
     expect(r.json.id).toBeTruthy();
     expect(scalar(`SELECT count(*) FROM patient.patients WHERE mrn='MRN-F1' AND organization_id='${OA}'`)).toBe('1');
-    expect(scalar(`SELECT count(*) FROM patient.identifiers WHERE value='079301000777' AND status='active'`)).toBe('1');
+    expect(scalar(`SELECT count(*) FROM patient.identifiers WHERE value_hint='********0777' AND value IS NULL AND status='active'`)).toBe('1');
     expect(scalar(`SELECT count(*) FROM platform.audit_events WHERE action='patient.register' AND outcome='success' AND payload::text NOT ILIKE '%Thanh%'`)).not.toBe('0');
     const got = await http('GET', `/fhir/Patient/${r.json.id}`, T.pharm());
     expect(got.status).toBe(200);

@@ -152,8 +152,14 @@ export interface Person extends TenantScoped, Versioned, Timestamped {
   readonly familyName: string;
   readonly birthDate: ISODate | null;
   readonly sex: Sex | null;
+  /**
+   * HCOS-F16: khi ĐỌC từ CSDL, phone/email là dạng che (vd. 091****678); bản rõ chỉ có khi ghi (đầu vào) hoặc qua
+   * PiiService.reveal (quyền pii:reveal + audit).
+   */
   readonly phone: string | null;
   readonly email: string | null;
+  /** Blind index của SĐT (so khớp bằng nhau, không giải mã được). */
+  readonly phoneIndex?: string | null;
   readonly status: PersonStatus;
   /** Khác null khi status = 'merged'. */
   readonly mergedIntoPersonId: PersonId | null;
@@ -188,7 +194,10 @@ export interface Identifier extends TenantScoped, Versioned, Timestamped {
   readonly patientId: PatientId | null;
   readonly type: IdentifierType;
   readonly system: string;
+  /** HCOS-F16: khi đọc từ CSDL là dạng che (vd. ********6789). */
   readonly value: string;
+  /** Blind index của giá trị (so khớp / chống trùng). */
+  readonly valueIndex?: string | null;
   readonly status: IdentifierStatus;
   readonly periodStart: ISODate | null;
   readonly periodEnd: ISODate | null;

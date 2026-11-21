@@ -48,6 +48,9 @@ HCOS_HOST=127.0.0.1
 # HCOS-F12: khoá mã hoá URL / bí mật tích hợp (mất khoá => phải nhập lại URL các kết nối) + địa chỉ công khai cho nút trên thẻ Teams.
 HCOS_INTEGRATION_KEY=$(openssl rand -base64 32)
 HCOS_PUBLIC_BASE_URL=https://smart.id.vn
+# HCOS-F16: KEK bọc DEK của từng chủ quản (SĐT / email / CCCD). KHÁC HCOS_INTEGRATION_KEY. Mất KEK = mất dữ liệu đã mã hoá:
+# sao lưu offline riêng, KHÔNG để chung với bản sao lưu CSDL. Đổi KEK: thêm KEK mới vào ĐẦU danh sách, giữ KEK cũ phía sau.
+HCOS_KEKS=k1:$(openssl rand -base64 32)
 ENV
 echo "OK. Tiếp theo: docker compose --env-file secrets.env up -d"
 echo "Realm chỉ được import khi DB Keycloak chưa có realm 'hcos'. Sau khi import xong: rm -rf kc-import (chứa mật khẩu demo)."

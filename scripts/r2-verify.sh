@@ -47,7 +47,7 @@ psql -h 127.0.0.1 -p $PGPORT_R2 -U postgres -qc "CREATE ROLE hcos_api LOGIN PASS
 docker rm -f hcos-r2-api >/dev/null 2>&1
 docker run -d --name hcos-r2-api --network hcos-r2 -p 127.0.0.1:28090:8080 \
   -e HCOS_DATABASE_URL="postgres://hcos_api:$APP_PW@hcos-r2-pg:5432/hcos_r2" -e HCOS_JWT_ISSUER=https://idp.hcos.test/ \
-  -e HCOS_JWT_AUDIENCE=hcos-api -e HCOS_JWKS_URL=http://127.0.0.1:9/jwks hcos-api:r2 >"$OUT/D4-run.log" 2>&1
+  -e HCOS_JWT_AUDIENCE=hcos-api -e HCOS_JWKS_URL=http://127.0.0.1:9/jwks -e HCOS_KEKS="r2:$(openssl rand -base64 32)" hcos-api:r2 >"$OUT/D4-run.log" 2>&1
 for _ in $(seq 40); do curl -fs 127.0.0.1:28090/healthz >/dev/null 2>&1 && break; sleep 0.5; done
 sh_step D5 "container /healthz 200" 'curl -fsS -i 127.0.0.1:28090/healthz'
 sh_step D6 "container /readyz 200 (DB up)" 'curl -fsS -i 127.0.0.1:28090/readyz'

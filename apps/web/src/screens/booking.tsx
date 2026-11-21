@@ -10,11 +10,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { api, ApiError } from '../lib/api';
-import { CCCD_SYSTEM, fmtDateTime, mrnOf, type FhirPatient } from '../lib/fhir';
+import { fmtDateTime } from '../lib/fhir';
 import { MrnField } from '../lib/mrn';
 import { fmtVnd } from '../lib/money';
 import { QrCode } from '../lib/qr-view';
-import { useSession } from '../lib/session';
+import { Reveal } from '../lib/reveal';
+import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, printOnly, useAction, useIntentKey, useLoad } from '../lib/ui';
 import { FinanceError, PrintReceipt, ReceiptFields, receiptBody, useMyShift, useSettings, type Receipt, type ReceiptDraft } from './finance';
 import { PRIORITY_LABEL, useServicePoints, type ServicePoint } from './queue';
@@ -517,7 +518,7 @@ export function BookingsScreen() {
                         {b.reason && <div className="muted small">{b.reason}</div>}
                       </td>
                       <td>{fmtDob(b.birthDate)}</td>
-                      <td>{b.phone}</td>
+                      <td><Reveal masked={b.phone} target={{ kind: 'booking', id: b.bookingId, field: 'phone' }} allowed={can.revealPii(roles)} /></td>
                       <td>
                         {STATUS_LABEL[b.status] ?? b.status}
                         {b.status === 'cancelled' && b.cancelledBy && <span className="muted"> ({b.cancelledBy === 'patient' ? 'người bệnh' : 'lễ tân'})</span>}
@@ -546,7 +547,7 @@ export function BookingsScreen() {
 }
 
 function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => void; onClose: () => void }) {
-  const { orgId } = useSession();
+  const { orgId, roles } = useSession();
   const b = found.booking;
   const today = vnToday();
   const age = ageOf(b.birthDate);
@@ -596,22 +597,11 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
     let patientId = choice;
     let newMrn: string | null = null;
     if (choice === 'new') {
-      const body: FhirPatient = {
-        resourceType: 'Patient',
-        name: [{ family: b.familyName, given: b.givenName.split(/\s+/).filter(Boolean) }],
-        gender: b.sex,
-        birthDate: b.birthDate,
-        telecom: [{ system: 'phone', value: b.phone }],
-        identifier: [
-          // Bỏ trống mã => hệ thống tự sinh (HCOS-F13); chỉ gửi khi lễ tân chọn "Dùng mã cũ".
-          ...(mrn.trim() ? [{ type: { text: 'mrn' }, system: `urn:hcos:mrn:${orgId}`, value: mrn.trim() }] : []),
-          ...(b.nationalId ? [{ type: { text: 'national_id' }, system: CCCD_SYSTEM, value: b.nationalId }] : []),
-        ],
-        managingOrganization: { reference: `Organization/${orgId}` },
-      };
-      const pt = (await api<FhirPatient>('POST', '/fhir/Patient', { body })).data;
-      patientId = pt.id!;
-      newMrn = mrnOf(pt);
+      // F16: tạo hồ sơ ở server từ chính lịch hẹn — SĐT / CCCD được giải mã và mã hoá lại trong server,
+      // không đi qua trình duyệt. Bỏ trống mã => hệ thống tự sinh (HCOS-F13); chỉ gửi khi lễ tân chọn "Dùng mã cũ".
+      const pt = (await api<{ patientId: string; mrn: string }>('POST', `/api/bookings/${b.bookingId}/register`, { body: mrn.trim() ? { mrn: mrn.trim() } : {} })).data;
+      patientId = pt.patientId;
+      newMrn = pt.mrn;
       setCreated({ patientId, mrn: newMrn });
       setChoice(patientId); // check-in lỗi rồi thử lại => không tạo hồ sơ lần hai
     }
@@ -687,8 +677,8 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
       <div className="grid2 kv">
         <div><span className="muted">Người khám</span><strong>{b.familyName} {b.givenName}</strong></div>
         <div><span className="muted">Ngày sinh · giới</span>{fmtDob(b.birthDate)} ({age} tuổi) · {SEX_LABEL[b.sex] ?? b.sex}</div>
-        <div><span className="muted">SĐT</span>{b.phone}</div>
-        <div><span className="muted">CCCD</span>{b.nationalId ?? '—'}</div>
+        <div><span className="muted">SĐT</span><Reveal masked={b.phone} target={{ kind: 'booking', id: b.bookingId, field: 'phone' }} allowed={can.revealPii(roles)} /></div>
+        <div><span className="muted">CCCD</span><Reveal masked={b.nationalId} target={{ kind: 'booking', id: b.bookingId, field: 'nationalId' }} allowed={can.revealPii(roles)} /></div>
         <div><span className="muted">Lịch</span>{PERIOD_LABEL[b.period]} · {fmtDay(b.visitDate)} · {b.servicePointCode} {b.servicePointName}</div>
         <div><span className="muted">Lý do</span>{b.reason ?? '—'}</div>
       </div>

@@ -18,6 +18,7 @@ import { nameKey } from '../../packages/domain/src/person-registry';
 import { BookingService, CONSENT_VERSION, PgBookingUnitOfWork, PublicBookingService, vnNow, type PublicCreateInput } from '../../services/api/src/clinical/booking.service';
 import { PgQueueUnitOfWork, QueueService } from '../../services/api/src/clinical/queue.service';
 import { PsqlClient, psqlPool } from './psql-pool';
+import { TenantPii } from '../../packages/security/src/pii';
 
 const ENABLED = process.env['HCOS_IT'] === '1';
 const DB = `hcos_it_booking_${process.pid}`;
@@ -58,13 +59,27 @@ INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_dat
   VALUES ('${uid(2001)}','${TA}','An','Nguyễn Văn','1950-03-04','${nameKey('An', 'Nguyễn Văn')}');
 INSERT INTO patient.patients(patient_id,tenant_id,person_id,organization_id,mrn) VALUES ('${PAT_OLD}','${TA}','${uid(2001)}','${OA}','B0001');
 -- Người nhà dùng chung SĐT (khác tên, khác ngày sinh) và một hồ sơ có đúng CCCD nhưng tên gõ khác.
-INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,name_key,phone_key)
-  VALUES ('${uid(2002)}','${TA}','Bình','Nguyễn Thị','1952-07-07','${nameKey('Bình', 'Nguyễn Thị')}','0912345678'),
-         ('${uid(2003)}','${TA}','Anh','Nguyen Van','1950-03-04','${nameKey('Anh', 'Nguyen Van')}',NULL);
+`;
+/** HCOS-F16: SĐT / CCCD trong CSDL chỉ là bản mã + blind index (tạo bằng khoá thật của tenant, qua role ứng dụng). */
+async function sealedSeed(): Promise<string> {
+  const c = new PsqlClient({ database: DB });
+  try {
+    await c.query("SELECT set_config('app.tenant_id', $1, false)", [TA]);
+    const pii = new TenantPii({ tenantId: TA, query: (s: string, p?: readonly unknown[]) => c.query(s, p ?? []) } as never);
+    const ph = await pii.protect('phone', '0912345678');
+    const nid = await pii.protect('identifier', '001050000001');
+    return `
+INSERT INTO patient.persons(person_id,tenant_id,given_name,family_name,birth_date,name_key,phone_enc,phone_bidx,phone_hint)
+  VALUES ('${uid(2002)}','${TA}','Bình','Nguyễn Thị','1952-07-07','${nameKey('Bình', 'Nguyễn Thị')}','${ph.enc}','${ph.bidx}','${ph.hint}'),
+         ('${uid(2003)}','${TA}','Anh','Nguyen Van','1950-03-04','${nameKey('Anh', 'Nguyen Van')}',NULL,NULL,NULL);
 INSERT INTO patient.patients(patient_id,tenant_id,person_id,organization_id,mrn) VALUES
   ('${PAT_FAMILY}','${TA}','${uid(2002)}','${OA}','B0002'),('${PAT_CCCD}','${TA}','${uid(2003)}','${OA}','B0003');
-INSERT INTO patient.identifiers(tenant_id,person_id,type,system,value) VALUES ('${TA}','${uid(2003)}','national_id','https://moh.gov.vn/cccd','001050000001');
-`;
+INSERT INTO patient.identifiers(tenant_id,person_id,type,system,value_enc,value_bidx,value_hint)
+  VALUES ('${TA}','${uid(2003)}','national_id','https://moh.gov.vn/cccd','${nid.enc}','${nid.bidx}','${nid.hint}');`;
+  } finally {
+    c.close();
+  }
+}
 
 const outcome = (p: Promise<unknown>) =>
   p.then(() => 'OK', (e: { code?: string; details?: { reason?: string } }) => (e.details?.reason ? `${e.code}:${e.details.reason}` : e.code ?? 'ERR'));
@@ -93,6 +108,7 @@ run('Đặt lịch khám online / PostgreSQL', () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
     for (const f of readdirSync(MIG).filter((x) => /^\d+_.+\.sql$/.test(x)).sort()) suFile(`${MIG}/${f}`);
     su(SEED);
+    su(await sealedSeed());
     const pool = psqlPool({ database: DB });
     const audit = { record: async () => {} };
     q = new QueueService({ uow: new PgQueueUnitOfWork(pool), audit });
@@ -157,8 +173,10 @@ run('Đặt lịch khám online / PostgreSQL', () => {
     expect(r.code).toMatch(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
     expect(r).toMatchObject({ visitDate: TOMORROW, period: 'afternoon', servicePointName: 'Phòng Nội 1' });
     codeA = r.code;
-    expect(su(`SELECT count(*) FROM clinical.bookings WHERE code_hash = sha256(convert_to('${r.code.replace('-', '')}', 'UTF8')) AND phone = '0912345678'`)).toBe('1');
-    expect(su(`SELECT octet_length(code_hash) FROM clinical.bookings WHERE phone = '0912345678'`)).toBe('32');
+    // HCOS-F16: không có SĐT / CCCD bản rõ trong CSDL.
+    expect(su(`SELECT count(*) FROM clinical.bookings WHERE code_hash = sha256(convert_to('${r.code.replace('-', '')}', 'UTF8'))
+                 AND phone IS NULL AND phone_hint = '091****678' AND national_id IS NULL AND national_id_hint = '********0001'`)).toBe('1');
+    expect(su(`SELECT octet_length(code_hash) FROM clinical.bookings WHERE phone_hint = '091****678'`)).toBe('32');
     expect(await outcome(pub.create('pk-a', form({ servicePointId: r1, period: 'afternoon', phone: '0912345678' })))).toBe('CONFLICT:PHONE_ALREADY_BOOKED');
     // Lỗi trùng SĐT xảy ra SAU khi giữ chỗ => transaction rollback, chỗ không bị mất.
     expect(su(`SELECT booked FROM clinical.booking_counters WHERE visit_date='${TOMORROW}' AND period='afternoon'`)).toBe('1');
@@ -184,7 +202,8 @@ run('Đặt lịch khám online / PostgreSQL', () => {
     const list = await bk.listForDay({ organizationId: OA, date: TOMORROW }, C.staff);
     expect(list.map((b) => b.status).sort()).toEqual(['booked', 'booked', 'booked', 'cancelled']);
     const f = (await bk.findByCode({ organizationId: OA, code: codeA }, C.staff))!;
-    expect(f.booking.phone).toBe('0912345678');
+    expect(f.booking.phone).toBe('091****678');
+    expect(f.booking.nationalId).toBe('********0001');
     // Xếp theo độ tin cậy: CCCD trước (dù tên gõ khác), rồi họ tên + ngày sinh, cuối cùng chỉ trùng SĐT (người nhà).
     expect(f.candidates.map((x) => [x.mrn, x.matchedBy.join()])).toEqual([
       ['B0003', 'national_id'], ['B0001', 'name_birthdate'], ['B0002', 'phone'],
@@ -198,11 +217,15 @@ run('Đặt lịch khám online / PostgreSQL', () => {
   it('check-in hôm nay: gắn hồ sơ + cấp số vào phòng đã đặt trong cùng transaction; lần hai => BOOKING_NOT_ACTIVE', async () => {
     const today = vnNow(new Date()).date;
     const code = 'ABCD2345';
+    const c0 = new PsqlClient({ database: DB });
+    await c0.query("SELECT set_config('app.tenant_id', $1, false)", [TA]);
+    const ph = await new TenantPii({ tenantId: TA, query: (s: string, p?: readonly unknown[]) => c0.query(s, p ?? []) } as never).protect('phone', '0977000000');
+    c0.close();
     su(`BEGIN;
         INSERT INTO clinical.booking_counters(tenant_id,service_point_id,visit_date,period,booked) VALUES ('${TA}','${r1}','${today}','afternoon',1)
           ON CONFLICT (tenant_id,service_point_id,visit_date,period) DO UPDATE SET booked = clinical.booking_counters.booked + 1;
-        INSERT INTO clinical.bookings(tenant_id,organization_id,service_point_id,visit_date,period,code_hash,family_name,given_name,birth_date,sex,phone,consent_version,consent_at)
-          VALUES ('${TA}','${OA}','${r1}','${today}','afternoon',sha256(convert_to('${code}','UTF8')),'Nguyễn Văn','An','1950-03-04','male','0977000000','${CONSENT_VERSION}',now());
+        INSERT INTO clinical.bookings(tenant_id,organization_id,service_point_id,visit_date,period,code_hash,family_name,given_name,birth_date,sex,phone_enc,phone_bidx,phone_hint,consent_version,consent_at)
+          VALUES ('${TA}','${OA}','${r1}','${today}','afternoon',sha256(convert_to('${code}','UTF8')),'Nguyễn Văn','An','1950-03-04','male','${ph.enc}','${ph.bidx}','${ph.hint}','${CONSENT_VERSION}',now());
         COMMIT;`);
     const f = (await bk.findByCode({ organizationId: OA, code: 'abcd-2345' }, C.staff))!;
     expect(await outcome(bk.checkIn(f.booking.bookingId, { patientId: PAT_OLD }, C.doc))).toBe('FORBIDDEN');

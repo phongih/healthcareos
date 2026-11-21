@@ -77,6 +77,7 @@ export const patientName = (p: FhirPatient): string => {
 export const mrnOf = (p: FhirPatient): string => p.identifier?.find((i) => i.type?.text === 'mrn')?.value ?? '';
 export const cccdOf = (p: FhirPatient): string => p.identifier?.find((i) => i.type?.text === 'national_id')?.value ?? '';
 export const phoneOf = (p: FhirPatient): string => p.telecom?.find((t) => t.system === 'phone')?.value ?? '';
+export const emailOf = (p: FhirPatient): string => p.telecom?.find((t) => t.system === 'email')?.value ?? '';
 
 export const conceptText = (c: CodeableConcept | undefined): string => {
   const x = c?.coding?.[0];

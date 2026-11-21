@@ -26,7 +26,7 @@ import type { BookingService, PublicBookingService } from '../clinical/booking.s
 import { parseIfMatch, requireBody, type Route, type RouteInput, type RouteResult } from './clinical-routes';
 import { FHIR_JSON, HttpError, PLAIN_JSON, mapError, operationOutcome, readJsonBody, sendJson } from './http-kernel';
 
-export type BookingApi = Pick<BookingService, 'listForDay' | 'findByCode' | 'getById' | 'checkIn' | 'cancel' | 'setBookingCapacity' | 'getPortal' | 'createPortal' | 'setPortalActive'>;
+export type BookingApi = Pick<BookingService, 'listForDay' | 'findByCode' | 'getById' | 'checkIn' | 'cancel' | 'registerPatient' | 'setBookingCapacity' | 'getPortal' | 'createPortal' | 'setPortalActive'>;
 export type PublicBookingApi = Pick<PublicBookingService, 'options' | 'create' | 'lookup' | 'cancel'>;
 
 const json = (status: number, body: unknown, headers?: Record<string, string>): RouteResult => ({
@@ -84,6 +84,17 @@ export function buildBookingRoutes(api: BookingApi): readonly Route[] {
         const pr = o['priorityReason'];
         if (pr !== undefined && pr !== null && typeof pr !== 'string') throw new HttpError(400, 'invalid', 'priorityReason must be a string or null');
         return json(200, await api.checkIn(id!, { patientId: s(o['patientId']), priorityReason: (pr as string | null | undefined) ?? null }, input.ctx));
+      },
+    },
+    {
+      // HCOS-F16: tạo hồ sơ từ lịch hẹn, SĐT / CCCD không qua trình duyệt.
+      method: 'POST',
+      pattern: ['api', 'bookings', ':id', 'register'],
+      handler: async (input, [id]) => {
+        const o = await obj(input, ['mrn']);
+        const mrn = o['mrn'];
+        if (mrn !== undefined && mrn !== null && typeof mrn !== 'string') throw new HttpError(400, 'invalid', 'mrn must be a string or null');
+        return json(201, await api.registerPatient(id!, { mrn: (mrn as string | null | undefined) ?? null }, input.ctx));
       },
     },
     {

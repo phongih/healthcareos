@@ -101,7 +101,7 @@ run('E2E: JWT (JWKS) -> main.ts -> PostgreSQL', () => {
       env: {
         PATH: process.env['PATH'] ?? '',
         HCOS_DATABASE_URL: `postgres://${APP_ROLE}:${APP_PW}@${host}:${process.env['PGPORT'] ?? '5432'}/${DB}`,
-        HCOS_JWT_ISSUER: ISSUER, HCOS_JWT_AUDIENCE: AUDIENCE, HCOS_JWKS_URL: `http://127.0.0.1:${jwksPort}/jwks`,
+        HCOS_JWT_ISSUER: ISSUER, HCOS_JWT_AUDIENCE: AUDIENCE, HCOS_JWKS_URL: `http://127.0.0.1:${jwksPort}/jwks`, HCOS_KEKS: 't1:' + Buffer.alloc(32, 7).toString('base64'),
         HCOS_PORT: String(API_PORT),
       },
     });

@@ -179,8 +179,9 @@ run('Dự báo kinh doanh / PostgreSQL', () => {
     // Lịch hẹn đã đặt: thứ Tư 25/11 chiều, phòng N1, 2 người.
     su(`BEGIN;
       INSERT INTO clinical.booking_counters(tenant_id,service_point_id,visit_date,period,booked) VALUES ('${TA}','${N1}','2026-11-25','afternoon',2);
-      INSERT INTO clinical.bookings(tenant_id,organization_id,service_point_id,visit_date,period,code_hash,family_name,given_name,birth_date,sex,phone,consent_version,consent_at)
-        SELECT '${TA}','${OA}','${N1}','2026-11-25','afternoon',sha256(convert_to('C' || g,'UTF8')),'T','K','1990-01-01','male','090000000' || g,'2026-11',now() FROM generate_series(1,2) g;
+      INSERT INTO clinical.bookings(tenant_id,organization_id,service_point_id,visit_date,period,code_hash,family_name,given_name,birth_date,sex,phone_enc,phone_bidx,phone_hint,consent_version,consent_at)
+        SELECT '${TA}','${OA}','${N1}','2026-11-25','afternoon',sha256(convert_to('C' || g,'UTF8')),'T','K','1990-01-01','male',
+               'e1.1.' || repeat('A', 40), md5('p' || g), '090****00' || g,'2026-11',now() FROM generate_series(1,2) g;
       COMMIT;`);
     const l = await f.load({ organizationId: OA, days: 14 }, C.admin);
     expect([l.from, l.to]).toEqual(['2026-11-21', '2026-12-04']);

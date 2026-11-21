@@ -32,6 +32,7 @@ import { buildPrescriptionRoutes, type PrescriptionApi } from './prescription-ro
 import { buildQueueRoutes, type QueueApi } from './queue-routes';
 import { buildHandoverRoutes, type HandoverApi } from './handover-routes';
 import { buildGovernanceRoutes, type GovernanceApi } from './governance-routes';
+import { buildPiiRoutes, type PiiApi } from './pii-routes';
 import { buildRegistryRoutes, type RegistryApi } from './registry-routes';
 import {
   FHIR_JSON,
@@ -81,6 +82,8 @@ export interface ApiDeps {
   readonly handover?: HandoverApi;
   /** Tuỳ chọn: quản trị dữ liệu (/api/governance/*). */
   readonly governance?: GovernanceApi;
+  /** Tuỳ chọn: hiện dữ liệu mã hoá + quản lý khoá (/api/pii/*, /api/keys*). */
+  readonly pii?: PiiApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
   readonly rateLimiter?: RateLimiter;
   /** Probe cho GET /readyz. Không cấu hình => /readyz luôn 503 (fail-closed). */
@@ -108,6 +111,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.mrn ? buildMrnRoutes(deps.mrn) : []),
     ...(deps.handover ? buildHandoverRoutes(deps.handover) : []),
     ...(deps.governance ? buildGovernanceRoutes(deps.governance) : []),
+    ...(deps.pii ? buildPiiRoutes(deps.pii) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
   const maxBody = deps.maxBodyBytes ?? 1_048_576;

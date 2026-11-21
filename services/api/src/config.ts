@@ -17,8 +17,13 @@
  *                         (API vẫn chạy). Tạo: openssl rand -base64 32. Mất khoá => phải nhập lại URL các kết nối.
  *   HCOS_PUBLIC_BASE_URL  vd https://smart.id.vn — để thẻ Teams có nút "Mở trong HealthcareOS"; bắt buộc https
  *   HCOS_INTEGRATION_DISPATCH_SEC  chu kỳ giao webhook (giây), mặc định 15; 0 = tắt
+ *   HCOS_KEKS             BẮT BUỘC (HCOS-F16): KEK bọc khoá mã hoá dữ liệu, dạng "id:base64[,id:base64…]" (32 byte mỗi khoá),
+ *                         khoá ĐẦU là khoá đang dùng. Tạo: echo "k1:$(openssl rand -base64 32)". KHÔNG để trong CSDL / bản sao lưu CSDL;
+ *                         sao lưu riêng ngoại tuyến — mất KEK là mất dữ liệu đã mã hoá. Phải khác HCOS_INTEGRATION_KEY.
  */
 import { isIP } from 'node:net';
+
+import { LocalKeyProvider, PiiConfigError } from '../../../packages/security/src/pii';
 export interface AppConfig {
   readonly databaseUrl: string;
   readonly issuer: string[];
@@ -36,6 +41,8 @@ export interface AppConfig {
   readonly integrationKey: Buffer | null;
   readonly publicBaseUrl: string | null;
   readonly integrationDispatchSec: number;
+  /** HCOS-F16: KEK cục bộ (bọc DEK). */
+  readonly keyProvider: LocalKeyProvider | null;
 }
 
 export class ConfigError extends Error {
@@ -113,8 +120,22 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     }
   }
 
+  let keyProvider: LocalKeyProvider | null = null;
+  const keksRaw = req('HCOS_KEKS');
+  if (keksRaw) {
+    try {
+      keyProvider = LocalKeyProvider.parse(keksRaw);
+      if (integrationKey && keksRaw.split(',').some((s) => Buffer.from(s.slice(s.indexOf(':') + 1).trim(), 'base64').equals(integrationKey!))) {
+        problems.push('HCOS_KEKS must not reuse HCOS_INTEGRATION_KEY');
+      }
+    } catch (e) {
+      problems.push(e instanceof PiiConfigError ? `HCOS_KEKS: ${e.message}` : 'HCOS_KEKS is invalid');
+    }
+  }
+
   const cfg: AppConfig = {
     databaseUrl,
+    keyProvider,
     issuer,
     audience,
     jwksUrl,
