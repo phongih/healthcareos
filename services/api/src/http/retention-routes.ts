@@ -8,13 +8,13 @@
  *   GET  /api/erasure-requests?patient=         yêu cầu xoá của người bệnh                              (erasure:request tại cơ sở)
  *   POST /api/erasure-requests                  { patientId, channel, note?, receivedAt? }              (erasure:request tại cơ sở)
  *   POST /api/erasure-requests/:id/decision     { decision: approve|reject, note? } — người KHÁC người lập (erasure:approve)
- *   GET  /api/erasure-requests/:id/letter       { markdown } văn bản trả lời người yêu cầu
+ *   (Văn bản trả lời người yêu cầu: POST /api/exports { dataset: 'erasure_letter', params: { requestId } } — HCOS-F18.)
  */
 import type { RetentionService } from '../governance/retention.service';
 import { requireBody, type Route, type RouteInput, type RouteResult } from './clinical-routes';
 import { HttpError, PLAIN_JSON } from './http-kernel';
 
-export type RetentionApi = Pick<RetentionService, 'overview' | 'setDays' | 'runNow' | 'assess' | 'listForPatient' | 'createRequest' | 'decide' | 'letter'>;
+export type RetentionApi = Pick<RetentionService, 'overview' | 'setDays' | 'runNow' | 'assess' | 'listForPatient' | 'createRequest' | 'decide'>;
 
 const json = (status: number, body: unknown): RouteResult => ({ status, body, contentType: PLAIN_JSON, headers: { 'cache-control': 'no-store' } });
 async function obj(input: RouteInput, allowed: readonly string[]): Promise<Record<string, unknown>> {
@@ -61,6 +61,5 @@ export function buildRetentionRoutes(api: RetentionApi): readonly Route[] {
         return json(200, await api.decide(id!, { decision: o['decision'], note: o['note'] }, input.ctx));
       },
     },
-    { method: 'GET', pattern: ['api', 'erasure-requests', ':id', 'letter'], handler: async (input, [id]) => json(200, { markdown: await api.letter(id!, input.ctx) }) },
   ];
 }

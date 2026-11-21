@@ -259,6 +259,22 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
     columns: { note: FREE_TEXT_OPS, decision_note: FREE_TEXT_OPS },
   },
 
+  // ---- bên thứ ba, xuất dữ liệu (F18) ------------------------------------------------
+  'governance.vendors': {
+    level: 2, category: 'security', subject: 'organization', steward: 'tenant_admin', retention: 'audit_log',
+    purpose: 'Sổ nhà cung cấp / bên thứ ba nhận hoặc xử lý dữ liệu (vai trò, dịch vụ, trạng thái)',
+    columns: { contact: { level: 2, category: 'personal', note: 'Đầu mối liên hệ của nhà cung cấp (người đại diện)' }, status_note: FREE_TEXT_OPS },
+  },
+  'governance.vendor_assessments': {
+    level: 2, category: 'security', subject: 'organization', steward: 'tenant_admin', retention: 'audit_log',
+    purpose: 'Đánh giá nhà cung cấp chỉ-thêm: thoả thuận xử lý dữ liệu, nơi lưu, chuyển ra nước ngoài, loại dữ liệu được nhận, hiệu lực',
+  },
+  'governance.data_exports': {
+    level: 2, category: 'security', subject: 'staff', steward: 'tenant_admin', retention: 'audit_log',
+    purpose: 'Nhật ký xuất dữ liệu: ai, bộ dữ liệu, bộ lọc, số dòng, có dữ liệu cá nhân, mục đích, SHA-256 — không lưu nội dung file',
+    columns: { purpose: FREE_TEXT_OPS, params: NO_PATIENT_PAYLOAD },
+  },
+
   // ---- keyvault (F16) ------------------------------------------------------------
   'keyvault.subject_keys': {
     level: 3, category: 'security', subject: 'patient', steward: 'tenant_admin', retention: 'security',

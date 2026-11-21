@@ -1,8 +1,8 @@
 /** Ghi .xlsx tối giản: cấu trúc ZIP đúng (CRC, thư mục trung tâm), XML hợp lệ, số là số, chuỗi được escape; sheet báo cáo. */
 import { describe, expect, it } from 'vitest';
 
-import { reportSheets, type ReportData } from '../../apps/web/src/lib/report-sheets';
-import { buildXlsx, crc32, sheetName } from '../../apps/web/src/lib/xlsx';
+import { reportSheets, type ReportData } from '../../packages/exports/src/report-sheets';
+import { buildXlsx, crc32, sheetName } from '../../packages/exports/src/xlsx';
 
 /** Đọc ZIP kiểu STORE (đủ cho file do buildXlsx tạo), kiểm CRC từng mục. */
 function unzip(buf: Uint8Array): Map<string, string> {

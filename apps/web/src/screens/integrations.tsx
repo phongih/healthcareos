@@ -21,7 +21,9 @@ interface Endpoint {
   endpointId: string; kind: Kind; name: string; urlHint: string; eventTypes: string[]; maxPriority: number; status: 'active' | 'paused' | 'retired';
   pausedReason: 'manual' | 'auto_failures' | null; consecutiveFailures: number; lastSuccessAt: string | null; lastFailureAt: string | null; version: number;
   createdByName: string | null; updatedAt: string; delivered7d: number; failed7d: number; pending: number;
+  vendorId: string | null; vendorName: string | null; vendorCleared: boolean;
 }
+interface VendorLite { vendorId: string; name: string; status: string; standing: string; clearedOperational: boolean }
 interface History { version: number; name: string; urlHint: string; urlChanged: boolean; secretRotated: boolean; eventTypes: string[]; maxPriority: number; status: string; pausedReason: string | null; changedByName: string | null; changedAt: string }
 interface Delivery {
   deliveryId: string; endpointId: string; endpointName: string; eventType: string; priority: number; title: string | null; status: 'pending' | 'sending' | 'succeeded' | 'dead' | 'cancelled';
@@ -163,8 +165,14 @@ function EndpointCard({ ep, canManage, enabled, onEdit, onChanged }: { ep: Endpo
         <div>
           <strong>{ep.name}</strong> {badge}
           <div className="muted small">
-            {KIND_LABEL[ep.kind]} · <span className="mono">{ep.urlHint}</span>
+            {KIND_LABEL[ep.kind]} · <span className="mono">{ep.urlHint}</span> · Nhà cung cấp: {ep.vendorName ?? <strong>chưa gắn</strong>}
           </div>
+          {!ep.vendorCleared && (
+            <div className="alert warn small">
+              Đang <strong>chặn gửi</strong>: {ep.vendorId ? 'nhà cung cấp chưa có đánh giá còn hiệu lực (hoặc bị thu hồi / tạm ngừng)' : 'kết nối chưa gắn nhà cung cấp'}.
+              Quản trị hệ thống ghi đánh giá ở tab Quản trị dữ liệu → Nhà cung cấp.
+            </div>
+          )}
         </div>
         {canManage && (
           <div className="row wrap">
@@ -259,9 +267,12 @@ function EndpointForm({ catalog, endpoint, onDone, onCancel }: { catalog: Catalo
   const [events, setEvents] = useState<Set<string>>(new Set(endpoint?.eventTypes ?? ['decision.event', 'system.alert']));
   const [maxPriority, setMaxPriority] = useState(endpoint?.maxPriority ?? 2);
   const [rotate, setRotate] = useState(false);
+  const [vendorId, setVendorId] = useState(endpoint?.vendorId ?? '');
+  const vendors = useLoad(() => api<{ vendors: VendorLite[] }>('GET', '/api/vendors').then((r) => r.data.vendors.filter((v) => v.status !== 'terminated')), []);
   const save = useAction(async () => {
     if (events.size === 0) throw new Error('Chọn ít nhất một loại sự kiện');
-    const body = { name: name.trim(), eventTypes: [...events], maxPriority };
+    if (!vendorId) throw new Error('Chọn nhà cung cấp nhận dữ liệu (đăng ký ở tab Quản trị dữ liệu → Nhà cung cấp)');
+    const body = { name: name.trim(), eventTypes: [...events], maxPriority, vendorId };
     const r = endpoint
       ? await api<{ signingSecret: string | null }>('POST', `/api/integrations/endpoints/${endpoint.endpointId}`, {
           body: { ...body, ...(url.trim() ? { url: url.trim() } : {}), ...(rotate ? { rotateSecret: true } : {}) },
@@ -292,7 +303,18 @@ function EndpointForm({ catalog, endpoint, onDone, onCancel }: { catalog: Catalo
           <Field label="Tên kết nối *">
             <input required minLength={3} maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'teams_workflow' ? 'vd. Kênh trực ban' : 'vd. Đối tác BI'} />
           </Field>
+          <Field label="Nhà cung cấp nhận dữ liệu *" hint="Chỉ gửi khi nhà cung cấp có đánh giá còn hiệu lực">
+            <select value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+              <option value="">— chọn —</option>
+              {(vendors.data ?? []).map((v) => (
+                <option key={v.vendorId} value={v.vendorId}>
+                  {v.name}{v.clearedOperational ? '' : ' (chưa được duyệt — sẽ bị chặn gửi)'}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
+        <ErrorBox error={vendors.error} />
         {kind === 'teams_workflow' && !endpoint && (
           <ol className="small teams-steps">
             <li>Trong Teams, mở kênh cần nhận tin → <strong>…</strong> → <strong>Workflows</strong>.</li>

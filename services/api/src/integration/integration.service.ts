@@ -46,6 +46,8 @@ export interface Endpoint {
   readonly eventTypes: string[]; readonly maxPriority: number; readonly status: EndpointStatus; readonly pausedReason: 'manual' | 'auto_failures' | null;
   readonly consecutiveFailures: number; readonly lastSuccessAt: string | null; readonly lastFailureAt: string | null; readonly version: number;
   readonly createdByName: string | null; readonly updatedAt: string; readonly delivered7d: number; readonly failed7d: number; readonly pending: number;
+  /** HCOS-F18: nhà cung cấp nhận dữ liệu; chỉ gửi khi đã được đánh giá, còn hiệu lực cho dữ liệu vận hành. */
+  readonly vendorId: string | null; readonly vendorName: string | null; readonly vendorCleared: boolean;
 }
 export interface EndpointHistory {
   readonly version: number; readonly name: string; readonly urlHint: string; readonly urlChanged: boolean; readonly secretRotated: boolean;
@@ -67,7 +69,10 @@ export interface Overview {
 }
 export interface EndpointInput {
   readonly organizationId: string; readonly kind: EndpointKind; readonly name: string; readonly url: string; readonly eventTypes: string[]; readonly maxPriority: number;
+  readonly vendorId: string;
 }
+/** Loại dữ liệu của mọi sự kiện gửi ra ngoài (thiết kế không chứa định danh người bệnh). */
+export const OUTBOUND_CATEGORY = 'operational';
 export interface SendResult {
   readonly deliveryId: string; readonly outcome: 'success' | 'retry' | 'dead' | 'skipped'; readonly statusCode: number | null; readonly error: string | null; readonly durationMs: number;
 }
@@ -95,6 +100,8 @@ export async function enqueueOutbox(db: TenantScopedDb, tenantId: string, e: Out
     `WITH targets AS (
        SELECT endpoint_id FROM integration.endpoints
         WHERE tenant_id = $1 AND organization_id = $2
+          -- HCOS-F18: chỉ nhà cung cấp đã được đánh giá, còn hiệu lực cho dữ liệu vận hành.
+          AND vendor_id IS NOT NULL AND governance.vendor_cleared(vendor_id, 'operational')
           AND CASE WHEN $3 = 'integration.test' THEN endpoint_id = $7::uuid AND status IN ('active', 'paused')
                    ELSE status = 'active' AND $3 = ANY (event_types) AND ($3 <> 'decision.event' OR $4::smallint <= max_priority)
                         AND ($7::uuid IS NULL OR endpoint_id = $7::uuid) AND ($8::uuid IS NULL OR endpoint_id <> $8::uuid) END),
@@ -121,7 +128,7 @@ export async function organizationName(db: TenantScopedDb, tenantId: string, org
 // ---------------------------------------------------------------------------
 interface ClaimedDelivery {
   readonly deliveryId: string; readonly organizationId: OrganizationId; readonly attempt: number;
-  readonly endpoint: { endpointId: string; kind: EndpointKind; urlCiphertext: string; secretCiphertext: string | null; status: EndpointStatus; name: string };
+  readonly endpoint: { endpointId: string; kind: EndpointKind; urlCiphertext: string; secretCiphertext: string | null; status: EndpointStatus; name: string; vendorCleared: boolean };
   readonly event: { eventId: string; type: EventType; priority: number; payload: Record<string, unknown>; occurredAt: string };
 }
 
@@ -144,17 +151,21 @@ export class PgIntegrationRepository extends PgClinicalRepository {
       lastSuccessAt: x['last_success_at'] ? iso(x['last_success_at']) : null, lastFailureAt: x['last_failure_at'] ? iso(x['last_failure_at']) : null,
       version: n(x['version']), createdByName: (x['created_by_name'] as string | null) ?? null, updatedAt: iso(x['updated_at']),
       delivered7d: n(x['delivered_7d'] ?? 0), failed7d: n(x['failed_7d'] ?? 0), pending: n(x['pending'] ?? 0),
+      vendorId: (x['vendor_id'] as string | null) ?? null, vendorName: (x['vendor_name'] as string | null) ?? null,
+      vendorCleared: x['vendor_cleared'] === true || x['vendor_cleared'] === 't',
     };
   }
   private readonly endpointSelect = `
     SELECT e.endpoint_id, e.organization_id, e.kind, e.name, e.url_hint, to_jsonb(e.event_types) AS event_types, e.max_priority, e.status, e.paused_reason,
            COALESCE(h.consecutive_failures, 0) AS consecutive_failures, h.last_success_at, h.last_failure_at, e.version, e.updated_at, u.display_name AS created_by_name,
+           e.vendor_id, v.name AS vendor_name, (e.vendor_id IS NOT NULL AND governance.vendor_cleared(e.vendor_id, 'operational')) AS vendor_cleared,
            (SELECT count(*) FROM integration.deliveries d WHERE d.tenant_id = e.tenant_id AND d.endpoint_id = e.endpoint_id AND d.status = 'succeeded' AND d.created_at > $3::timestamptz - interval '7 days') AS delivered_7d,
            (SELECT count(*) FROM integration.deliveries d WHERE d.tenant_id = e.tenant_id AND d.endpoint_id = e.endpoint_id AND d.status = 'dead' AND d.created_at > $3::timestamptz - interval '7 days') AS failed_7d,
            (SELECT count(*) FROM integration.deliveries d WHERE d.tenant_id = e.tenant_id AND d.endpoint_id = e.endpoint_id AND d.status IN ('pending', 'sending')) AS pending
       FROM integration.endpoints e
       LEFT JOIN integration.endpoint_health h ON h.tenant_id = e.tenant_id AND h.endpoint_id = e.endpoint_id
-      LEFT JOIN iam.users u ON u.tenant_id = e.tenant_id AND u.user_id = e.created_by`;
+      LEFT JOIN iam.users u ON u.tenant_id = e.tenant_id AND u.user_id = e.created_by
+      LEFT JOIN governance.vendors v ON v.tenant_id = e.tenant_id AND v.vendor_id = e.vendor_id`;
   async listEndpoints(org: OrganizationId, now: Date): Promise<Endpoint[]> {
     const r = await this.db.query<Record<string, unknown>>(
       `${this.endpointSelect} WHERE e.tenant_id = $1 AND e.organization_id = $2 AND e.status <> 'retired' ORDER BY (e.status = 'active') DESC, e.name`,
@@ -166,20 +177,26 @@ export class PgIntegrationRepository extends PgClinicalRepository {
     const r = await this.db.query<Record<string, unknown>>(`${this.endpointSelect} WHERE e.tenant_id = $1 AND e.endpoint_id = $2`, [this.t, id, now.toISOString()]);
     return r.rows[0] ? this.endpointRow(r.rows[0]) : null;
   }
-  async insertEndpoint(x: { id: string; org: OrganizationId; kind: EndpointKind; name: string; urlCt: string; hint: string; secretCt: string | null; eventTypes: string[]; maxPriority: number; by: string }): Promise<void> {
+  async insertEndpoint(x: { id: string; org: OrganizationId; kind: EndpointKind; name: string; urlCt: string; hint: string; secretCt: string | null; eventTypes: string[]; maxPriority: number; by: string; vendorId: string }): Promise<void> {
     await this.db.query(
-      `INSERT INTO integration.endpoints (endpoint_id, tenant_id, organization_id, kind, name, url_ciphertext, url_hint, secret_ciphertext, event_types, max_priority, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ARRAY(SELECT jsonb_array_elements_text($9::jsonb)), $10, $11, $11)`,
-      [x.id, this.t, x.org, x.kind, x.name, x.urlCt, x.hint, x.secretCt, list(x.eventTypes), x.maxPriority, x.by],
+      `INSERT INTO integration.endpoints (endpoint_id, tenant_id, organization_id, kind, name, url_ciphertext, url_hint, secret_ciphertext, event_types, max_priority, created_by, updated_by, vendor_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ARRAY(SELECT jsonb_array_elements_text($9::jsonb)), $10, $11, $11, $12)`,
+      [x.id, this.t, x.org, x.kind, x.name, x.urlCt, x.hint, x.secretCt, list(x.eventTypes), x.maxPriority, x.by, x.vendorId],
     );
   }
-  async updateEndpoint(id: string, x: { name: string; urlCt: string | null; hint: string | null; secretCt: string | null; eventTypes: string[]; maxPriority: number; by: string }, expectedVersion: number): Promise<boolean> {
+  async updateEndpoint(id: string, x: { name: string; urlCt: string | null; hint: string | null; secretCt: string | null; eventTypes: string[]; maxPriority: number; by: string; vendorId: string | null }, expectedVersion: number): Promise<boolean> {
     const r = await this.db.query(
       `UPDATE integration.endpoints SET name = $3, url_ciphertext = COALESCE($4, url_ciphertext), url_hint = COALESCE($5, url_hint),
-              secret_ciphertext = COALESCE($6, secret_ciphertext), event_types = ARRAY(SELECT jsonb_array_elements_text($7::jsonb)), max_priority = $8, updated_by = $9
+              secret_ciphertext = COALESCE($6, secret_ciphertext), event_types = ARRAY(SELECT jsonb_array_elements_text($7::jsonb)), max_priority = $8, updated_by = $9,
+              vendor_id = COALESCE($11::uuid, vendor_id)
         WHERE tenant_id = $1 AND endpoint_id = $2 AND version = $10 AND status <> 'retired' RETURNING 1`,
-      [this.t, id, x.name, x.urlCt, x.hint, x.secretCt, list(x.eventTypes), x.maxPriority, x.by, expectedVersion],
+      [this.t, id, x.name, x.urlCt, x.hint, x.secretCt, list(x.eventTypes), x.maxPriority, x.by, expectedVersion, x.vendorId],
     );
+    return r.rows.length > 0;
+  }
+  /** HCOS-F18: nhà cung cấp tồn tại (cùng tenant) và chưa chấm dứt. */
+  async vendorUsable(vendorId: string): Promise<boolean> {
+    const r = await this.db.query(`SELECT 1 FROM governance.vendors WHERE tenant_id = $1 AND vendor_id = $2 AND status <> 'terminated'`, [this.t, vendorId]);
     return r.rows.length > 0;
   }
   async setEndpointStatus(id: string, status: EndpointStatus, reason: 'manual' | 'auto_failures' | null, by: string | null, expectedVersion: number | null): Promise<boolean> {
@@ -290,7 +307,8 @@ export class PgIntegrationRepository extends PgClinicalRepository {
     if (!d) return null;
     const x = (
       await this.db.query<Record<string, unknown>>(
-        `SELECT e.kind, e.url_ciphertext, e.secret_ciphertext, e.status, e.name, o.event_type, o.priority, o.payload, o.occurred_at
+        `SELECT e.kind, e.url_ciphertext, e.secret_ciphertext, e.status, e.name, o.event_type, o.priority, o.payload, o.occurred_at,
+                (e.vendor_id IS NOT NULL AND governance.vendor_cleared(e.vendor_id, 'operational')) AS vendor_cleared
            FROM integration.endpoints e, integration.outbox o
           WHERE e.tenant_id = $1 AND e.endpoint_id = $2 AND o.tenant_id = $1 AND o.event_id = $3`,
         [this.t, d['endpoint_id'], d['event_id']],
@@ -301,6 +319,7 @@ export class PgIntegrationRepository extends PgClinicalRepository {
       endpoint: {
         endpointId: d['endpoint_id'] as string, kind: x['kind'] as EndpointKind, urlCiphertext: x['url_ciphertext'] as string,
         secretCiphertext: (x['secret_ciphertext'] as string | null) ?? null, status: x['status'] as EndpointStatus, name: x['name'] as string,
+        vendorCleared: x['vendor_cleared'] === true || x['vendor_cleared'] === 't',
       },
       event: { eventId: d['event_id'] as string, type: x['event_type'] as EventType, priority: n(x['priority']), payload: j<Record<string, unknown>>(x['payload']), occurredAt: iso(x['occurred_at']) },
     };
@@ -448,12 +467,13 @@ export class IntegrationService {
       const base = this.validateCommon(input.name, input.eventTypes, input.maxPriority);
       const t = validateTarget(input.kind, input.url, { allowPrivate: this.deps.allowPrivate === true });
       if ('error' in t) throw new ClinicalError('VALIDATION', t.error, { reason: 'INVALID_URL' });
+      const vendorId = await this.vendorOf(repo, input.vendorId);
       const id = randomUUID();
       const secret = input.kind === 'webhook' ? `whsec_${randomBytes(24).toString('base64url')}` : null;
       await nameTaken(() =>
         repo.insertEndpoint({
           id, org, kind: input.kind, name: base.name, urlCt: box.seal(t.url, aadOf(repo.tenant, id, 'url')), hint: t.hint,
-          secretCt: secret ? box.seal(secret, aadOf(repo.tenant, id, 'secret')) : null, eventTypes: base.eventTypes, maxPriority: base.maxPriority, by: p.user.userId,
+          secretCt: secret ? box.seal(secret, aadOf(repo.tenant, id, 'secret')) : null, eventTypes: base.eventTypes, maxPriority: base.maxPriority, by: p.user.userId, vendorId,
         }),
       );
       await repo.appendAudit(this.event(ctx, 'integration.endpoints.create', org, 'success', p.user, id, { kind: input.kind, name: base.name, host: t.hint.split('/')[0] }));
@@ -462,7 +482,7 @@ export class IntegrationService {
   }
 
   async updateEndpoint(
-    id: string, input: { name: string; url?: string | null; eventTypes: string[]; maxPriority: number; rotateSecret?: boolean }, expectedVersion: number,
+    id: string, input: { name: string; url?: string | null; eventTypes: string[]; maxPriority: number; rotateSecret?: boolean; vendorId?: string | null }, expectedVersion: number,
     ctx: TenantContext = requireTenantContext(),
   ): Promise<{ endpoint: Endpoint; signingSecret: string | null }> {
     return this.tx(ctx, 'integration.endpoints.update', async (repo) => {
@@ -483,15 +503,16 @@ export class IntegrationService {
       }
       if (input.rotateSecret && ep.kind !== 'webhook') throw new ClinicalError('VALIDATION', 'Only webhook endpoints have a signing secret', { reason: 'INVALID_ENDPOINT' });
       const secret = input.rotateSecret ? `whsec_${randomBytes(24).toString('base64url')}` : null;
+      const vendorId = input.vendorId ? await this.vendorOf(repo, input.vendorId) : null;
       const ok = await nameTaken(() =>
         repo.updateEndpoint(
           ep.endpointId,
-          { name: base.name, urlCt, hint, secretCt: secret ? box.seal(secret, aadOf(repo.tenant, ep.endpointId, 'secret')) : null, eventTypes: base.eventTypes, maxPriority: base.maxPriority, by: p.user.userId },
+          { name: base.name, urlCt, hint, secretCt: secret ? box.seal(secret, aadOf(repo.tenant, ep.endpointId, 'secret')) : null, eventTypes: base.eventTypes, maxPriority: base.maxPriority, by: p.user.userId, vendorId },
           expectedVersion,
         ),
       );
       if (!ok) throw new ClinicalError('CONFLICT', 'Endpoint version does not match', { reason: 'VERSION_CONFLICT' });
-      await repo.appendAudit(this.event(ctx, 'integration.endpoints.update', org, 'success', p.user, ep.endpointId, { urlChanged: urlCt !== null, secretRotated: secret !== null }));
+      await repo.appendAudit(this.event(ctx, 'integration.endpoints.update', org, 'success', p.user, ep.endpointId, { urlChanged: urlCt !== null, secretRotated: secret !== null, ...(vendorId ? { vendorId } : {}) }));
       return { endpoint: (await repo.getEndpoint(ep.endpointId, this.clock()))!, signingSecret: secret };
     });
   }
@@ -505,6 +526,7 @@ export class IntegrationService {
       this.decideAccess(p, 'integration:manage');
       this.version(expectedVersion);
       if (ep.status === 'retired') throw new ClinicalError('CONFLICT', 'Endpoint is retired', { reason: 'ENDPOINT_RETIRED' });
+      if (status === 'active' && !ep.vendorCleared) throw new ClinicalError('CONFLICT', 'Vendor has no valid approved assessment', { reason: 'VENDOR_NOT_CLEARED' });
       const ok = await repo.setEndpointStatus(ep.endpointId, status, status === 'paused' ? 'manual' : null, p.user.userId, expectedVersion);
       if (!ok) throw new ClinicalError('CONFLICT', 'Endpoint version does not match', { reason: 'VERSION_CONFLICT' });
       const cancelledStale = status === 'active' ? await repo.cancelStale(ep.endpointId, this.clock()) : 0;
@@ -524,6 +546,7 @@ export class IntegrationService {
       this.decideAccess(p, 'integration:manage');
       this.requireBox();
       if (ep.status === 'retired') throw new ClinicalError('CONFLICT', 'Endpoint is retired', { reason: 'ENDPOINT_RETIRED' });
+      if (!ep.vendorCleared) throw new ClinicalError('CONFLICT', 'Vendor has no valid approved assessment', { reason: 'VENDOR_NOT_CLEARED' });
       const name = await organizationName(repo.scopedDb, repo.tenant, org);
       const r = await enqueueOutbox(repo.scopedDb, repo.tenant, {
         organizationId: org, type: 'integration.test', priority: 3, at: this.clock(), onlyEndpointId: ep.endpointId,
@@ -586,6 +609,8 @@ export class IntegrationService {
     let result: { status: number | null; error: string | null; retryAfterSec: number | null; durationMs: number };
     try {
       if (!box) throw Object.assign(new Error('no key'), { hcos: 'INTEGRATION_DISABLED' });
+      // HCOS-F18: kiểm tra lại lúc gửi — đánh giá nhà cung cấp hết hạn / bị thu hồi sau khi xếp hàng => không gửi.
+      if (!claimed.endpoint.vendorCleared) throw Object.assign(new Error('vendor'), { hcos: 'VENDOR_NOT_CLEARED' });
       let url: string;
       let secret: string | null = null;
       try {
@@ -615,7 +640,7 @@ export class IntegrationService {
       const code = (e as { hcos?: string }).hcos ?? 'INTERNAL';
       result = { status: null, error: code, retryAfterSec: null, durationMs: this.clock().getTime() - started.getTime() };
     }
-    const permanentLocal = result.status === null && ['INTEGRATION_DISABLED', 'DECRYPT_FAILED', 'TARGET_REJECTED', 'INTERNAL'].includes(result.error ?? '');
+    const permanentLocal = result.status === null && ['INTEGRATION_DISABLED', 'DECRYPT_FAILED', 'TARGET_REJECTED', 'INTERNAL', 'VENDOR_NOT_CLEARED'].includes(result.error ?? '');
     const v = permanentLocal ? { outcome: 'dead' as const, error: result.error! } : classify(result, claimed.attempt, trigger === 'dispatcher');
     const now = this.clock();
     const nextAt = v.outcome === 'retry' ? new Date(now.getTime() + v.afterSec * 1000) : null;
@@ -626,7 +651,8 @@ export class IntegrationService {
       });
       // Thẻ gửi thử không làm kết nối bị tính lỗi / tự tạm dừng; vẫn ghi nhận thành công.
       const isTest = claimed.event.type === 'integration.test';
-      if (v.outcome === 'success' || !isTest) {
+      // Nhà cung cấp chưa được duyệt không phải lỗi của kết nối: không tính vào tự tạm dừng.
+      if ((v.outcome === 'success' || !isTest) && result.error !== 'VENDOR_NOT_CLEARED') {
         const h = await repo.endpointHealth(claimed.endpoint.endpointId, v.outcome === 'success', now);
         if (v.outcome !== 'success' && h.status === 'active' && h.failures >= AUTO_PAUSE_AFTER) {
           await repo.setEndpointStatus(claimed.endpoint.endpointId, 'paused', 'auto_failures', null, null);
@@ -649,6 +675,11 @@ export class IntegrationService {
   }
 
   // ---- nội bộ ----
+  private async vendorOf(repo: PgIntegrationRepository, vendorId: unknown): Promise<string> {
+    if (typeof vendorId !== 'string' || !/^[0-9a-f-]{36}$/i.test(vendorId)) throw new ClinicalError('VALIDATION', 'vendorId is required', { reason: 'VENDOR_REQUIRED' });
+    if (!(await repo.vendorUsable(vendorId.toLowerCase()))) throw new ClinicalError('VALIDATION', 'Unknown or terminated vendor', { reason: 'VENDOR_REQUIRED' });
+    return vendorId.toLowerCase();
+  }
   private requireBox(): SecretBox {
     if (!this.deps.box) throw new ClinicalError('CONFLICT', 'Integrations are disabled: HCOS_INTEGRATION_KEY is not configured', { reason: 'INTEGRATION_DISABLED' });
     return this.deps.box;

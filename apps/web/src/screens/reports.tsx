@@ -6,12 +6,11 @@
 import { useMemo, useState } from 'react';
 
 import { api, ApiError } from '../lib/api';
-import { downloadXlsx } from '../lib/download';
+import { exportFile } from '../lib/download';
 import { fmtVnd } from '../lib/money';
-import { CATEGORY_LABEL, dmy, reportSheets, vnTime, type ReportData } from '../lib/report-sheets';
+import { CATEGORY_LABEL, dmy, vnTime, type ReportData } from '../../../../packages/exports/src/report-sheets';
 import { useSession } from '../lib/session';
-import { Card, ErrorBox, Field, Notice, useLoad } from '../lib/ui';
-import { buildXlsx } from '../lib/xlsx';
+import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 
 const KIND: Record<string, string> = { deposit: 'Tạm ứng', payment: 'Thanh toán', refund: 'Hoàn ứng' };
 const METHOD: Record<string, string> = { cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản', card: 'Thẻ (POS)' };
@@ -74,8 +73,7 @@ function DailyBars({ days }: { days: ReportData['cashflow']['days'] }) {
 }
 
 export function ReportsScreen() {
-  const { orgId, me } = useSession();
-  const orgName = me.memberships.find((m) => m.organization.organizationId === orgId)?.organization.name ?? '';
+  const { orgId } = useSession();
   const today = vnToday();
   const [range, setRange] = useState({ from: today, to: today });
   const [draft, setDraft] = useState(range);
@@ -85,17 +83,18 @@ export function ReportsScreen() {
   );
   const ps = useMemo(() => presets(today), [today]);
   const denied = r.error instanceof ApiError && r.error.status === 403;
-  const exportXlsx = () => {
+  const exportXlsx = useAction(async () => {
     if (!r.data) return;
-    downloadXlsx(`bao-cao-tai-chinh_${r.data.from}_${r.data.to}.xlsx`, buildXlsx(reportSheets(r.data, orgName)));
-  };
+    await exportFile('finance_report', { organizationId: orgId, from: range.from, to: range.to }, 'Báo cáo tài chính nội bộ');
+  });
   if (denied) return <Notice kind="warn">Báo cáo tài chính chỉ dành cho quản lý phòng khám / ban giám đốc.</Notice>;
   const d = r.data;
   const t = d?.cashflow.totals;
 
   return (
     <div className="stack">
-      <Card title="Báo cáo tài chính" actions={<button className="secondary" onClick={exportXlsx} disabled={!d}>Xuất Excel</button>}>
+      <Card title="Báo cáo tài chính" actions={<button className="secondary" onClick={() => void exportXlsx.run()} disabled={!d || exportXlsx.busy}>Xuất Excel</button>}>
+        <ErrorBox error={exportXlsx.error} />
         <div className="row wrap">
           {ps.map((p) => (
             <button key={p.label} className={range.from === p.from && range.to === p.to ? 'choice on' : 'choice'} onClick={() => { setRange(p); setDraft(p); }}>

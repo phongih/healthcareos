@@ -73,9 +73,12 @@ export function buildIntegrationRoutes(api: IntegrationApi): readonly Route[] {
       method: 'POST',
       pattern: ['api', 'integrations', 'endpoints'],
       handler: async (input) => {
-        const o = await obj(input, ['organizationId', 'kind', 'name', 'url', 'eventTypes', 'maxPriority']);
+        const o = await obj(input, ['organizationId', 'kind', 'name', 'url', 'eventTypes', 'maxPriority', 'vendorId']);
         const r = await api.createEndpoint(
-          { organizationId: str(o, 'organizationId'), kind: str(o, 'kind') as EndpointKind, name: str(o, 'name'), url: str(o, 'url'), eventTypes: arr(o, 'eventTypes'), maxPriority: num(o, 'maxPriority') },
+          {
+            organizationId: str(o, 'organizationId'), kind: str(o, 'kind') as EndpointKind, name: str(o, 'name'), url: str(o, 'url'), eventTypes: arr(o, 'eventTypes'),
+            maxPriority: num(o, 'maxPriority'), vendorId: typeof o['vendorId'] === 'string' ? o['vendorId'] : '',
+          },
           input.ctx,
         );
         return json(201, r, { ...etag(r.endpoint.version), ...noStore });
@@ -86,13 +89,14 @@ export function buildIntegrationRoutes(api: IntegrationApi): readonly Route[] {
       pattern: ['api', 'integrations', 'endpoints', ':id'],
       handler: async (input, [id]) => {
         const version = parseIfMatch(input.req.headers['if-match']);
-        const o = await obj(input, ['name', 'url', 'eventTypes', 'maxPriority', 'rotateSecret']);
+        const o = await obj(input, ['name', 'url', 'eventTypes', 'maxPriority', 'rotateSecret', 'vendorId']);
         if (o['rotateSecret'] !== undefined && typeof o['rotateSecret'] !== 'boolean') throw new HttpError(400, 'invalid', 'rotateSecret must be a boolean');
         const r = await api.updateEndpoint(
           id!,
           {
             name: str(o, 'name'), eventTypes: arr(o, 'eventTypes'), maxPriority: num(o, 'maxPriority'),
             ...(o['url'] !== undefined && o['url'] !== null ? { url: str(o, 'url') } : {}), ...(o['rotateSecret'] === true ? { rotateSecret: true } : {}),
+            ...(typeof o['vendorId'] === 'string' ? { vendorId: o['vendorId'] } : {}),
           },
           version,
           input.ctx,

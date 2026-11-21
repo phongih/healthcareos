@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { asOrganizationId, asTenantId, asUserId, type CorrelationId, type OrganizationId, type TenantContext, type TenantId, type UserId } from '../../packages/domain/src/s0-contracts';
 import { DecisionEngineService, PgDecisionUnitOfWork } from '../../services/api/src/decision/decision.service';
-import { AUTO_PAUSE_AFTER, enqueueOutbox, IntegrationDispatcher, IntegrationService, PgIntegrationUnitOfWork } from '../../services/api/src/integration/integration.service';
+import { AUTO_PAUSE_AFTER, enqueueOutbox, IntegrationDispatcher, IntegrationService, PgIntegrationUnitOfWork, type EndpointInput } from '../../services/api/src/integration/integration.service';
 import { SecretBox } from '../../services/api/src/integration/secrets';
 import type { OutboundRequest, OutboundResult, Transport } from '../../services/api/src/integration/transport';
 import { PsqlClient, psqlPool } from './psql-pool';
@@ -26,6 +26,8 @@ const OA = asOrganizationId(uid(11));
 const OB = asOrganizationId(uid(12));
 const U = { admin: asUserId(uid(101)), exec: asUserId(uid(102)), doc: asUserId(uid(103)) };
 const ENC = uid(5001);
+/** HCOS-F18: nhà cung cấp đã được đánh giá (seed) — mọi kết nối phải gắn nhà cung cấp. */
+const VENDOR = uid(3001);
 const ctx = (u: UserId, orgs: OrganizationId[]): TenantContext =>
   Object.freeze({
     tenantId: TA as TenantId, userSubject: `sub-${u}`, userId: null, personId: null, activeOrganizationId: orgs[0] ?? null,
@@ -46,6 +48,8 @@ const fake: Transport = async (r) => {
   return replies.get(new URL(r.url).host) ?? { status: 202, error: null, retryAfterSec: null, durationMs: 3 };
 };
 
+let svcRef: IntegrationService;
+const create = (x: Omit<EndpointInput, 'vendorId'> & { vendorId?: string }, c: TenantContext) => svcRef.createEndpoint({ vendorId: VENDOR, ...x } as EndpointInput, c);
 const run = ENABLED ? describe : (describe as unknown as { skip: typeof describe }).skip;
 
 run('Integrations / PostgreSQL', () => {
@@ -74,11 +78,15 @@ INSERT INTO clinical.encounters(encounter_id,tenant_id,patient_id,organization_i
   VALUES ('${ENC}','${TA}','${uid(1001)}','${OA}','${U.doc}','in_progress','ambulatory',now() - interval '1 hour');
 INSERT INTO clinical.observations(observation_id,tenant_id,patient_id,encounter_id,code_system,code,display,value_numeric,value_unit,effective_at,recorded_by_user_id) VALUES
   (gen_random_uuid(),'${TA}','${uid(1001)}','${ENC}','http://loinc.org','59408-5','SpO₂',88,'%',now() - interval '5 minutes','${U.doc}'),
-  (gen_random_uuid(),'${TA}','${uid(1001)}','${ENC}','http://loinc.org','8310-5','Nhiệt độ',38.6,'Cel',now() - interval '5 minutes','${U.doc}');`,
+  (gen_random_uuid(),'${TA}','${uid(1001)}','${ENC}','http://loinc.org','8310-5','Nhiệt độ',38.6,'Cel',now() - interval '5 minutes','${U.doc}');
+INSERT INTO governance.vendors(vendor_id,tenant_id,name,kind,role,services,created_by) VALUES ('${VENDOR}','${TA}','Microsoft / đối tác','messaging','processor','Teams Workflows, webhook','${U.admin}');
+INSERT INTO governance.vendor_assessments(tenant_id,vendor_id,decision,dpa_reference,data_categories,data_location,cross_border,measures,rationale,valid_from,valid_until,assessed_by)
+  VALUES ('${TA}','${VENDOR}','approved','DPA-TEST-01',ARRAY['operational'],'Đông Nam Á',true,'Chỉ nhận sự kiện vận hành, không định danh người bệnh','Kiểm thử tích hợp',current_date - 1,current_date + 365,'${U.admin}');`,
     });
     const pool = psqlPool({ database: DB });
     const audit = { record: async () => {} };
     svc = new IntegrationService({ uow: new PgIntegrationUnitOfWork(pool), audit, box: new SecretBox(randomBytes(32)), transport: fake, clock, publicBaseUrl: 'https://smart.id.vn' });
+    svcRef = svc;
     dec = new DecisionEngineService({ uow: new PgDecisionUnitOfWork(pool), audit, clock });
     disp = new IntegrationDispatcher({ pool, service: svc, intervalMs: 0, clock });
   });
@@ -88,21 +96,21 @@ INSERT INTO clinical.observations(observation_id,tenant_id,patient_id,encounter_
 
   it('tạo kết nối: chỉ quản lý; URL kiểm tra và mã hoá; bí mật ký trả đúng một lần', async () => {
     const base = { organizationId: OA, kind: 'teams_workflow' as const, name: 'Kênh trực ban', url: TEAMS, eventTypes: ['decision.event', 'system.alert'], maxPriority: 1 };
-    expect(await outcome(svc.createEndpoint(base, C.exec))).toBe('FORBIDDEN');
-    expect(await outcome(svc.createEndpoint(base, C.doc))).toBe('FORBIDDEN');
-    expect(await outcome(svc.createEndpoint({ ...base, url: 'https://evil.example.com/workflows/x?sig=1' }, C.admin))).toBe('VALIDATION:INVALID_URL');
-    expect(await outcome(svc.createEndpoint({ ...base, eventTypes: ['patient.read'] }, C.admin))).toBe('VALIDATION:INVALID_ENDPOINT');
-    expect(await outcome(svc.createEndpoint({ ...base, kind: 'webhook', url: 'https://10.0.0.9/h' }, C.admin))).toBe('VALIDATION:INVALID_URL');
-    const t = await svc.createEndpoint(base, C.admin);
+    expect(await outcome(create(base, C.exec))).toBe('FORBIDDEN');
+    expect(await outcome(create(base, C.doc))).toBe('FORBIDDEN');
+    expect(await outcome(create({ ...base, url: 'https://evil.example.com/workflows/x?sig=1' }, C.admin))).toBe('VALIDATION:INVALID_URL');
+    expect(await outcome(create({ ...base, eventTypes: ['patient.read'] }, C.admin))).toBe('VALIDATION:INVALID_ENDPOINT');
+    expect(await outcome(create({ ...base, kind: 'webhook', url: 'https://10.0.0.9/h' }, C.admin))).toBe('VALIDATION:INVALID_URL');
+    const t = await create(base, C.admin);
     expect(t.signingSecret).toBeNull();
     expect(t.endpoint).toMatchObject({ kind: 'teams_workflow', status: 'active', urlHint: 'prod-27.southeastasia.logic.azure.com/…G123', maxPriority: 1, createdByName: 'Quản lý' });
     expect(JSON.stringify(t)).not.toContain('SECRETSIG');
     ids['teams'] = t.endpoint.endpointId;
-    const h = await svc.createEndpoint({ ...base, kind: 'webhook', name: 'Đối tác BI', url: HOOK, maxPriority: 3 }, C.admin);
+    const h = await create({ ...base, kind: 'webhook', name: 'Đối tác BI', url: HOOK, maxPriority: 3 }, C.admin);
     expect(h.signingSecret).toMatch(/^whsec_[A-Za-z0-9_-]{32}$/);
     hookSecret = h.signingSecret!;
     ids['hook'] = h.endpoint.endpointId;
-    expect(await outcome(svc.createEndpoint({ ...base, name: 'kênh TRỰC BAN' }, C.admin))).toBe('CONFLICT:ENDPOINT_NAME_TAKEN');
+    expect(await outcome(create({ ...base, name: 'kênh TRỰC BAN' }, C.admin))).toBe('CONFLICT:ENDPOINT_NAME_TAKEN');
     // Bản ghi trong CSDL không có URL / bí mật dạng rõ.
     const raw = su(`SET ROLE postgres; SELECT url_ciphertext || coalesce(secret_ciphertext,'') FROM integration.endpoints`);
     expect(raw).not.toContain('logic.azure');
@@ -269,8 +277,34 @@ INSERT INTO clinical.observations(observation_id,tenant_id,patient_id,encounter_
   it('thiếu khoá mã hoá => không tạo / gửi thử được, báo rõ', async () => {
     const off = new IntegrationService({ uow: new PgIntegrationUnitOfWork(psqlPool({ database: DB })), audit: { record: async () => {} }, box: null, transport: fake, clock });
     expect(off.catalog().enabled).toBe(false);
-    expect(await outcome(off.createEndpoint({ organizationId: OA, kind: 'teams_workflow', name: 'abc', url: TEAMS, eventTypes: ['system.alert'], maxPriority: 1 }, C.admin))).toBe('CONFLICT:INTEGRATION_DISABLED');
+    expect(await outcome(off.createEndpoint({ organizationId: OA, kind: 'teams_workflow', name: 'abc', url: TEAMS, eventTypes: ['system.alert'], maxPriority: 1, vendorId: VENDOR }, C.admin))).toBe('CONFLICT:INTEGRATION_DISABLED');
     expect(await outcome(off.testEndpoint(ids['teams']!, C.admin))).toBe('CONFLICT:INTEGRATION_DISABLED');
     expect((await off.overview(OA, C.exec)).enabled).toBe(false);
+  });
+
+  it('HCOS-F18: chỉ gửi khi nhà cung cấp có đánh giá còn hiệu lực; thu hồi => ngừng ngay cả lượt đã xếp hàng, không tính lỗi kết nối', async () => {
+    expect(await outcome(create({ organizationId: OA, kind: 'webhook', name: 'Không gắn NCC', url: HOOK, eventTypes: ['system.alert'], maxPriority: 3, vendorId: '' }, C.admin))).toBe('VALIDATION:VENDOR_REQUIRED');
+    const ep = (await create({ organizationId: OA, kind: 'webhook', name: 'Đối tác F18', url: `${HOOK}/f18`, eventTypes: ['system.alert'], maxPriority: 3 }, C.admin)).endpoint;
+    expect(ep).toMatchObject({ vendorId: VENDOR, vendorName: 'Microsoft / đối tác', vendorCleared: true });
+    // Lượt giao xếp hàng khi nhà cung cấp còn hợp lệ...
+    const uow = new PgIntegrationUnitOfWork(psqlPool({ database: DB }));
+    const asTenant = <T>(f: (db: never) => Promise<T>) => uow.run(C.admin, (repo) => f(repo.scopedDb as never));
+    const q = await asTenant((db) => enqueueOutbox(db, TA, { organizationId: OA, type: 'system.alert', priority: 1, at: clock(), onlyEndpointId: ep.endpointId, payload: { code: 'X', title: 'F18' } }));
+    expect(q.deliveryIds).toHaveLength(1);
+    // ... rồi đánh giá bị thu hồi (đánh giá 'rejected' mới hơn).
+    su(`INSERT INTO governance.vendor_assessments(tenant_id,vendor_id,decision,data_categories,data_location,cross_border,measures,rationale,valid_from,valid_until,assessed_by,assessed_at)
+          VALUES ('${TA}','${VENDOR}','rejected',ARRAY['operational'],'Đông Nam Á',true,'Phát hiện chuyển dữ liệu ngoài thoả thuận','Thu hồi để kiểm thử',current_date - 1,current_date + 30,'${U.admin}', now() + interval '1 second')`);
+    const before = sent.length;
+    const r = await svc.dispatchOne(TA, OA, q.deliveryIds[0]!);
+    expect(r).toMatchObject({ outcome: 'dead', error: 'VENDOR_NOT_CLEARED' });
+    expect(sent.length).toBe(before);
+    expect(su(`SELECT COALESCE((SELECT consecutive_failures FROM integration.endpoint_health WHERE endpoint_id='${ep.endpointId}'),0)`)).toBe('0');
+    expect(await outcome(svc.testEndpoint(ep.endpointId, C.admin))).toBe('CONFLICT:VENDOR_NOT_CLEARED');
+    const none = await asTenant((db) => enqueueOutbox(db, TA, { organizationId: OA, type: 'system.alert', priority: 1, at: clock(), onlyEndpointId: ep.endpointId, payload: { code: 'X', title: 'F18' } }));
+    expect(none.deliveryIds).toHaveLength(0);
+    const cur = (await svc.listEndpoints(OA, C.admin)).find((x) => x.endpointId === ep.endpointId)!;
+    expect(cur.vendorCleared).toBe(false);
+    await svc.setEndpointStatus(ep.endpointId, 'paused', cur.version, C.admin);
+    expect(await outcome(svc.setEndpointStatus(ep.endpointId, 'active', cur.version + 1, C.admin))).toBe('CONFLICT:VENDOR_NOT_CLEARED');
   });
 });

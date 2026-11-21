@@ -7,7 +7,7 @@
 import { useState } from 'react';
 
 import { api } from '../lib/api';
-import { downloadText } from '../lib/download';
+import { exportFile } from '../lib/download';
 import { fmtDateTime } from '../lib/fhir';
 import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
@@ -176,8 +176,7 @@ function ErasureQueue({ v, onChange }: { v: Overview; onChange: () => void }) {
     onChange();
   });
   const letter = useAction(async (r: ErasureRequest) => {
-    const res = await api<{ markdown: string }>('GET', `/api/erasure-requests/${r.requestId}/letter`);
-    downloadText(`tra-loi-yeu-cau-xoa-${r.mrn ?? r.requestId.slice(0, 8)}.md`, res.data.markdown);
+    await exportFile('erasure_letter', { requestId: r.requestId }, 'Gửi người yêu cầu xoá dữ liệu');
   });
   return (
     <Card title={`Yêu cầu xoá dữ liệu của người bệnh (${v.requests.filter((r) => r.status === 'pending').length} chờ duyệt)`}>

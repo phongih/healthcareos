@@ -281,6 +281,27 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'vendor:read': {
+    basePermission: 'vendor:read',
+    description: 'Xem sổ nhà cung cấp (bên thứ ba nhận / xử lý dữ liệu) và đánh giá; chọn nhà cung cấp khi tạo kết nối ngoài',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'vendor:manage': {
+    basePermission: 'vendor:manage',
+    description: 'Thêm nhà cung cấp, ghi đánh giá (duyệt / từ chối / thu hồi), tạm ngừng / chấm dứt — quyết định kết nối ngoài nào được gửi',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'export:audit': {
+    basePermission: 'export:audit',
+    description: 'Xem nhật ký xuất dữ liệu (ai xuất gì, khi nào, mục đích, SHA-256 của file) và tra cứu một file theo SHA-256',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'handover:read': {
     basePermission: 'handover:read',
     description: 'Xem hàng chờ quầy trả (soạn thuốc, gọi ra quầy, đã trả) và danh sách quầy',

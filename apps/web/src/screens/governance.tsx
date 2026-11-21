@@ -6,10 +6,11 @@
 import { useMemo, useState } from 'react';
 
 import { api } from '../lib/api';
-import { downloadText } from '../lib/download';
+import { exportFile } from '../lib/download';
 import { fmtDateTime } from '../lib/fhir';
 import { can, useSession } from '../lib/session';
 import { RetentionSection } from './retention';
+import { AiRegistryCard, ExportLogCard, VendorsCard, type AiComponent } from './thirdparty';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 
 type Level = 1 | 2 | 3 | 4 | 5;
@@ -32,6 +33,7 @@ interface CatalogView {
   latest: Assessment | null;
   needsAssessment: boolean;
   canAssess: boolean;
+  ai: AiComponent[];
   encryption: {
     keys: KeyRow[];
     plaintextRemaining: Array<{ column: string; rows: number }>;
@@ -73,8 +75,7 @@ export function GovernanceScreen() {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const dl = useAction(async () => {
-    const r = await api<{ markdown: string }>('GET', '/api/governance/dossier');
-    downloadText(`ho-so-cap-do-an-ninh-du-lieu-${new Date().toISOString().slice(0, 10)}.md`, r.data.markdown);
+    await exportFile('governance_dossier');
   });
 
   const v = cat.data;
@@ -148,6 +149,10 @@ export function GovernanceScreen() {
       <EncryptionCard v={v} onChange={cat.reload} />
 
       {can.retention(roles) && <RetentionSection />}
+
+      {can.retention(roles) && <VendorsCard />}
+      {can.retention(roles) && <ExportLogCard />}
+      <AiRegistryCard ai={v.ai} />
 
       <Card title={`Danh mục dữ liệu (${rows.length}/${v.tables.length} bảng)`}>
         <div className="row wrap">
