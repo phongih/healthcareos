@@ -356,3 +356,14 @@ tr.warn-row td { background: #fffbeb; }
 .board-handover .board-next span.ready { background: #dcfce7; color: #14532d; }
 .board-handover .board-next span.preparing { opacity: 0.6; }
 .board-legend { font-size: 14px; opacity: 0.7; margin-top: 6px; }
+
+/* HCOS-F15 quản trị dữ liệu */
+.gov-level { border: 2px solid #b91c1c; border-radius: 8px; padding: 8px 18px; text-align: center; min-width: 120px; }
+.gov-level .gl-no { font-size: 32px; font-weight: 800; color: #b91c1c; }
+.badge.lvl-1 { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+.badge.lvl-2 { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.badge.lvl-3, .badge.lvl-4, .badge.lvl-5 { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+.gov-cols { display: flex; flex-wrap: wrap; gap: 6px; }
+.gov-cols code { font-size: 12px; background: #f3f4f6; padding: 1px 6px; border-radius: 4px; }
+.gov-table td { vertical-align: top; }
+tr.gov-cols-row > td { background: #f9fafb; }

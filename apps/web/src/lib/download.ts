@@ -10,3 +10,15 @@ export function downloadXlsx(filename: string, data: Uint8Array): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
+
+/** Tải file văn bản (vd. hồ sơ Markdown). */
+export function downloadText(filename: string, text: string, type = 'text/markdown;charset=utf-8'): void {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
