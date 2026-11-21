@@ -43,6 +43,8 @@ details.card > summary { cursor: pointer; font-weight: 600; }
 
 .row { display: flex; gap: 10px; align-items: flex-end; }
 .row.wrap { flex-wrap: wrap; }
+/* Phiếu in + cột nút: canh trên (không để phiếu ngắn bị đẩy xuống đáy khi phiếu bên cạnh cao hơn). */
+.row.top { align-items: flex-start; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 16px; align-items: end; }
 .grid2.top { align-items: start; }
 .grid2 .actions { grid-column: 1 / -1; }
@@ -344,3 +346,13 @@ button.small { font-size: 12px; padding: 2px 8px; }
 .mrn-auto { padding: 8px 10px; background: #f0fdfa; border: 1px dashed #5eead4; border-radius: 8px; font-size: 14px; }
 .mrn-legacy { display: inline-flex; gap: 6px; align-items: center; }
 .print-ticket .pt-mrn { font-family: ui-monospace, monospace; font-size: 14px; font-weight: 600; letter-spacing: 0.5px; }
+
+/* HCOS-F14 quầy trả */
+.handover-no { border: 2px solid var(--line, #d1d5db); border-radius: 8px; padding: 8px 18px; text-align: center; min-width: 150px; }
+.handover-no .hn-no { font-size: 40px; font-weight: 800; letter-spacing: 1px; }
+tr.warn-row td { background: #fffbeb; }
+.warn-text { color: #92400e; font-weight: 600; }
+.board-handover { margin-top: 18px; }
+.board-handover .board-next span.ready { background: #dcfce7; color: #14532d; }
+.board-handover .board-next span.preparing { opacity: 0.6; }
+.board-legend { font-size: 14px; opacity: 0.7; margin-top: 6px; }

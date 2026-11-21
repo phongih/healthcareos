@@ -33,7 +33,7 @@ export const PRIORITY_LABEL: Record<string, string> = {
 const TICKET_STATUS: Record<string, string> = { waiting: 'Đang chờ', called: 'Đang gọi', in_service: 'Đang khám', skipped: 'Vắng mặt', cancelled: 'Đã huỷ' };
 
 /** Đọc / ghi localStorage an toàn (có thể bị chặn). */
-const store = {
+export const store = {
   get(k: string): string | null {
     try {
       return localStorage.getItem(k);
@@ -319,7 +319,7 @@ export function IssueTicket({ patientId, patientName, birthDate }: { patientId: 
         <ErrorBox error={issue.error} />
       )}
       {issued && (
-        <div className="row wrap">
+        <div className="row wrap top">
           <div className="print-ticket">
             <div className="pt-org">Phiếu số thứ tự</div>
             <div className="pt-no">{issued.displayNo}</div>
@@ -445,7 +445,25 @@ function QueueSettings({ servicePoints, onChanged }: { servicePoints: ServicePoi
 // Màn hình TV (không đăng nhập)
 // ---------------------------------------------------------------------------
 interface BoardRow { servicePointCode: string; servicePointName: string; displayNo: string; priority: string | null; calledCount: number; calledAt: string | null }
-interface Board { displayName: string; organizationName: string | null; called: BoardRow[]; waiting: BoardRow[] }
+interface HandoverRow { kind: 'called' | 'ready' | 'preparing'; displayNo: string; deskCode: string | null; deskName: string | null; priority: string | null; calledCount: number; calledAt: string | null }
+interface Board { displayName: string; organizationName: string | null; called: BoardRow[]; waiting: BoardRow[]; handover?: HandoverRow[] }
+/** Số đang gọi trên TV: vào phòng khám (F6) hoặc ra quầy trả (F14). */
+interface CallRow { key: string; displayNo: string; target: string; speech: string; priority: string | null; calledCount: number; calledAt: string | null }
+
+/** Gộp số gọi vào phòng khám và số gọi ra quầy trả, mới nhất trước. */
+function callRows(b: Board): CallRow[] {
+  const rows: CallRow[] = [
+    ...b.called.map((c) => ({
+      key: `${c.servicePointCode}|${c.displayNo}`, displayNo: c.displayNo, target: c.servicePointName,
+      speech: `Mời số ${c.displayNo.replace('-', ' ')} vào ${c.servicePointName}`, priority: c.priority, calledCount: c.calledCount, calledAt: c.calledAt,
+    })),
+    ...(b.handover ?? []).filter((h) => h.kind === 'called').map((h) => ({
+      key: `Q|${h.deskCode ?? ''}|${h.displayNo}`, displayNo: h.displayNo, target: h.deskName ?? 'quầy trả',
+      speech: `Mời số ${h.displayNo.replace('-', ' ')} đến ${h.deskName ?? 'quầy trả'}`, priority: h.priority, calledCount: h.calledCount, calledAt: h.calledAt,
+    })),
+  ];
+  return rows.sort((x, y) => Date.parse(y.calledAt ?? '') - Date.parse(x.calledAt ?? ''));
+}
 
 export function BoardScreen({ displayKey }: { displayKey: string }) {
   const [board, setBoard] = useState<Board | null>(null);
@@ -465,14 +483,13 @@ export function BoardScreen({ displayKey }: { displayKey: string }) {
         const b = (await r.json()) as Board;
         if (stop) return;
         // Số mới được gọi hoặc gọi lại => đọc (bỏ qua lần tải đầu để không đọc lại cả danh sách cũ).
-        for (const c of b.called) {
-          const k = `${c.servicePointCode}|${c.displayNo}`;
-          if (primed.current && (seen.current.get(k) ?? 0) < c.calledCount && speak && 'speechSynthesis' in window) {
-            const u = new SpeechSynthesisUtterance(`Mời số ${c.displayNo.replace('-', ' ')} vào ${c.servicePointName}`);
+        for (const c of callRows(b)) {
+          if (primed.current && (seen.current.get(c.key) ?? 0) < c.calledCount && speak && 'speechSynthesis' in window) {
+            const u = new SpeechSynthesisUtterance(c.speech);
             u.lang = 'vi-VN';
             speechSynthesis.speak(u);
           }
-          seen.current.set(k, c.calledCount);
+          seen.current.set(c.key, c.calledCount);
         }
         primed.current = true;
         setBoard(b);
@@ -492,8 +509,10 @@ export function BoardScreen({ displayKey }: { displayKey: string }) {
   }, [displayKey, speak]);
 
   /** Nhấp nháy số vừa gọi / gọi lại trong 20 giây. */
-  const isFresh = (c: BoardRow) => !!c.calledAt && now.getTime() - Date.parse(c.calledAt) < 20_000;
+  const isFresh = (c: { calledAt: string | null }) => !!c.calledAt && now.getTime() - Date.parse(c.calledAt) < 20_000;
 
+  const calls = board ? callRows(board) : [];
+  const pickup = (board?.handover ?? []).filter((x) => x.kind !== 'called');
   const rooms = new Map<string, { name: string; rows: BoardRow[] }>();
   for (const w of board?.waiting ?? []) {
     const r = rooms.get(w.servicePointCode) ?? { name: w.servicePointName, rows: [] };
@@ -511,18 +530,31 @@ export function BoardScreen({ displayKey }: { displayKey: string }) {
       <div className="board-grid">
         <section>
           <h2>ĐANG GỌI</h2>
-          {board && board.called.length === 0 && <p className="board-empty">Chưa gọi số nào.</p>}
-          {board?.called.map((c) => (
-            <div key={`${c.servicePointCode}|${c.displayNo}`} className={`board-call${isFresh(c) ? ' fresh' : ''}`}>
+          {board && calls.length === 0 && <p className="board-empty">Chưa gọi số nào.</p>}
+          {calls.map((c) => (
+            <div key={c.key} className={`board-call${isFresh(c) ? ' fresh' : ''}`}>
               <span className="board-no">{c.displayNo}</span>
-              <span className="board-room">→ {c.servicePointName}</span>
+              <span className="board-room">→ {c.target}</span>
               {c.priority && <span className="board-prio">{c.priority === 'emergency' ? 'CẤP CỨU' : 'ƯU TIÊN'}</span>}
             </div>
           ))}
         </section>
         <section>
           <h2>SẮP TỚI</h2>
-          {board && rooms.size === 0 && <p className="board-empty">Không có ai đang chờ.</p>}
+          {board && rooms.size === 0 && pickup.length === 0 && <p className="board-empty">Không có ai đang chờ.</p>}
+          {pickup.length > 0 && (
+            <div className="board-room-next board-handover">
+              <div className="board-room-name">Lấy thuốc · trả hồ sơ</div>
+              <div className="board-next">
+                {pickup.map((w) => (
+                  <span key={w.displayNo} className={w.kind} title={w.kind === 'ready' ? 'Chờ gọi ra quầy' : 'Đang soạn thuốc'}>
+                    {w.displayNo}
+                  </span>
+                ))}
+              </div>
+              <div className="board-legend">Số đậm: chờ gọi ra quầy · số mờ: đang soạn thuốc</div>
+            </div>
+          )}
           {[...rooms].map(([code, r]) => (
             <div key={code} className="board-room-next">
               <div className="board-room-name">{r.name}</div>

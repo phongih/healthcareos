@@ -10,6 +10,7 @@ import { api } from '../lib/api';
 import { CCCD_SYSTEM, entries, fmtDate, fmtDateTime, mrnOf, patientName, STATUS_LABEL, type Bundle, type FhirEncounter, type FhirPatient } from '../lib/fhir';
 import { useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, RedactedBadge, useAction, useIntentKey, useLoad } from '../lib/ui';
+import { PrepareCard } from './handover';
 import { PrescriptionQueue } from './prescriptions';
 
 interface Medication { medicationId: string; brandName: string; genericName?: string; strength: string; form: string; unitOfMeasure: string; isActive: boolean }
@@ -38,6 +39,8 @@ export function PharmacyScreen() {
     [locId],
   );
   const loc = locs.data?.find((l) => l.locationId === locId);
+  // Cấp thuốc xong => thẻ "Soạn thuốc cho quầy trả" tải lại số đã cấp.
+  const [dispensedTick, setDispensedTick] = useState(0);
 
   return (
     <div className="stack">
@@ -88,8 +91,17 @@ export function PharmacyScreen() {
         </Card>
       )}
 
+      {roles.has('pharmacist') && <PrepareCard refreshKey={dispensedTick} />}
+
       {loc && roles.has('pharmacist') && loc.type !== 'quarantine' && (
-        <PrescriptionQueue locationId={loc.locationId} locationName={loc.name} onDispensed={stock.reload} />
+        <PrescriptionQueue
+          locationId={loc.locationId}
+          locationName={loc.name}
+          onDispensed={() => {
+            stock.reload();
+            setDispensedTick((t) => t + 1);
+          }}
+        />
       )}
 
       {loc && meds.data && (
