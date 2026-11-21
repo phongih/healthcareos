@@ -11,8 +11,9 @@ import {
   classLabel, conceptText, entries, fmtDateTime, ICD10, idOf, isRedacted, LOINC, STATUS_LABEL, UCUM, VITALS,
   type Bundle, type FhirCondition, type FhirEncounter, type FhirObservation,
 } from '../lib/fhir';
-import { useSession } from '../lib/session';
+import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
+import { SupplyLotsCard } from './equipment';
 import { EncounterPrescriptions } from './prescriptions';
 
 type Resource = FhirEncounter | FhirCondition | FhirObservation;
@@ -138,6 +139,8 @@ export function EncounterScreen({ id }: { id: string }) {
           isPractitioner={roles.has('doctor') && idOf(enc.participant?.[0]?.individual) === me.user.userId}
         />
       )}
+
+      {enc && open && patientId && can.recordLot(roles) && <SupplyLotsCard patientId={patientId} />}
     </div>
   );
 }

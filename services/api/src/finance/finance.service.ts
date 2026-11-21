@@ -501,6 +501,17 @@ export class PgFinanceRepository extends PgClinicalRepository {
     );
     return r.rows.length > 0;
   }
+  /** HCOS-F19: trừ vật tư theo định mức của hồ sơ vừa tất toán (cùng transaction). */
+  async consumeSupplies(caseId: string, by: UserId): Promise<{ lines: number; shortfallQty: number; cogs: number }> {
+    const r = await this.db.query<Record<string, unknown>>(`SELECT lines, shortfall_qty, cogs FROM equipment.consume_case($1, $2, $3)`, [this.t, caseId, by]);
+    const x = r.rows[0] ?? {};
+    return { lines: Number(x['lines'] ?? 0), shortfallQty: Number(x['shortfall_qty'] ?? 0), cogs: Math.round(Number(x['cogs'] ?? 0)) };
+  }
+  /** HCOS-F19: loại máy dịch vụ cần mà cơ sở không còn chiếc nào dùng được (hỏng / bảo trì / quá hạn kiểm định bắt buộc). */
+  async unavailableDeviceTypes(org: OrganizationId, itemId: string): Promise<Array<{ code: string; name: string }>> {
+    const r = await this.db.query<Record<string, unknown>>(`SELECT code, name FROM equipment.unavailable_types($1, $2, $3) ORDER BY code`, [this.t, org, itemId]);
+    return r.rows.map((x) => ({ code: x['code'] as string, name: x['name'] as string }));
+  }
   async listCharges(caseId: string): Promise<Charge[]> {
     const r = await this.db.query(`SELECT ${CHARGE_COLS} FROM finance.charges WHERE tenant_id = $1 AND case_id = $2 ORDER BY created_at`, [this.t, caseId]);
     return r.rows.map(mapCharge);
@@ -938,6 +949,13 @@ export class FinanceService {
       const item = await repo.findPriceItem(uuidOf(input.itemId, 'itemId'));
       if (!item || item.organizationId !== c.organizationId) throw new ClinicalError('NOT_FOUND', 'Price item not found');
       if (!item.isActive) throw new ClinicalError('VALIDATION', 'Price item is inactive', { reason: 'PRICE_ITEM_INACTIVE' });
+      // HCOS-F19: dịch vụ cần máy mà không còn máy dùng được => không cho chỉ định (CSDL cũng chặn).
+      const missing = await repo.unavailableDeviceTypes(c.organizationId, item.itemId);
+      if (missing.length > 0) {
+        throw new ClinicalError('INVALID_STATE', `No usable device for ${item.code}: ${missing.map((m) => m.name).join(', ')}`, {
+          reason: 'DEVICE_UNAVAILABLE', deviceTypes: missing.map((m) => m.name),
+        });
+      }
       const quantity = input.quantity;
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) throw new ClinicalError('VALIDATION', 'quantity must be 1-1000');
       const chargeId = randomUUID();
@@ -978,8 +996,11 @@ export class FinanceService {
         throw new ClinicalError('INVALID_STATE', `Balance must be zero (is ${c.totals.balance})`, { reason: 'BALANCE_NOT_ZERO', balance: c.totals.balance });
       }
       if (!(await repo.closeCase(c.caseId, p.user.userId, expectedVersion))) throw new ClinicalError('CONFLICT', 'Case version does not match', { reason: 'VERSION_CONFLICT' });
+      // HCOS-F19: trừ vật tư theo định mức + giá vốn. Thiếu tồn không chặn tất toán (ghi chờ đối soát).
+      const supplies = await repo.consumeSupplies(c.caseId, p.user.userId);
       await repo.appendAudit(this.event(ctx, { action: 'finance.case.close', resourceType: 'BillingCase', resourceId: c.caseId, patientId: c.patient.patientId, organizationId: c.organizationId }, 'success', p.user, {
         charges: c.totals.charges, received: c.totals.received, refunded: c.totals.refunded,
+        supplyLines: supplies.lines, supplyShortfallQty: supplies.shortfallQty, supplyCogs: supplies.cogs,
       }));
       return this.detail(repo, c.caseId);
     });

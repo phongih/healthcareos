@@ -75,17 +75,17 @@ export const AI_REGISTRY: readonly AiComponent[] = [
     changeNote: 'Bản đầu (F11).',
   },
   {
-    id: 'decision_engine_stats', name: 'Decision Engine: danh mục bộ phát hiện + thống kê bất thường', kind: 'statistics', version: '2026.11-f11',
-    sha256: 'a4b28246311f9e80da7420cc48dc1a731c36892b117ffad112c2391e8b2de5fb',
+    id: 'decision_engine_stats', name: 'Decision Engine: danh mục bộ phát hiện + thống kê bất thường', kind: 'statistics', version: '2026.11-f19',
+    sha256: '3f32a624f931cfcbc7b2a5f850a02218d6ead8cf851e7e7bf12ad6c97695d4b4',
     files: ['services/api/src/decision/stats.ts', 'services/api/src/decision/catalog.ts'],
-    source: 'Dữ liệu vận hành của chính chủ quản (lượt khám, tồn kho, quỹ, sinh hiệu) — robust z-score (trung vị / MAD), z Poisson.',
+    source: 'Dữ liệu vận hành của chính chủ quản (lượt khám, tồn kho, quỹ, sinh hiệu, thiết bị) — robust z-score (trung vị / MAD), z Poisson.',
     owner: 'Quản lý phòng khám (ngưỡng luật) + nhóm phát triển (thuật toán)',
     validation: 'internal_review',
     validationNote: 'Thuật toán có test đơn vị; ngưỡng do quản lý cấu hình và có lịch sử phiên bản. Chưa đo tỉ lệ báo động giả trên dữ liệu thật.',
     permittedUse: 'Phát hiện bất thường vận hành, gợi ý hành động; mọi hành động do người xử lý.',
     prohibitedUse: 'Tự động thay đổi dữ liệu lâm sàng / tài chính; gửi dữ liệu người bệnh trong thông báo ra ngoài.',
     runsAt: 'server', patientDataLeavesSystem: false,
-    changeNote: 'Bản đầu (F11).',
+    changeNote: 'F19: thêm 3 bộ phát hiện quy tắc (không thống kê) — thiết bị đến hạn / quá hạn kiểm định, thiết bị hỏng / bảo trì, vật tư thiếu khi tất toán; "Thuốc dưới điểm đặt hàng" gồm cả vật tư. Thuật toán thống kê không đổi.',
   },
 ];
 

@@ -97,6 +97,8 @@ export interface CreateMedicationInput {
   readonly route?: string;
   readonly unitOfMeasure: string;
   readonly barcode?: string;
+  /** HCOS-F19: 'supply' = vật tư tiêu hao. */
+  readonly itemKind?: 'drug' | 'supply';
 }
 
 export interface CreateStockLocationInput {
@@ -454,6 +456,7 @@ export class PharmacyInventoryService {
         unitOfMeasure: requireText(input.unitOfMeasure, 'unitOfMeasure', 32),
         barcode: input.barcode?.trim() || undefined,
         isActive: true,
+        itemKind: input.itemKind === 'supply' ? 'supply' : 'drug',
         createdAt: now,
         updatedAt: now,
       };
@@ -1132,12 +1135,12 @@ export class PgPharmacyRepository implements PharmacyRepository {
     await this.db.query(
       `INSERT INTO pharmacy.medications (
          medication_id, tenant_id, substance_id, brand_name, generic_name,
-         strength, form, route, unit_of_measure, barcode, is_active, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+         strength, form, route, unit_of_measure, barcode, is_active, created_at, updated_at, item_kind
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         m.medicationId, m.tenantId, m.substanceId ?? null, m.brandName, m.genericName ?? null,
         m.strength, m.form, m.route ?? null, m.unitOfMeasure, m.barcode ?? null,
-        m.isActive, m.createdAt, m.updatedAt,
+        m.isActive, m.createdAt, m.updatedAt, m.itemKind ?? 'drug',
       ],
     );
   }
@@ -1157,9 +1160,10 @@ export class PgPharmacyRepository implements PharmacyRepository {
       is_active: boolean;
       created_at: string;
       updated_at: string;
+      item_kind: 'drug' | 'supply';
     }>(
       `SELECT medication_id, tenant_id, substance_id, brand_name, generic_name,
-              strength, form, route, unit_of_measure, barcode, is_active, created_at, updated_at
+              strength, form, route, unit_of_measure, barcode, is_active, created_at, updated_at, item_kind
        FROM pharmacy.medications
        WHERE medication_id = $1`,
       [id],
@@ -1178,6 +1182,7 @@ export class PgPharmacyRepository implements PharmacyRepository {
       unitOfMeasure: row.unit_of_measure,
       barcode: row.barcode ?? undefined,
       isActive: row.is_active,
+      itemKind: row.item_kind ?? 'drug',
       createdAt: row.created_at as ISODateTime,
       updatedAt: row.updated_at as ISODateTime,
     };

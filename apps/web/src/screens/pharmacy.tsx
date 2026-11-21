@@ -13,7 +13,7 @@ import { Card, ErrorBox, Field, Notice, RedactedBadge, useAction, useIntentKey, 
 import { PrepareCard } from './handover';
 import { PrescriptionQueue } from './prescriptions';
 
-interface Medication { medicationId: string; brandName: string; genericName?: string; strength: string; form: string; unitOfMeasure: string; isActive: boolean }
+interface Medication { medicationId: string; brandName: string; genericName?: string; strength: string; form: string; unitOfMeasure: string; isActive: boolean; itemKind?: 'drug' | 'supply' }
 interface Location { locationId: string; name: string; type: string; isActive: boolean }
 interface StockLine { batchId: string; batchNumber: string; expiryDate: string; medicationId: string; brandName: string; quantityOnHand: number; quantityReserved: number; unitCost: number | null }
 interface Plan { requestedQuantity: number; allocatedTotal: number; isFullyAllocated: boolean; items: Array<{ batchNumber: string; expiryDate: string; allocatedQuantity: number }> }
@@ -127,7 +127,7 @@ export function PharmacyScreen() {
             <tbody>
               {meds.data.map((m) => (
                 <tr key={m.medicationId}>
-                  <td>{m.brandName}</td>
+                  <td>{m.brandName}{m.itemKind === 'supply' ? <span className="badge"> vật tư</span> : null}</td>
                   <td>{m.genericName ?? '—'}</td>
                   <td>{m.strength}</td>
                   <td>{m.form}</td>
@@ -182,18 +182,18 @@ function CreateLocation({ onDone }: { onDone: () => void }) {
 }
 
 function AddMedication({ onDone }: { onDone: () => void }) {
-  const [f, setF] = useState({ brandName: '', genericName: '', strength: '', form: '', unitOfMeasure: '' });
+  const [f, setF] = useState({ brandName: '', genericName: '', strength: '', form: '', unitOfMeasure: '', itemKind: 'drug' });
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const save = useAction(async () => {
     await api('POST', '/api/pharmacy/medications', {
       body: { ...f, genericName: f.genericName.trim() || undefined },
     });
-    setF({ brandName: '', genericName: '', strength: '', form: '', unitOfMeasure: '' });
+    setF({ brandName: '', genericName: '', strength: '', form: '', unitOfMeasure: '', itemKind: f.itemKind });
     onDone();
   });
   return (
     <details className="sub">
-      <summary>+ Thêm thuốc vào danh mục</summary>
+      <summary>+ Thêm thuốc / vật tư vào danh mục</summary>
       <form
         className="row wrap"
         onSubmit={(e) => {
@@ -201,6 +201,12 @@ function AddMedication({ onDone }: { onDone: () => void }) {
           void save.run();
         }}
       >
+        <Field label="Loại *" hint="vật tư: không kê đơn, trừ theo định mức dịch vụ">
+          <select value={f.itemKind} onChange={set('itemKind')}>
+            <option value="drug">Thuốc</option>
+            <option value="supply">Vật tư tiêu hao</option>
+          </select>
+        </Field>
         <Field label="Biệt dược *">
           <input required value={f.brandName} onChange={set('brandName')} />
         </Field>

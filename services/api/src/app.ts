@@ -30,6 +30,7 @@ import { GovernanceService } from './governance/governance.service';
 import { RetentionScheduler, RetentionService } from './governance/retention.service';
 import { ExportService } from './governance/export.service';
 import { VendorService } from './governance/vendor.service';
+import { EquipmentService } from './equipment/equipment.service';
 import { PiiService } from './security/pii.service';
 import { configureKeyProvider } from '../../../packages/security/src/pii';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
@@ -77,6 +78,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     const retention = new RetentionService({ pool, audit, backupHorizonDays: cfg.backupHorizonDays });
     const governance = new GovernanceService({ pool, audit });
     const finance = new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit });
+    const equipment = new EquipmentService({ pool, audit });
     const retentionScheduler = new RetentionScheduler({ pool, service: retention, intervalMs: cfg.retentionIntervalSec * 1000, log });
     const server = createApiServer({
       tenant: {
@@ -103,7 +105,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       handover: new HandoverService({ pool, audit }),
       governance,
       vendors: new VendorService({ pool, audit }),
-      exports: new ExportService({ pool, audit, finance, governance, retention }),
+      exports: new ExportService({ pool, audit, finance, governance, retention, equipment }),
+      equipment,
       pii: new PiiService({ pool, audit }),
       retention,
       readiness: new PgReadinessProbe(pool, {

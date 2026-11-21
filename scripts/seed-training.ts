@@ -36,6 +36,7 @@ import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analy
 import { DecisionEngineService, PgDecisionUnitOfWork } from '../services/api/src/decision/decision.service';
 import { MrnSettingsService } from '../services/api/src/registry/mrn-settings.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
+import { EquipmentService } from '../services/api/src/equipment/equipment.service';
 
 // ---------------------------------------------------------------------------
 // Cấu hình
@@ -121,6 +122,8 @@ const NURSE_POLICY = {
   rules: [
     { action: 'patient:read', hiddenFields: ['identifiers'] }, { action: 'encounter:read' }, { action: 'patient:register' },
     { action: 'observation:write' }, { action: 'queue:read' },
+    // HCOS-F19: xem thiết bị, nhận bàn giao / báo hỏng qua QR, ghi lô vật tư đã dùng.
+    { action: 'equipment:read' }, { action: 'equipment:use' }, { action: 'supply:record' },
   ],
 };
 
@@ -153,6 +156,7 @@ const handler = createApiHandler({
   decision: new DecisionEngineService({ uow: new PgDecisionUnitOfWork(pool), audit }),
   mrn: new MrnSettingsService({ pool, audit }),
   handover: new HandoverService({ pool, audit }),
+  equipment: new EquipmentService({ pool, audit }),
   // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
   rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
@@ -593,6 +597,11 @@ const DECISION_RULES: SeedRule[] = [
   ['Tạm ứng treo quá 3 ngày', 'deposit_aging', [['age_days', '>=', 3], ['held_vnd', '>', 0]], 3, 1440, ['notify_cashier', 'notify_clinic_admin', 'suggest']],
   ['Mã bệnh tăng đột biến', 'icd_spike', [['ratio', '>=', 2], ['last7_count', '>=', 5]], 2, 1440, ['notify_clinic_admin', 'notify_doctor']],
   ['Đơn thuốc chưa phát quá 24 giờ', 'rx_not_dispensed', [['age_hours', '>=', 24]], 3, 720, ['notify_pharmacist', 'suggest']],
+  // HCOS-F19 thiết bị & vật tư
+  ['Thiết bị sắp đến hạn kiểm định / hiệu chuẩn (30 ngày)', 'device_inspection', [['days_to_due', '<=', 30], ['overdue', '=', 0]], 2, 1440, ['notify_clinic_admin', 'suggest']],
+  ['Thiết bị quá hạn / không đạt kiểm định bắt buộc', 'device_inspection', [['overdue', '=', 1], ['mandatory', '=', 1]], 1, 240, ['notify_clinic_admin', 'notify_doctor', 'notify_clinic_staff', 'suggest']],
+  ['Thiết bị hỏng / đang bảo trì', 'device_out_of_service', [['out_of_service', '=', 1]], 1, 240, ['notify_clinic_admin', 'notify_doctor', 'notify_clinic_staff', 'suggest']],
+  ['Vật tư thiếu khi tất toán', 'supply_shortfall', [['shortfall_qty', '>', 0]], 2, 1440, ['notify_pharmacy_admin', 'notify_clinic_admin', 'suggest']],
   ['Lượt khám bất thường', 'visit_volume', [['abs_robust_z', '>=', 3]], 3, 1440, ['log_only'], true],
   ['Tỷ lệ vắng lịch hẹn tăng', 'booking_no_show', [['no_show_pct', '>=', 30], ['booked_count', '>=', 10]], 3, 10080, ['notify_clinic_admin'], true],
 ];
@@ -609,6 +618,134 @@ async function seedDecision(): Promise<void> {
   }
   const run = (await call<{ eventsCreated: number; suppressed: number }>(QL, 'POST', '/api/decision/run', { organizationId: ORG })).data;
   console.log(`Decision Engine chạy thử: ${run.eventsCreated} sự kiện mới, ${run.suppressed} bị chặn bởi thời gian chờ.`);
+}
+
+// ---------------------------------------------------------------------------
+// 2g. HCOS-F19 thiết bị & vật tư (dữ liệu giả, số giấy chứng nhận / số lưu hành là MẪU THỰC TẬP):
+//     - vật tư tiêu hao + tủ vật tư thủ thuật + lô, định mức theo dịch vụ;
+//     - 5 thiết bị với tình trạng kiểm định khác nhau: 1 sắp đến hạn (P2), 1 quá hạn bắt buộc (P1, bị chặn) — không gắn dịch vụ
+//       để học viên vẫn tập được siêu âm / điện tim / khí dung.
+//     Chạy lại: bỏ qua vật tư / thiết bị đã có (theo tên / serial).
+// ---------------------------------------------------------------------------
+const SUPPLIES: ReadonlyArray<{ brandName: string; strength: string; form: string; unitOfMeasure: string; cost: number; qty: number }> = [
+  { brandName: 'Bơm tiêm 5ml', strength: '5 ml', form: 'bơm tiêm', unitOfMeasure: 'cái', cost: 1_200, qty: 400 },
+  { brandName: 'Bông cồn y tế', strength: '1 miếng', form: 'miếng', unitOfMeasure: 'miếng', cost: 300, qty: 1000 },
+  { brandName: 'Que thử đường huyết', strength: '1 que', form: 'que', unitOfMeasure: 'que', cost: 6_000, qty: 200 },
+  { brandName: 'Kim chích máu', strength: '28G', form: 'kim', unitOfMeasure: 'cái', cost: 500, qty: 300 },
+  { brandName: 'Ống nghiệm EDTA', strength: '2 ml', form: 'ống', unitOfMeasure: 'ống', cost: 1_500, qty: 300 },
+  { brandName: 'Găng tay y tế', strength: 'cỡ M', form: 'đôi', unitOfMeasure: 'đôi', cost: 1_000, qty: 500 },
+  { brandName: 'Gel siêu âm', strength: 'can 5 lít', form: 'gel', unitOfMeasure: 'ml', cost: 40, qty: 5000 },
+  { brandName: 'Bộ dây khí dung', strength: 'người lớn', form: 'bộ', unitOfMeasure: 'bộ', cost: 15_000, qty: 60 },
+];
+const NORMS: ReadonlyArray<[string, ReadonlyArray<[string, number]>]> = [
+  ['XN-CTM', [['Bơm tiêm 5ml', 1], ['Ống nghiệm EDTA', 1], ['Bông cồn y tế', 2], ['Găng tay y tế', 1]]],
+  ['XN-GLU', [['Que thử đường huyết', 1], ['Kim chích máu', 1], ['Bông cồn y tế', 1]]],
+  ['SA-BUNG', [['Gel siêu âm', 20], ['Găng tay y tế', 1]]],
+  ['TT-ECG', [['Gel siêu âm', 10]]],
+  ['TT-KHIDUNG', [['Bộ dây khí dung', 1]]],
+];
+const DEVICE_TYPES: ReadonlyArray<[string, string]> = [
+  ['SIEU_AM', 'Máy siêu âm'], ['DIEN_TIM', 'Máy điện tim'], ['KHI_DUNG', 'Máy khí dung'], ['MONITOR', 'Máy theo dõi bệnh nhân'], ['NOI_HAP', 'Nồi hấp tiệt trùng'],
+];
+interface SeedDevice {
+  type: string; name: string; manufacturer: string; model: string; serialNo: string; room: string | null; riskClass: 'A' | 'B' | 'C' | 'D';
+  cost: number; life: number; inServiceDaysAgo: number; regime: string; cycle: number; mandatory: boolean; inspectedDaysAgo: number;
+}
+const DEVICES: readonly SeedDevice[] = [
+  // Hiệu chuẩn không bắt buộc, còn ~25 ngày => P2 "sắp đến hạn", máy vẫn dùng được.
+  { type: 'SIEU_AM', name: 'Máy siêu âm tổng quát', manufacturer: 'Hãng mẫu A', model: 'US-500', serialNo: 'TT-US500-0001', room: 'N1', riskClass: 'C', cost: 650_000_000, life: 96, inServiceDaysAgo: 700, regime: 'hieu_chuan', cycle: 12, mandatory: false, inspectedDaysAgo: 340 },
+  { type: 'DIEN_TIM', name: 'Máy điện tim 3 cần', manufacturer: 'Hãng mẫu B', model: 'ECG-3', serialNo: 'TT-ECG3-0001', room: 'N2', riskClass: 'B', cost: 45_000_000, life: 60, inServiceDaysAgo: 400, regime: 'do_luong', cycle: 12, mandatory: true, inspectedDaysAgo: 100 },
+  { type: 'KHI_DUNG', name: 'Máy khí dung', manufacturer: 'Hãng mẫu C', model: 'NEB-1', serialNo: 'TT-NEB1-0001', room: 'N2', riskClass: 'A', cost: 3_500_000, life: 36, inServiceDaysAgo: 200, regime: 'hieu_chuan', cycle: 12, mandatory: false, inspectedDaysAgo: 30 },
+  // Kiểm định bắt buộc quá hạn => P1, "KHÔNG được dùng" (không gắn dịch vụ nào).
+  { type: 'MONITOR', name: 'Máy theo dõi bệnh nhân 5 thông số', manufacturer: 'Hãng mẫu D', model: 'PM-5', serialNo: 'TT-PM5-0001', room: 'N1', riskClass: 'C', cost: 85_000_000, life: 84, inServiceDaysAgo: 900, regime: 'atkt', cycle: 12, mandatory: true, inspectedDaysAgo: 400 },
+  { type: 'NOI_HAP', name: 'Nồi hấp tiệt trùng 50 lít', manufacturer: 'Hãng mẫu E', model: 'AC-50', serialNo: 'TT-AC50-0001', room: null, riskClass: 'B', cost: 120_000_000, life: 120, inServiceDaysAgo: 1200, regime: 'ap_luc', cycle: 12, mandatory: true, inspectedDaysAgo: 200 },
+];
+const REQUIREMENTS: ReadonlyArray<[string, string]> = [['SA-BUNG', 'SIEU_AM'], ['TT-ECG', 'DIEN_TIM'], ['TT-KHIDUNG', 'KHI_DUNG']];
+
+async function seedEquipment(): Promise<void> {
+  const KHO = 'tt.thukho1';
+  const QL = 'tt.quanly1';
+  const ymd = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  // Vật tư + tủ vật tư + lô.
+  const meds = (await call<{ medications: Array<{ medicationId: string; brandName: string }> }>(KHO, 'GET', '/api/pharmacy/medications?_count=200')).data.medications;
+  const medId = new Map(meds.map((m) => [m.brandName, m.medicationId]));
+  for (const m of SUPPLIES) {
+    if (medId.has(m.brandName)) continue;
+    const { cost: _c, qty: _q, ...body } = m;
+    const r = await call<{ medicationId: string }>(KHO, 'POST', '/api/pharmacy/medications', { ...body, itemKind: 'supply' });
+    medId.set(m.brandName, r.data.medicationId);
+    bump('vật tư mới');
+  }
+  const locs = (await call<{ locations: Array<{ locationId: string; name: string }> }>(KHO, 'GET', `/api/pharmacy/locations?organization=${ORG}`)).data.locations;
+  let cabinet = locs.find((l) => l.name === 'Tủ vật tư thủ thuật')?.locationId;
+  if (!cabinet) {
+    cabinet = (await call<{ locationId: string }>(KHO, 'POST', '/api/pharmacy/locations', { organizationId: ORG, name: 'Tủ vật tư thủ thuật', type: 'ward_cabinet' })).data.locationId;
+    bump('kho mới');
+  }
+  for (const [i, m] of SUPPLIES.entries()) {
+    const n = String(i + 1).padStart(2, '0');
+    for (const [suffix, expiry, qty] of [['A', ymd(int(40, 90)), Math.round(m.qty / 4)], ['B', ymd(int(500, 900)), m.qty]] as const) {
+      const batch = `TT-VT${n}-${suffix}`;
+      try {
+        const r = await call(KHO, 'POST', '/api/pharmacy/receipts',
+          { medicationId: medId.get(m.brandName), locationId: cabinet, batchNumber: batch, expiryDate: expiry, unitCost: m.cost, quantity: qty },
+          { 'idempotency-key': `tt-receipt-${cabinet}-${batch}` });
+        bump(r.headers.get('idempotent-replayed') ? 'lô vật tư đã nhập (bỏ qua)' : 'lô vật tư nhập');
+      } catch (e) {
+        if (e instanceof HttpError && e.status === 422 && e.body.includes('IDEMPOTENCY_KEY_REUSED')) { bump('lô vật tư đã nhập (bỏ qua)'); continue; }
+        throw e;
+      }
+    }
+  }
+  // Kho trừ + định mức.
+  const ov = (await call<{ settings: { locationId: string | null; version: number }; services: Array<{ itemId: string; code: string; norms: Array<{ medicationId: string; quantity: number }> }> }>(
+    KHO, 'GET', `/api/supplies?organization=${ORG}`)).data;
+  if (!ov.settings.locationId) {
+    await call(KHO, 'POST', '/api/supplies/settings', { organizationId: ORG, locationId: cabinet, version: ov.settings.version });
+    bump('kho trừ vật tư');
+  }
+  for (const [code, lines] of NORMS) {
+    const svc = ov.services.find((s) => s.code === code);
+    if (!svc) continue;
+    for (const [name, quantity] of lines) {
+      const id = medId.get(name)!;
+      if (svc.norms.some((x) => x.medicationId === id)) continue;
+      await call(KHO, 'POST', '/api/supplies/norms', { organizationId: ORG, itemId: svc.itemId, medicationId: id, quantity });
+      bump('dòng định mức');
+    }
+  }
+  // Loại thiết bị, thiết bị, kiểm định lần đầu, dịch vụ cần máy.
+  const list = (await call<{ devices: Array<{ serialNo: string | null }>; types: Array<{ typeId: string; code: string }>; rooms: Array<{ servicePointId: string; code: string }>;
+    requirements: Array<{ itemId: string; typeId: string }> }>(QL, 'GET', `/api/equipment?organization=${ORG}`)).data;
+  const typeId = new Map(list.types.map((t) => [t.code, t.typeId]));
+  for (const [code, name] of DEVICE_TYPES) {
+    if (typeId.has(code)) continue;
+    typeId.set(code, (await call<{ typeId: string }>(QL, 'POST', '/api/equipment/types', { code, name })).data.typeId);
+    bump('loại thiết bị');
+  }
+  const serials = new Set(list.devices.map((d) => d.serialNo));
+  for (const d of DEVICES) {
+    if (serials.has(d.serialNo)) continue;
+    const room = d.room ? list.rooms.find((r) => r.code === d.room)?.servicePointId : undefined;
+    const dev = (await call<{ deviceId: string; assetCode: string }>(QL, 'POST', '/api/equipment/devices', {
+      organizationId: ORG, typeId: typeId.get(d.type), name: d.name, manufacturer: d.manufacturer, model: d.model, serialNo: d.serialNo,
+      ...(room ? { servicePointId: room } : {}), riskClass: d.riskClass, registrationNo: `MẪU-TT-${d.serialNo.slice(3, 8)}`,
+      warrantyUntil: ymd(365 - d.inServiceDaysAgo + 730), acquiredOn: ymd(-d.inServiceDaysAgo - 10), inServiceOn: ymd(-d.inServiceDaysAgo),
+      cost: d.cost, usefulLifeMonths: d.life, regimes: [{ regime: d.regime, cycleMonths: d.cycle, mandatory: d.mandatory }],
+    })).data;
+    await call(QL, 'POST', `/api/equipment/devices/${dev.deviceId}/inspections`, {
+      regime: d.regime, performedOn: ymd(-d.inspectedDaysAgo), result: 'pass', provider: 'Đơn vị kiểm định (dữ liệu thực tập)', certificateNo: `MẪU-GCN-${dev.assetCode}`,
+    });
+    bump('thiết bị');
+  }
+  const prices = (await call<{ items: Array<{ itemId: string; code: string }> }>(QL, 'GET', `/api/finance/price-items?organization=${ORG}`)).data.items;
+  for (const [code, type] of REQUIREMENTS) {
+    const item = prices.find((p) => p.code === code)?.itemId;
+    const t = typeId.get(type);
+    if (!item || !t || list.requirements.some((r) => r.itemId === item && r.typeId === t)) continue;
+    await call(QL, 'POST', '/api/equipment/requirements', { organizationId: ORG, itemId: item, typeId: t });
+    bump('dịch vụ cần máy');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +805,7 @@ try {
   await seedBooking();
   await seedFinance();
   await seedForecast();
+  await seedEquipment();
   await seedDecision();
   await seedHandover();
   console.log('Xong. Kết quả:');

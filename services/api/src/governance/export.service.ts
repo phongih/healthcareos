@@ -11,10 +11,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { isUuid, type AuditSink, type OrganizationId, type Role, type TenantContext } from '../../../../packages/domain/src/s0-contracts';
+import { equipmentSheets, type RegisterData } from '../../../../packages/exports/src/equipment-sheets';
 import { reportSheets, type ReportData } from '../../../../packages/exports/src/report-sheets';
 import { buildXlsx, type SheetSpec } from '../../../../packages/exports/src/xlsx';
 import { requireTenantContext, type PgPoolLike } from '../../../../packages/security/src/tenant-context';
 import { ClinicalError, iso, num } from '../clinical/encounter.service';
+import type { EquipmentService } from '../equipment/equipment.service';
 import type { FinanceService } from '../finance/finance.service';
 import type { GovernanceService } from './governance.service';
 import { GovernanceBase, optStr } from './governance-base';
@@ -27,6 +29,7 @@ export const DATASETS = {
   finance_report: { label: 'Báo cáo tài chính (Excel)', personal: 'Có thể có họ tên người bệnh còn công nợ' },
   governance_dossier: { label: 'Hồ sơ tự đánh giá cấp độ (Markdown)', personal: 'Không' },
   erasure_letter: { label: 'Văn bản trả lời yêu cầu xoá (Markdown)', personal: 'Có mã bệnh nhân' },
+  equipment_register: { label: 'Sổ thiết bị y tế + kiểm định (Excel)', personal: 'Không' },
 } as const;
 export type Dataset = keyof typeof DATASETS;
 
@@ -64,6 +67,7 @@ export class ExportService extends GovernanceBase<Permission> {
     private readonly src: {
       pool: PgPoolLike; audit: AuditSink; clock?: () => Date;
       finance: Pick<FinanceService, 'report'>; governance: Pick<GovernanceService, 'dossier'>; retention: Pick<RetentionService, 'letter'>;
+      equipment?: Pick<EquipmentService, 'register'>;
     },
   ) {
     super(src, PERMISSIONS, 'DataExport');
@@ -119,6 +123,18 @@ export class ExportService extends GovernanceBase<Permission> {
       personal = false;
       fileName = `ho-so-cap-do-an-ninh-du-lieu-${at.toISOString().slice(0, 10)}.md`;
       contentType = MD;
+    } else if (dataset === 'equipment_register') {
+      if (!this.src.equipment) throw new ClinicalError('VALIDATION', 'equipment_register is not available');
+      const o = typeof params['organizationId'] === 'string' ? params['organizationId'] : '';
+      const data = (await this.src.equipment.register(o, ctx)) as unknown as RegisterData;
+      org = o;
+      cleanParams = { organizationId: o };
+      const sheets: SheetSpec[] = equipmentSheets(data).map((sh) => ({ ...sh, title: [...(sh.title ?? []), stamp] }));
+      content = buildXlsx(sheets);
+      rows = sheets.reduce((a, s) => a + s.rows.length, 0);
+      personal = false;
+      fileName = `so-thiet-bi_${data.asOf}.xlsx`;
+      contentType = XLSX;
     } else {
       const rid = params['requestId'];
       if (typeof rid !== 'string' || !isUuid(rid)) throw new ClinicalError('VALIDATION', 'params.requestId must be a UUID');

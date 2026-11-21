@@ -203,6 +203,41 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
   'decision.rule_versions': { level: 2, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'audit_log', purpose: 'Lịch sử luật Decision Engine' },
   'decision.rules': { level: 2, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'reference', purpose: 'Luật Decision Engine' },
 
+  // ---- thiết bị & vật tư (F19) ------------------------------------------------------
+  'equipment.asset_counters': { level: 1, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'operational', purpose: 'Cấp mã tài sản thiết bị TByy-nnnn-c' },
+  'equipment.device_events': {
+    level: 2, category: 'internal', subject: 'staff', steward: 'clinic_admin', retention: 'audit_log',
+    purpose: 'Nhật ký thiết bị chỉ-thêm: bàn giao đầu ca, báo hỏng, bảo trì, sửa xong, chuyển phòng, thanh lý (ai, lúc nào)',
+    columns: { note: FREE_TEXT_OPS },
+  },
+  'equipment.device_inspections': {
+    level: 2, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'financial_record',
+    purpose: 'Kiểm định / hiệu chuẩn thiết bị chỉ-thêm (ngày, kết quả, hiệu lực, đơn vị, số giấy chứng nhận) — hồ sơ xuất trình thanh tra',
+  },
+  'equipment.device_regimes': { level: 1, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'reference', purpose: 'Chế độ kiểm định / hiệu chuẩn áp dụng cho từng thiết bị (chu kỳ, bắt buộc)' },
+  'equipment.device_types': { level: 1, category: 'reference', subject: 'none', steward: 'clinic_admin', retention: 'reference', purpose: 'Danh mục loại thiết bị' },
+  'equipment.devices': {
+    level: 2, category: 'internal', subject: 'none', steward: 'clinic_admin', retention: 'financial_record',
+    purpose: 'Sổ thiết bị y tế: mã tài sản, serial, phòng đặt, phân loại rủi ro A–D, số lưu hành, bảo hành, nguyên giá, khấu hao, trạng thái',
+  },
+  'equipment.service_requirements': { level: 1, category: 'reference', subject: 'none', steward: 'clinic_admin', retention: 'reference', purpose: 'Dịch vụ cần loại thiết bị nào (chặn chỉ định khi không còn máy dùng được)' },
+  'equipment.supply_consumptions': {
+    level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'pharmacy_admin', retention: 'financial_record',
+    purpose: 'Vật tư đã trừ khi tất toán theo hồ sơ thanh toán: lô, số lượng, giá vốn — truy xuất người bệnh khi thu hồi lô (lộ dịch vụ người bệnh đã dùng)',
+  },
+  'equipment.supply_lot_usages': {
+    level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'pharmacy_admin', retention: 'financial_record',
+    purpose: 'Lô vật tư điều dưỡng ghi thực tế lúc làm thủ thuật (gắn hồ sơ thanh toán đang mở)',
+    columns: { cancel_reason: FREE_TEXT_OPS },
+  },
+  'equipment.supply_norms': { level: 1, category: 'reference', subject: 'none', steward: 'pharmacy_admin', retention: 'reference', purpose: 'Định mức vật tư tiêu hao theo dịch vụ' },
+  'equipment.supply_settings': { level: 1, category: 'internal', subject: 'none', steward: 'pharmacy_admin', retention: 'reference', purpose: 'Kho / tủ trừ vật tư của cơ sở' },
+  'equipment.supply_shortfall_resolutions': {
+    level: 2, category: 'internal', subject: 'staff', steward: 'pharmacy_admin', retention: 'financial_record',
+    purpose: 'Đối soát dòng vật tư thiếu tồn khi tất toán (ai, lúc nào, ghi chú)',
+    columns: { note: FREE_TEXT_OPS },
+  },
+
   // ---- finance (F8–F10) ------------------------------------------------------------
   'finance.billing_cases': { level: 3, category: 'financial', subject: 'patient', steward: 'clinic_admin', retention: 'financial_record', purpose: 'Hồ sơ thanh toán của một lần đến khám' },
   'finance.cashier_shifts': {

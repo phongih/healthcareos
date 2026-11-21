@@ -68,7 +68,7 @@ type Handler = (input: RouteInput, ids: readonly string[]) => Promise<RouteResul
 
 export interface Route {
   readonly method: 'GET' | 'POST';
-  readonly pattern: readonly string[]; // ':id' = uuid
+  readonly pattern: readonly string[]; // ':id' = uuid; ':ref' = uuid hoặc mã nghiệp vụ (A-Z 0-9 -, ≤ 64 ký tự, vd. mã tài sản TB26-0001-3)
   readonly handler: Handler;
 }
 
@@ -342,6 +342,9 @@ export function matchRoute(routes: readonly Route[], method: string, pathname: s
       if (p === ':id') {
         if (!isUuid(s)) { ok = false; break; }
         ids.push(s.toLowerCase());
+      } else if (p === ':ref') {
+        if (!/^[A-Za-z0-9-]{1,64}$/.test(s)) { ok = false; break; }
+        ids.push(s);
       } else if (p !== s) { ok = false; break; }
     }
     if (!ok) continue;

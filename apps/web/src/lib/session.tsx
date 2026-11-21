@@ -80,6 +80,11 @@ export const can = {
   erasureRequest: (r: ReadonlySet<Role>) => r.has('clinic_staff') || r.has('clinic_admin'),
   retention: (r: ReadonlySet<Role>) => ['clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
   handoverManage: (r: ReadonlySet<Role>) => r.has('clinic_admin') || r.has('tenant_admin'),
+  /** F19: thiết bị & vật tư (server kiểm tra equipment:* / supply:* tại cơ sở). */
+  equipment: (r: ReadonlySet<Role>) =>
+    ['doctor', 'clinic_staff', 'pharmacy_admin', 'clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
+  supplies: (r: ReadonlySet<Role>) => ['pharmacy_admin', 'clinic_admin', 'executive', 'tenant_admin', 'cashier'].some((x) => r.has(x as Role)),
+  recordLot: (r: ReadonlySet<Role>) => r.has('doctor') || r.has('clinic_staff'),
   notifications: (r: ReadonlySet<Role>) =>
     ['doctor', 'pharmacist', 'clinic_staff', 'cashier', 'clinic_admin', 'pharmacy_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),
 };

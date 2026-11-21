@@ -18,6 +18,7 @@ import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
 import { HandoverScreen } from './screens/handover';
 import { GovernanceScreen } from './screens/governance';
+import { DeviceScreen, EquipmentScreen } from './screens/equipment';
 import { BoardScreen, QueueScreen } from './screens/queue';
 
 declare const __HCOS_ENV_LABEL__: string;
@@ -41,6 +42,8 @@ type Route =
   | { name: 'financeCase'; id: string }
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
+  | { name: 'equipment' }
+  | { name: 'device'; code: string; qr: boolean }
   | { name: 'home' };
 
 const UUID = '[0-9a-fA-F-]{36}';
@@ -51,6 +54,9 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/patients')) return { name: 'patients' };
   if (hash.startsWith('#/pharmacy')) return { name: 'pharmacy' };
   if (hash.startsWith('#/handover')) return { name: 'handover' };
+  // F19: trang thiết bị theo mã tài sản (QR trên thân máy trỏ tới #/tb/<mã>/qr).
+  if ((m = /^#\/tb\/([A-Za-z0-9-]{8,20})(\/qr)?$/.exec(hash))) return { name: 'device', code: m[1]!.toUpperCase(), qr: Boolean(m[2]) };
+  if (hash.startsWith('#/equipment')) return { name: 'equipment' };
   if (hash.startsWith('#/governance')) return { name: 'governance' };
   if (hash.startsWith('#/queue')) return { name: 'queue' };
   if (hash.startsWith('#/bookings')) return { name: 'bookings' };
@@ -95,6 +101,7 @@ function Shell({ me }: { me: Me }) {
     can.integrations(roles) && { hash: '#/integrations', label: 'Tích hợp', active: route.name === 'integrations' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
     can.handover(roles) && { hash: '#/handover', label: 'Quầy trả', active: route.name === 'handover' },
+    can.equipment(roles) && { hash: '#/equipment', label: 'Thiết bị', active: route.name === 'equipment' || route.name === 'device' },
     can.governance(roles) && { hash: '#/governance', label: 'Quản trị dữ liệu', active: route.name === 'governance' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
@@ -175,6 +182,10 @@ function Shell({ me }: { me: Me }) {
           <PharmacyScreen />
         ) : route.name === 'handover' ? (
           <HandoverScreen />
+        ) : route.name === 'equipment' ? (
+          <EquipmentScreen />
+        ) : route.name === 'device' ? (
+          <DeviceScreen code={route.code} qr={route.qr} />
         ) : route.name === 'governance' ? (
           <GovernanceScreen />
         ) : route.name === 'admin' ? (

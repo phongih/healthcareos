@@ -63,6 +63,25 @@ const REASON_TEXT: Record<string, string> = {
   DECLARED_BELOW_COMPUTED: 'Không được xác định cấp độ thấp hơn cấp tính từ danh mục dữ liệu.',
   RATIONALE_REQUIRED: 'Cần ghi căn cứ (20–4000 ký tự).',
   REASON_REQUIRED: 'Cần ghi lý do (ít nhất 5 ký tự).',
+  // HCOS-F19 thiết bị & vật tư
+  DEVICE_UNAVAILABLE: 'Dịch vụ này cần máy nhưng cơ sở không còn máy dùng được (hỏng / bảo trì / quá hạn hoặc không đạt kiểm định) — không chỉ định được. Xem tab Thiết bị.',
+  DEVICE_STATE: 'Trạng thái máy không cho thao tác này (vd. máy đang hỏng thì không báo hỏng lần nữa; chỉ "sửa xong" khi máy hỏng / bảo trì).',
+  DEVICE_RETIRED: 'Thiết bị đã thanh lý — không ghi thêm được.',
+  NOTE_REQUIRED: 'Cần ghi mô tả (ít nhất 3 ký tự).',
+  ASSET_CODE_INVALID: 'Mã tài sản sai định dạng hoặc sai số kiểm tra (dạng TB26-0001-3) — kiểm tra lại.',
+  SERIAL_TAKEN: 'Đã có thiết bị cùng loại / hãng / model với số serial này.',
+  TYPE_CODE_TAKEN: 'Mã loại thiết bị đã có.',
+  DEPRECIATION_INCOMPLETE: 'Khấu hao cần đủ nguyên giá, số tháng sử dụng và ngày đưa vào dùng (hoặc bỏ trống cả ba).',
+  CERTIFICATE_REQUIRED: 'Kết quả đạt cần số giấy chứng nhận / tem kiểm định.',
+  REGIME_NOT_CONFIGURED: 'Thiết bị chưa khai báo chế độ kiểm định này — thêm chế độ trước.',
+  DATE_IN_FUTURE: 'Ngày thực hiện không được ở tương lai.',
+  NO_OPEN_CASE: 'Người bệnh chưa có hồ sơ thanh toán đang mở — nhờ thu ngân / lễ tân mở hồ sơ (thu tạm ứng) trước khi ghi lô.',
+  BATCH_NOT_FOUND: 'Không có lô vật tư với số này — kiểm tra số lô hoặc nhập kho trước.',
+  BATCH_AMBIGUOUS: 'Nhiều vật tư có cùng số lô — chọn vật tư rồi ghi lại.',
+  NOT_A_SUPPLY: 'Chỉ vật tư tiêu hao mới đưa vào định mức (thuốc thì kê đơn).',
+  LOCATION_INVALID: 'Kho không thuộc cơ sở này.',
+  ALREADY_RESOLVED: 'Dòng thiếu này đã được đối soát.',
+  ALREADY_CANCELLED: 'Dòng này đã huỷ.',
 };
 
 export async function api<T = unknown>(

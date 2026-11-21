@@ -26,7 +26,7 @@ interface Load {
   totals: { walkIn: number; booked: number; followUp: number; total: number };
 }
 interface InvLine {
-  medicationId: string; name: string; unit: string; available: number; avgDaily: number; trendFactor: number; trendCodes: Array<{ code: string; ratio: number }>;
+  medicationId: string; kind?: 'drug' | 'supply'; name: string; unit: string; available: number; avgDaily: number; trendFactor: number; trendCodes: Array<{ code: string; ratio: number }>;
   adjustedDaily: number; safetyStock: number; reorderPoint: number; targetLevel: number; suggestedOrder: number; estimatedOrderValue: number | null;
   daysOfCover: number | null; earliestExpiry: string | null; expiryRiskQty: number; status: 'stockout' | 'urgent' | 'reorder' | 'ok' | 'no_demand';
 }
@@ -37,6 +37,7 @@ interface Inventory {
 interface CashBase {
   visits: number; walkIn: number; followUp: number; booked: number; showRate: number; revenuePerVisit: number | null; revenueSample: number;
   examShare: number; avgExamPrice: number | null; actualVisitsLast30: number; actualRevenueLast30: number; fixedCostsMonthly: number; variableCostPct: number;
+  depreciationMonthly?: number; depreciatingDevices?: number; supplyCogsLast30?: number; supplyCogsPerCase?: number | null;
 }
 interface Settings {
   fixedCostsMonthly: number; variableCostPct: number; leadTimeDays: number; serviceLevelPct: number; version: number;
@@ -181,11 +182,11 @@ function InventoryCard() {
           ) : (
             <div className="scroll-x">
               <table>
-                <thead><tr><th>Thuốc</th><th>Tồn dùng được</th><th>TB/ngày</th><th>Xu hướng</th><th>Đủ dùng</th><th>Điểm đặt lại</th><th>Đặt gợi ý</th><th>Hạn sớm nhất</th><th>Có thể hết hạn</th><th>Trạng thái</th></tr></thead>
+                <thead><tr><th>Thuốc / vật tư</th><th>Tồn dùng được</th><th>TB/ngày</th><th>Xu hướng</th><th>Đủ dùng</th><th>Điểm đặt lại</th><th>Đặt gợi ý</th><th>Hạn sớm nhất</th><th>Có thể hết hạn</th><th>Trạng thái</th></tr></thead>
                 <tbody>
                   {lines.map((x) => (
                     <tr key={x.medicationId}>
-                      <td>{x.name}</td>
+                      <td>{x.name}{x.kind === 'supply' ? <span className="badge"> vật tư</span> : null}</td>
                       <td>{x.available} {x.unit}</td>
                       <td>{x.avgDaily}{x.trendFactor !== 1 ? <small className="muted"> → {x.adjustedDaily}</small> : null}</td>
                       <td title={x.trendCodes.map((c) => `${c.code} ×${c.ratio}`).join(', ')}>{x.trendFactor === 1 ? '—' : `×${x.trendFactor}`}</td>
@@ -228,7 +229,7 @@ function CashflowCard() {
   const d = b.data;
   const rpv = d?.revenuePerVisit ?? rpvManual;
   const base = d && rpv !== null && rpv !== undefined
-    ? { walkIn: d.walkIn, followUp: d.followUp, booked: d.booked, showRate: d.showRate, revenuePerVisit: rpv, examShare: d.examShare || (d.revenuePerVisit === null ? 1 : 0), fixedCostsMonthly: d.fixedCostsMonthly, variableCostPct: d.variableCostPct }
+    ? { walkIn: d.walkIn, followUp: d.followUp, booked: d.booked, showRate: d.showRate, revenuePerVisit: rpv, examShare: d.examShare || (d.revenuePerVisit === null ? 1 : 0), fixedCostsMonthly: d.fixedCostsMonthly, variableCostPct: d.variableCostPct, depreciationMonthly: d.depreciationMonthly ?? 0 }
     : null;
   const r0 = base ? simulate(base, NO_CHANGE) : null;
   const r1 = base ? simulate(base, lv) : null;
@@ -269,6 +270,12 @@ function CashflowCard() {
                   <tr><td>Doanh thu dự kiến</td><td>{fmtVnd(r0.revenue)}</td><td><strong>{fmtVnd(r1.revenue)}</strong><small className="muted">{delta(r1.revenue, r0.revenue)}</small></td></tr>
                   <tr><td>Chi phí biến đổi</td><td>{fmtVnd(r0.variableCost)}</td><td>{fmtVnd(r1.variableCost)}</td></tr>
                   <tr><td>Chi phí cố định</td><td colSpan={2}>{fmtVnd(d.fixedCostsMonthly)}</td></tr>
+                  {(d.depreciationMonthly ?? 0) > 0 && (
+                    <tr><td>Khấu hao thiết bị <span className="muted small">({d.depreciatingDevices} máy, không chi tiền mặt)</span></td><td colSpan={2}>{fmtVnd(d.depreciationMonthly ?? 0)}</td></tr>
+                  )}
+                  {(d.supplyCogsLast30 ?? 0) > 0 && (
+                    <tr><td>Giá vốn vật tư 30 ngày <span className="muted small">(thông tin — đã nằm trong % chi phí biến đổi nếu bạn tính gộp)</span></td><td colSpan={2}>{fmtVnd(d.supplyCogsLast30 ?? 0)}{d.supplyCogsPerCase ? ` · ${fmtVnd(d.supplyCogsPerCase)}/hồ sơ` : ''}</td></tr>
+                  )}
                   <tr><td>Lợi nhuận dự kiến</td><td className={r0.profit < 0 ? 'neg' : ''}>{fmtVnd(r0.profit)}</td><td className={r1.profit < 0 ? 'neg' : ''}><strong>{fmtVnd(r1.profit)}</strong></td></tr>
                   <tr><td>Doanh thu hòa vốn</td><td colSpan={2}>{fmtVnd(r1.breakEvenRevenue)}</td></tr>
                   <tr><td>Lượt khám hòa vốn</td><td>{r0.breakEvenVisits ?? '—'}</td><td><strong>{r1.breakEvenVisits ?? '—'}</strong></td></tr>
@@ -314,7 +321,7 @@ function ForecastSettingsCard() {
       <form className="stack" onSubmit={(e) => { e.preventDefault(); void save.run(); }}>
         <fieldset className="plain" disabled={!s.data}>
           <div className="row wrap">
-            <MoneyInput label="Chi phí cố định / tháng (đ)" value={f.fixed} onChange={(fixed) => setF({ ...f, fixed })} hint="Lương, mặt bằng, khấu hao, điện nước…" />
+            <MoneyInput label="Chi phí cố định / tháng (đ)" value={f.fixed} onChange={(fixed) => setF({ ...f, fixed })} hint="Lương, mặt bằng, điện nước… (khấu hao thiết bị lấy riêng từ sổ thiết bị — đừng cộng lại)" />
             <Field label="Chi phí biến đổi (% doanh thu)" hint="Thuốc, vật tư, hoa hồng…">
               <input className="short" inputMode="decimal" value={f.varPct} onChange={(e) => setF({ ...f, varPct: e.target.value })} />
             </Field>
