@@ -16,6 +16,7 @@ import { ReportsScreen } from './screens/reports';
 import { ForecastScreen } from './screens/forecast';
 import { PatientDetail, PatientsScreen } from './screens/patients';
 import { PharmacyScreen } from './screens/pharmacy';
+import { HandoverScreen } from './screens/handover';
 import { BoardScreen, QueueScreen } from './screens/queue';
 
 declare const __HCOS_ENV_LABEL__: string;
@@ -26,6 +27,7 @@ type Route =
   | { name: 'patient'; id: string }
   | { name: 'encounter'; id: string }
   | { name: 'pharmacy' }
+  | { name: 'handover' }
   | { name: 'queue' }
   | { name: 'bookings' }
   | { name: 'finance' }
@@ -46,6 +48,7 @@ function parseRoute(hash: string): Route {
   if ((m = new RegExp(`^#/encounters/(${UUID})$`).exec(hash))) return { name: 'encounter', id: m[1]! };
   if (hash.startsWith('#/patients')) return { name: 'patients' };
   if (hash.startsWith('#/pharmacy')) return { name: 'pharmacy' };
+  if (hash.startsWith('#/handover')) return { name: 'handover' };
   if (hash.startsWith('#/queue')) return { name: 'queue' };
   if (hash.startsWith('#/bookings')) return { name: 'bookings' };
   if ((m = new RegExp(`^#/finance/cases/(${UUID})$`).exec(hash))) return { name: 'financeCase', id: m[1]! };
@@ -88,6 +91,7 @@ function Shell({ me }: { me: Me }) {
     can.decision(roles) && { hash: '#/decision', label: 'Decision Engine', active: route.name === 'decision' },
     can.integrations(roles) && { hash: '#/integrations', label: 'Tích hợp', active: route.name === 'integrations' },
     can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
+    can.handover(roles) && { hash: '#/handover', label: 'Quầy trả', active: route.name === 'handover' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
 
@@ -165,6 +169,8 @@ function Shell({ me }: { me: Me }) {
           <InboxScreen />
         ) : route.name === 'pharmacy' ? (
           <PharmacyScreen />
+        ) : route.name === 'handover' ? (
+          <HandoverScreen />
         ) : route.name === 'admin' ? (
           <AdminScreen />
         ) : null}

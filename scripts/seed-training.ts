@@ -28,6 +28,7 @@ import { PgPharmacyUnitOfWork, PharmacyInventoryService } from '../services/api/
 import { PgPrescriptionUnitOfWork, PrescriptionService } from '../services/api/src/clinical/prescription.service';
 import { BookingService, PgBookingUnitOfWork, PublicBookingService, periodOpen, vnNow } from '../services/api/src/clinical/booking.service';
 import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from '../services/api/src/clinical/queue.service';
+import { HandoverService } from '../services/api/src/clinical/handover.service';
 import type { RateLimiter } from '../services/api/src/http/booking-routes';
 import { FinanceService, PgFinanceUnitOfWork } from '../services/api/src/finance/finance.service';
 import { ForecastService, PgForecastUnitOfWork } from '../services/api/src/analytics/forecast.service';
@@ -146,6 +147,7 @@ const handler = createApiHandler({
   forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
   decision: new DecisionEngineService({ uow: new PgDecisionUnitOfWork(pool), audit }),
   mrn: new MrnSettingsService({ pool, audit }),
+  handover: new HandoverService({ pool, audit }),
   // Seed gọi cổng công khai nhiều lần từ cùng một IP: bỏ giới hạn tần suất trong tiến trình này.
   rateLimiter: { take: () => true } as unknown as RateLimiter,
 });
@@ -404,6 +406,18 @@ const ROOMS = [['N1', 'Phòng khám Nội 1'], ['N2', 'Phòng khám Nội 2']] a
 const QUEUE_MRNS = ['TT00001', 'TT00002', 'TT00003', 'TT00004', 'TT00006', 'TT00007', 'TT00008', 'TT00009'];
 const DISPLAY_NAME = 'Màn hình sảnh chờ (thực tập)';
 
+// HCOS-F14: các quầy trả thuốc / giấy tờ / tiền (TV hiện "N1-007 → Quầy 2").
+const DESKS: Array<[string, string]> = [['Q1', 'Quầy 1'], ['Q2', 'Quầy 2'], ['Q3', 'Quầy 3']];
+async function seedHandover(): Promise<void> {
+  const QL = 'tt.quanly1';
+  const have = new Set((await call<{ desks: Array<{ code: string }> }>(QL, 'GET', `/api/handover/desks?organization=${ORG}`)).data.desks.map((d) => d.code));
+  for (const [code, name] of DESKS) {
+    if (have.has(code)) continue;
+    await call(QL, 'POST', '/api/handover/desks', { organizationId: ORG, code, name });
+    bump('quầy trả');
+  }
+}
+
 async function seedQueue(): Promise<void> {
   const QL = 'tt.quanly1';
   const LT = 'tt.letan1';
@@ -646,6 +660,7 @@ try {
   await seedFinance();
   await seedForecast();
   await seedDecision();
+  await seedHandover();
   console.log('Xong. Kết quả:');
   for (const [k, v] of Object.entries(stats)) console.log(`  ${k.padEnd(28)} ${v}`);
 } catch (e) {

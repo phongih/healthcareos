@@ -51,6 +51,7 @@ import {
   type PgPoolLike,
 } from '../../../../packages/security/src/tenant-context';
 import { ClinicalError, iso, isoOrNull, num, PgClinicalRepository, translatePgError, type OutboxDraft } from './encounter.service';
+import { readHandoverBoard, type HandoverBoardRow } from './handover.service';
 
 // ---------------------------------------------------------------------------
 // Kiểu dữ liệu
@@ -127,6 +128,8 @@ export interface QueueBoard {
   readonly organizationName: string | null;
   readonly called: readonly BoardRow[];
   readonly waiting: readonly BoardRow[];
+  /** HCOS-F14: quầy trả (gọi ra quầy, chờ gọi, đang soạn thuốc). */
+  readonly handover: readonly HandoverBoardRow[];
 }
 
 export const displayNo = (code: string, no: number): string => `${code}-${String(no).padStart(3, '0')}`;
@@ -839,6 +842,7 @@ export class PgQueueBoard {
         organizationName: (meta['organization_name'] as string | null) ?? null,
         called: r.rows.filter((x) => x['kind'] === 'called').map(row),
         waiting: r.rows.filter((x) => x['kind'] === 'waiting').map(row),
+        handover: await readHandoverBoard(c as never, key),
       };
     } finally {
       c.release();

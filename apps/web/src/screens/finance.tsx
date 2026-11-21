@@ -3,7 +3,7 @@
  * in phiếu, VietQR, cài đặt bảng giá. Lễ tân kiêm thu ngân (clinic_staff) và thu ngân (cashier) đều dùng được.
  * Server là nơi quyết định quyền và quy tắc tiền; giao diện chỉ gợi ý số tiền và ẩn nút.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, ApiError } from '../lib/api';
 import { entries, fmtDateTime, mrnOf, patientName, type Bundle, type FhirPatient } from '../lib/fhir';
@@ -346,7 +346,8 @@ const balanceText = (b: number) => (b === 0 ? 'Đủ' : b < 0 ? `Còn thu ${fmtV
 // ---------------------------------------------------------------------------
 // Một hồ sơ thanh toán
 // ---------------------------------------------------------------------------
-export function CaseScreen({ id }: { id: string }) {
+/** embedded: nhúng trong màn khác (vd. Quầy trả) — ẩn link quay lại; onChange gọi sau mỗi lần dữ liệu hồ sơ đổi. */
+export function CaseScreen({ id, embedded, onChange }: { id: string; embedded?: boolean; onChange?: () => void }) {
   const { orgId, me } = useSession();
   const orgName = me.memberships.find((m) => m.organization.organizationId === orgId)?.organization.name ?? '';
   const c = useLoad(() => api<CaseDetail>('GET', `/api/finance/cases/${id}`).then((r) => r.data), [id]);
@@ -356,6 +357,17 @@ export function CaseScreen({ id }: { id: string }) {
   const [data, setData] = useState<CaseDetail | null>(null);
   useEffect(() => setData(c.data ?? null), [c.data]);
   const d = data;
+  const changed = useRef(onChange);
+  changed.current = onChange;
+  const firstData = useRef(true);
+  useEffect(() => {
+    if (!data) return;
+    if (firstData.current) {
+      firstData.current = false;
+      return;
+    }
+    changed.current?.();
+  }, [data]);
   const [itemId, setItemId] = useState('');
   const [qty, setQty] = useState(1);
   const [draft, setDraft] = useState<ReceiptDraft>({ kind: 'payment', method: 'cash', amount: null, reference: '', payerName: '' });
@@ -366,7 +378,7 @@ export function CaseScreen({ id }: { id: string }) {
   useEffect(() => {
     if (!d) return;
     const b = d.totals.balance;
-    setDraft((x) => ({ ...x, kind: b > 0 ? 'refund' : d.totals.charges === 0 ? 'deposit' : 'payment', amount: b > 0 ? b : b < 0 ? -b : settings.data?.depositDefault ?? null }));
+    setDraft((x) => ({ ...x, kind: b > 0 ? 'refund' : d.totals.charges === 0 ? 'deposit' : 'payment', amount: b > 0 ? b : b < 0 ? -b : d.totals.charges === 0 ? settings.data?.depositDefault ?? null : null }));
   }, [d?.totals.balance, d?.totals.charges, settings.data?.depositDefault]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const add = useAction(async () => {
@@ -411,7 +423,7 @@ export function CaseScreen({ id }: { id: string }) {
 
   return (
     <div className="stack">
-      <p><a href="#/finance">← Thu ngân</a></p>
+      {!embedded && <p><a href="#/finance">← Thu ngân</a></p>}
       <Card title={`Thanh toán · ${name} (${d.patient.mrn})`} actions={<a href={`#/patients/${d.patient.patientId}`}>Hồ sơ bệnh nhân</a>}>
         <div className="totals">
           <div><span>Chi phí</span><strong>{fmtVnd(d.totals.charges)}</strong></div>
@@ -482,7 +494,7 @@ export function CaseScreen({ id }: { id: string }) {
           </>
         )}
         {printed && (
-          <div className="row wrap">
+          <div className="row wrap top">
             <PrintReceipt r={printed} patient={{ mrn: d.patient.mrn, name }} orgName={orgName} />
             <div className="stack">
               <button onClick={() => window.print()}>In phiếu</button>

@@ -629,7 +629,7 @@ function CheckInPanel({ found, onDone, onClose }: { found: Found; onDone: () => 
 
   if (ticket) {
     return (
-      <div className="row wrap">
+      <div className="row wrap top">
         <div className="print-ticket">
           <div className="pt-org">Phiếu số thứ tự · đặt lịch online</div>
           <div className="pt-no">{ticket.displayNo}</div>

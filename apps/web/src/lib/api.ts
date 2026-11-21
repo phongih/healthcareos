@@ -37,6 +37,16 @@ const REASON_TEXT: Record<string, string> = {
   LEGACY_MRN_DISABLED: 'Cơ sở không cho nhập mã cũ — bỏ trống để hệ thống tự cấp mã.',
   MRN_TAKEN: 'Mã bệnh nhân này đã được dùng trong cơ sở.',
   INVALID_PREFIX: 'Tiền tố phải gồm 1–4 chữ cái in hoa A–Z.',
+  // HCOS-F14 quầy trả (BALANCE_NOT_SETTLED giữ thông báo của máy chủ: có số tiền còn thu / còn dư).
+  DESK_BUSY: 'Quầy đang phục vụ một số khác — hoàn tất, báo vắng hoặc trả số đó về hàng chờ trước.',
+  DESK_INACTIVE: 'Quầy này đang tạm ngưng.',
+  DESK_CODE_TAKEN: 'Mã quầy đã có.',
+  CALLED_BY_OTHER: 'Số này do người khác gọi ra quầy.',
+  HANDOVER_STATE: 'Phiếu trả đã đổi trạng thái — tải lại danh sách.',
+  HANDOVER_CHANGED: 'Phiếu trả vừa được người khác cập nhật — tải lại danh sách.',
+  MEDICATION_NOT_DISPENSED: 'Đơn còn thuốc chưa cấp. Cấp đủ ở "Đơn chờ cấp", hoặc ghi lý do (vd. hết thuốc) để vẫn chuyển ra quầy.',
+  MEDICATION_NOT_HANDED: 'Đánh dấu "Đã giao đủ thuốc" trước khi hoàn tất.',
+  REASON_REQUIRED: 'Cần ghi lý do (ít nhất 5 ký tự).',
 };
 
 export async function api<T = unknown>(

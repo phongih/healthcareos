@@ -1030,6 +1030,8 @@ const UNIQUE_REASONS: Readonly<Record<string, string>> = {
   price_items_code_uk: 'PRICE_CODE_TAKEN',
   shifts_one_open_per_user_uk: 'SHIFT_ALREADY_OPEN',
   cases_one_open_per_patient_uk: 'CASE_ALREADY_OPEN',
+  handover_desks_code_uk: 'DESK_CODE_TAKEN',
+  handover_tickets_one_called_per_desk_uk: 'DESK_BUSY',
 };
 
 export function translatePgError(e: unknown): never {
