@@ -32,6 +32,14 @@ const STATUS_TEXT: Record<number, string> = {
 
 /** Lý do lỗi đã biết => câu tiếng Việt cho người dùng (thay thông điệp kỹ thuật). */
 const REASON_TEXT: Record<string, string> = {
+  VENDOR_NOT_CLEARED: 'Nhà cung cấp của kết nối chưa có đánh giá còn hiệu lực (hoặc bị thu hồi / tạm ngừng) — không gửi được. Ghi đánh giá ở tab Quản trị dữ liệu → Nhà cung cấp.',
+  VENDOR_REQUIRED: 'Chọn nhà cung cấp nhận dữ liệu (đăng ký ở tab Quản trị dữ liệu → Nhà cung cấp).',
+  DPA_REQUIRED: 'Duyệt nhà cung cấp cần số thoả thuận xử lý dữ liệu.',
+  ASSESSMENT_VALIDITY: 'Hiệu lực đánh giá tối đa 3 năm.',
+  AI_NO_PATIENT_DATA: 'Dịch vụ AI không được nhận dữ liệu cá nhân / sức khoẻ.',
+  VENDOR_TERMINATED: 'Nhà cung cấp đã chấm dứt — đăng ký mới nếu hợp tác lại.',
+  VENDOR_NAME_TAKEN: 'Đã có nhà cung cấp cùng tên.',
+  PURPOSE_REQUIRED: 'File có dữ liệu cá nhân: cần ghi mục đích xuất (tối thiểu 5 ký tự).',
   FOUR_EYES: 'Người lập yêu cầu không được tự duyệt — cần một quản trị viên khác.',
   ERASURE_ALREADY_OPEN: 'Người bệnh này đã có yêu cầu xoá đang xử lý.',
   ALREADY_ERASED: 'Dữ liệu của người bệnh này đã được xoá.',

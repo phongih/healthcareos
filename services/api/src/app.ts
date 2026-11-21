@@ -28,6 +28,8 @@ import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from './clinical/queue.
 import { HandoverService } from './clinical/handover.service';
 import { GovernanceService } from './governance/governance.service';
 import { RetentionScheduler, RetentionService } from './governance/retention.service';
+import { ExportService } from './governance/export.service';
+import { VendorService } from './governance/vendor.service';
 import { PiiService } from './security/pii.service';
 import { configureKeyProvider } from '../../../packages/security/src/pii';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
@@ -73,6 +75,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     // Không có khoá => không giải mã được URL => không chạy bộ giao.
     const dispatcher = new IntegrationDispatcher({ pool, service: integrations, intervalMs: cfg.integrationKey ? cfg.integrationDispatchSec * 1000 : 0, log });
     const retention = new RetentionService({ pool, audit, backupHorizonDays: cfg.backupHorizonDays });
+    const governance = new GovernanceService({ pool, audit });
+    const finance = new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit });
     const retentionScheduler = new RetentionScheduler({ pool, service: retention, intervalMs: cfg.retentionIntervalSec * 1000, log });
     const server = createApiServer({
       tenant: {
@@ -91,13 +95,15 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       queueBoard: new PgQueueBoard(pool),
       bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit, registrar: (input, ctx) => registry.registerPersonAndPatient(input as never, ctx) }),
       publicBooking: new PublicBookingService({ pool, audit }),
-      finance: new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit }),
+      finance,
       forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
       decision,
       integrations,
       mrn: new MrnSettingsService({ pool, audit }),
       handover: new HandoverService({ pool, audit }),
-      governance: new GovernanceService({ pool, audit }),
+      governance,
+      vendors: new VendorService({ pool, audit }),
+      exports: new ExportService({ pool, audit, finance, governance, retention }),
       pii: new PiiService({ pool, audit }),
       retention,
       readiness: new PgReadinessProbe(pool, {

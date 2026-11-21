@@ -169,6 +169,9 @@ function AddCondition({ encounter, onDone }: { encounter: FhirEncounter; onDone:
         void save.run();
       }}
     >
+      <div className="ai-note">
+        Gợi ý mã từ <strong>danh mục ICD-10 rút gọn — chưa kiểm định</strong> (chưa đối chiếu QĐ 4469/QĐ-BYT); bác sĩ tự chọn và chịu trách nhiệm mã cuối cùng.
+      </div>
       <div className="row wrap">
         <FuzzyPicker
           index={ICD_INDEX}
@@ -217,6 +220,7 @@ function SymptomAssist({ onPick }: { onPick: (x: IcdEntry) => void }) {
       <Field label="Ghi nhanh triệu chứng để gợi ý mã (không lưu, xử lý ngay trên máy)">
         <textarea rows={2} maxLength={1000} placeholder="vd. sot cao 39 do 3 ngay, ho khan, ko kho tho" value={text} onChange={(e) => setText(e.target.value)} />
       </Field>
+      <div className="ai-note">Bộ chuẩn hoá triệu chứng: <strong>gợi ý — chưa kiểm định lâm sàng</strong>. Không dùng để phân loại cấp cứu.</div>
       {found.length > 0 && (
         <div className="stack small-gap">
           <div className="chips">

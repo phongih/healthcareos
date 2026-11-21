@@ -31,6 +31,7 @@ import { ClinicalError, iso, num, PgClinicalRepository } from '../clinical/encou
 import { loadTenantKeys } from '../../../../packages/security/src/pii';
 import { plaintextStats } from '../security/pii.service';
 import { ACTION_LABEL, RETENTION_RULES } from '../../../../packages/security/src/retention';
+import { AI_REGISTRY, VALIDATION_LABEL, type AiComponent } from '../../../../packages/security/src/ai-registry';
 
 type Permission = 'governance:read' | 'governance:assess';
 const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
@@ -76,6 +77,14 @@ export interface CatalogView {
     readonly keys: ReadonlyArray<{ purpose: string; version: number; kekId: string; status: string; createdAt: string }>;
     readonly plaintextRemaining: ReadonlyArray<{ column: string; rows: number }>;
     readonly snapshotsPlaintext: number;
+  };
+  /** HCOS-F18: sổ nguồn dữ liệu AI + bên thứ ba + xuất dữ liệu (số liệu, không có dữ liệu cá nhân). */
+  readonly ai: readonly AiComponent[];
+  readonly thirdParty: {
+    readonly vendors: ReadonlyArray<{ name: string; kind: string; role: string; status: string; cleared: boolean; validUntil: string | null; categories: string[]; crossBorder: boolean | null; endpoints: number }>;
+    readonly endpointsWithoutClearedVendor: number;
+    readonly exports30d: number;
+    readonly personalExports30d: number;
   };
   /** HCOS-F17: chính sách lưu giữ có hiệu lực + số liệu xoá (không có dữ liệu cá nhân). */
   readonly retention: {
@@ -153,7 +162,35 @@ export class GovernanceService {
         [repo.tdb.tenantId],
       );
       const x = st.rows[0]!;
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const vr = await repo.tdb.query<any>(
+        `SELECT v.name, v.kind, v.role, v.status, governance.vendor_cleared(v.vendor_id, 'operational') AS cleared, a.valid_until::text AS valid_until,
+                to_jsonb(a.data_categories) AS categories, a.cross_border,
+                (SELECT count(*) FROM integration.endpoints e WHERE e.tenant_id = v.tenant_id AND e.vendor_id = v.vendor_id AND e.status <> 'retired') AS endpoints
+           FROM governance.vendors v
+           LEFT JOIN LATERAL (SELECT * FROM governance.vendor_assessments x WHERE x.tenant_id = v.tenant_id AND x.vendor_id = v.vendor_id ORDER BY x.assessed_at DESC LIMIT 1) a ON true
+          WHERE v.tenant_id = $1 ORDER BY lower(v.name)`,
+        [repo.tdb.tenantId],
+      );
+      const tp = await repo.tdb.query<any>(
+        `SELECT (SELECT count(*) FROM integration.endpoints e WHERE e.tenant_id = $1 AND e.status <> 'retired'
+                   AND NOT (e.vendor_id IS NOT NULL AND governance.vendor_cleared(e.vendor_id, 'operational'))) AS bad,
+                (SELECT count(*) FROM governance.data_exports WHERE tenant_id = $1 AND exported_at > now() - interval '30 days') AS ex,
+                (SELECT count(*) FROM governance.data_exports WHERE tenant_id = $1 AND exported_at > now() - interval '30 days' AND contains_personal) AS pex`,
+        [repo.tdb.tenantId],
+      );
+      const thirdParty = {
+        vendors: vr.rows.map((x: any) => ({
+          name: x.name, kind: x.kind, role: x.role, status: x.status, cleared: x.cleared === true || x.cleared === 't', validUntil: x.valid_until ?? null,
+          categories: (typeof x.categories === 'string' ? JSON.parse(x.categories) : x.categories) ?? [], crossBorder: x.cross_border === null || x.cross_border === undefined ? null : x.cross_border === true || x.cross_border === 't',
+          endpoints: num(x.endpoints),
+        })),
+        endpointsWithoutClearedVendor: num(tp.rows[0].bad), exports30d: num(tp.rows[0].ex), personalExports30d: num(tp.rows[0].pex),
+      };
+      /* eslint-enable @typescript-eslint/no-explicit-any */
       return {
+        ai: AI_REGISTRY,
+        thirdParty,
         retention: { rules: rs, receipts: num(x['receipts']), keysShredded: num(x['shredded']), openRequests: num(x['open']), ledgerPending: num(x['pending']) },
         encryption: { keys, plaintextRemaining: pt.columns, snapshotsPlaintext: pt.snapshots },
         summary,
@@ -304,7 +341,23 @@ export function renderDossier(v: CatalogView, at: Date): string {
   L.push(`- Sự kiện huỷ khoá chưa đẩy ra sổ huỷ ngoài bản sao lưu: **${v.retention.ledgerPending}**${v.retention.ledgerPending === 0 ? '.' : ' — kiểm tra cron shred-ledger.'}`);
   L.push('- Xoá theo yêu cầu: người lập khác người duyệt (CSDL chặn); còn nghĩa vụ lưu giữ thì xoá phần không bị ràng buộc + hạn chế xử lý, tự xoá nốt khi hết hạn.');
   L.push('- Bản sao lưu: dữ liệu đã xoá không mở được ngay trên hệ thống (khoá huỷ); bản sao lưu cũ hết hạn theo vòng đời bucket; khôi phục bắt buộc phát lại sổ huỷ.');
-  L.push('', '## 7. Biện pháp đang áp dụng', '');
+  L.push('', '## 7. Bên thứ ba (nhà cung cấp nhận / xử lý dữ liệu)', '');
+  if (v.thirdParty.vendors.length === 0) L.push('Chưa đăng ký nhà cung cấp nào.');
+  else {
+    L.push('| Nhà cung cấp | Loại | Vai trò | Trạng thái | Được gửi dữ liệu vận hành | Loại dữ liệu được nhận | Ra nước ngoài | Hiệu lực đến | Kết nối |', '|---|---|---|---|---|---|---|---|---|');
+    for (const x of v.thirdParty.vendors) {
+      L.push(`| ${cell(x.name)} | ${x.kind} | ${x.role} | ${x.status} | ${x.cleared ? 'có' : '**không**'} | ${x.categories.join(', ') || '—'} | ${x.crossBorder === null ? '—' : x.crossBorder ? 'có' : 'không'} | ${x.validUntil ?? '—'} | ${x.endpoints} |`);
+    }
+  }
+  L.push('', `- Kết nối ngoài chưa có nhà cung cấp được duyệt (đang bị chặn gửi): **${v.thirdParty.endpointsWithoutClearedVendor}**.`);
+  L.push('- Kết nối ngoài chỉ gửi khi nhà cung cấp đang hoạt động và có đánh giá còn hiệu lực (tối đa 3 năm) cho loại dữ liệu; kiểm tra lúc xếp hàng và lúc gửi. Dịch vụ AI không bao giờ được nhận dữ liệu cá nhân / sức khoẻ.');
+  L.push(`- Xuất dữ liệu 30 ngày qua: **${v.thirdParty.exports30d}** file (có dữ liệu cá nhân: ${v.thirdParty.personalExports30d}); mọi file do máy chủ tạo, có mục đích, dấu người xuất và SHA-256 trong nhật ký.`);
+  L.push('', '## 8. Nguồn dữ liệu AI', '');
+  L.push('| Thành phần | Loại | Phiên bản | SHA-256 | Kiểm định | Chạy tại | Mục đích được phép |', '|---|---|---|---|---|---|---|');
+  for (const c of v.ai) L.push(`| ${cell(c.name)} | ${c.kind} | ${c.version} | \`${c.sha256.slice(0, 12)}…\` | ${VALIDATION_LABEL[c.validation]} | ${c.runsAt === 'browser' ? 'trình duyệt' : 'máy chủ'} | ${cell(c.permittedUse)} |`);
+  L.push('', '- Mọi thành phần chạy cục bộ, không gửi dữ liệu người bệnh ra ngoài (trình duyệt chỉ kết nối tới máy chủ — CSP `connect-src \'self\'`; CI kiểm tra không có đường ra ngoài khác).');
+  L.push('- Khoá phiên bản: CI so SHA-256 của từng thành phần với sổ; thay đổi dữ liệu / luật AI phải cập nhật sổ trong cùng PR.');
+  L.push('', '## 9. Biện pháp đang áp dụng', '');
   L.push('- Cách ly dữ liệu theo chủ quản bằng Row-Level Security bắt buộc (FORCE) ở CSDL; ứng dụng không chạy bằng superuser.');
   L.push('- Phân quyền theo vai trò + cơ sở; access policy chỉ thu hẹp quyền, che trường nhạy cảm.');
   L.push('- Nhật ký kiểm toán chỉ-thêm, nối chuỗi băm; ghi cả thao tác bị từ chối.');

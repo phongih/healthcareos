@@ -33,6 +33,7 @@ import { buildQueueRoutes, type QueueApi } from './queue-routes';
 import { buildHandoverRoutes, type HandoverApi } from './handover-routes';
 import { buildGovernanceRoutes, type GovernanceApi } from './governance-routes';
 import { buildRetentionRoutes, type RetentionApi } from './retention-routes';
+import { buildF18Routes, type ExportApi, type VendorApi } from './f18-routes';
 import { buildPiiRoutes, type PiiApi } from './pii-routes';
 import { buildRegistryRoutes, type RegistryApi } from './registry-routes';
 import {
@@ -85,6 +86,9 @@ export interface ApiDeps {
   readonly governance?: GovernanceApi;
   /** Tuỳ chọn: lưu giữ & xoá dữ liệu (/api/retention, /api/erasure-*). */
   readonly retention?: RetentionApi;
+  /** Tuỳ chọn (F18): sổ nhà cung cấp, xuất dữ liệu qua máy chủ. */
+  readonly vendors?: VendorApi;
+  readonly exports?: ExportApi;
   /** Tuỳ chọn: hiện dữ liệu mã hoá + quản lý khoá (/api/pii/*, /api/keys*). */
   readonly pii?: PiiApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
@@ -115,6 +119,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.handover ? buildHandoverRoutes(deps.handover) : []),
     ...(deps.governance ? buildGovernanceRoutes(deps.governance) : []),
     ...(deps.retention ? buildRetentionRoutes(deps.retention) : []),
+    ...buildF18Routes(deps.vendors, deps.exports),
     ...(deps.pii ? buildPiiRoutes(deps.pii) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
