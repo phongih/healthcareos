@@ -51,6 +51,15 @@ const REASON_TEXT: Record<string, string> = {
   LEGACY_MRN_DISABLED: 'Cơ sở không cho nhập mã cũ — bỏ trống để hệ thống tự cấp mã.',
   MRN_TAKEN: 'Mã bệnh nhân này đã được dùng trong cơ sở.',
   INVALID_PREFIX: 'Tiền tố phải gồm 1–4 chữ cái in hoa A–Z.',
+  // HCOS-F20 cổng bệnh nhân (phía nhân viên)
+  VERIFICATION_REQUIRED: 'Cần xác nhận đã đối chiếu giấy tờ tuỳ thân và giấy tờ chứng minh quan hệ tại quầy.',
+  GUARDIAN_NOT_FOUND: 'Không tìm thấy mã BN người giám hộ tại cơ sở này — người giám hộ cần có hồ sơ trước.',
+  SELF_LINK: 'Không thể tự làm người giám hộ của chính mình.',
+  VALID_UNTIL_REQUIRED: 'Người được giám hộ đã thành niên: nhập ngày hết hạn liên kết.',
+  LINK_EXISTS: 'Liên kết này đã có và đang hiệu lực.',
+  LINK_INVALID: 'Ngày hết hạn không hợp lệ (đã qua, hoặc quá 10 năm).',
+  LINK_REVOKED: 'Liên kết đã bị thu hồi.',
+  REQUEST_CLOSED: 'Yêu cầu đã được xử lý.',
   // HCOS-F14 quầy trả (BALANCE_NOT_SETTLED giữ thông báo của máy chủ: có số tiền còn thu / còn dư).
   DESK_BUSY: 'Quầy đang phục vụ một số khác — hoàn tất, báo vắng hoặc trả số đó về hàng chờ trước.',
   DESK_INACTIVE: 'Quầy này đang tạm ngưng.',

@@ -16,7 +16,7 @@ export interface MetricSpec {
   readonly label: string;
   readonly unit: string;
 }
-export type DetectorGroup = 'clinical' | 'operations' | 'pharmacy' | 'finance' | 'equipment';
+export type DetectorGroup = 'clinical' | 'operations' | 'pharmacy' | 'finance' | 'equipment' | 'security';
 export interface DetectorSpec {
   readonly id: string;
   readonly group: DetectorGroup;
@@ -150,6 +150,14 @@ export const DETECTORS: readonly DetectorSpec[] = [
     metrics: [m('shortfall_qty', 'Thiếu'), m('lines', 'Số dòng'), m('oldest_hours', 'Dòng cũ nhất', 'giờ')],
     targets: ['pharmacy_admin', 'clinic_admin', 'executive'],
     suggestion: 'Mở vật tư',
+  },
+  {
+    id: 'portal_otp_abuse', group: 'security', label: 'Cổng bệnh nhân: OTP bất thường từ một địa chỉ',
+    description: 'Số lần yêu cầu mã / nhập sai mã OTP của cổng bệnh nhân theo từng địa chỉ mạng (chỉ lưu HMAC của IP) trong 60 phút.',
+    method: 'Đếm thử thách OTP và số lần nhập sai trong 60 phút theo HMAC địa chỉ IP; số định danh khác nhau cho thấy dò tài khoản.',
+    metrics: [m('failed_verifications', 'Nhập sai mã'), m('otp_requests', 'Yêu cầu mã'), m('distinct_targets', 'Định danh khác nhau')],
+    targets: ['clinic_admin', 'executive'],
+    suggestion: 'Xem nhật ký kiểm toán',
   },
 ];
 export const DETECTOR_BY_ID: ReadonlyMap<string, DetectorSpec> = new Map(DETECTORS.map((d) => [d.id, d]));

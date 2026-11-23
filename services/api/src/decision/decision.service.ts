@@ -528,6 +528,16 @@ export class PgDecisionRepository extends PgForecastRepository {
     );
     return r.rows.map((x) => ({ medicationId: x['medication_id'] as string, name: x['brand_name'] as string, unit: x['unit_of_measure'] as string, qty: n(x['qty']), lines: n(x['lines']), oldest: iso(x['oldest']) }));
   }
+  /** HCOS-F20: OTP cổng bệnh nhân theo HMAC IP, 60 phút. */
+  async portalOtpByIp(org: OrganizationId, now: Date): Promise<Array<{ ipMac: string; requests: number; failed: number; targets: number }>> {
+    const r = await this.db.query<Record<string, unknown>>(
+      `SELECT ip_mac, count(*) AS requests, COALESCE(sum(failed_attempts), 0) AS failed, count(DISTINCT target_bidx) AS targets
+         FROM portal.otp_challenges WHERE tenant_id = $1 AND organization_id = $2 AND created_at > $3::timestamptz - interval '60 minutes'
+        GROUP BY ip_mac`,
+      [this.t, org, now.toISOString()],
+    );
+    return r.rows.map((x) => ({ ipMac: x['ip_mac'] as string, requests: n(x['requests']), failed: n(x['failed']), targets: n(x['targets']) }));
+  }
   /** Lịch hẹn theo tuần lùi: tuần 0 = 7 ngày trước hôm nay, 1..8 = các tuần trước đó. */
   async bookingWeeks(org: OrganizationId, today: string): Promise<Array<{ week: number; total: number; noShow: number }>> {
     const r = await this.db.query<Record<string, unknown>>(
@@ -776,6 +786,16 @@ const COLLECTORS: Readonly<Record<string, Collector>> = {
       title: `${s.name}: thiếu ${fmt(s.qty, 0)} ${s.unit} khi tất toán (${s.lines} dòng chờ đối soát)`,
       detail: 'Kiểm tra nhập kho / chuyển kho vào tủ vật tư, rồi đối soát ở tab Thiết bị & vật tư.',
       link: '#/equipment',
+    }));
+  },
+  async portal_otp_abuse(repo, org, now) {
+    return (await repo.portalOtpByIp(org, now)).map((x) => ({
+      subjectKey: `portal-ip:${x.ipMac.slice(0, 16)}`,
+      metrics: { failed_verifications: x.failed, otp_requests: x.requests, distinct_targets: x.targets },
+      // Chỉ phần đầu HMAC (không phải IP) — không có dữ liệu người bệnh.
+      title: `Cổng bệnh nhân: ${x.failed} lần nhập sai OTP, ${x.requests} lần yêu cầu mã (${x.targets} định danh) trong 60 phút từ một địa chỉ (#${x.ipMac.slice(0, 8)})`,
+      detail: 'Có thể là dò mã / dò tài khoản. Hệ thống đã tự giới hạn theo IP và khoá theo định danh; xem nhật ký kiểm toán portal.otp.*.',
+      link: '#/decisions',
     }));
   },
 };

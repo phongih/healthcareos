@@ -37,6 +37,8 @@ function literal(v: unknown): string {
   if (v instanceof Date) return `'${v.toISOString()}'`;
   if (typeof v === 'number' || typeof v === 'bigint') return String(v);
   if (typeof v === 'boolean') return v ? 'true' : 'false';
+  // Mảng (như driver pg): literal mảng PostgreSQL; phần tử được trích dẫn.
+  if (Array.isArray(v)) return literal(`{${v.map((x) => (x === null ? 'NULL' : `"${String(x).replace(/["\\]/g, '\\$&')}"`)).join(',')}}`);
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 

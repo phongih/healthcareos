@@ -69,4 +69,15 @@ describe('loadConfig', () => {
       expect(String((e as Error).message).includes('topsecret')).toBe(false);
     }
   });
+
+  it('F20: kênh OTP cổng — mặc định tắt; training chỉ với HCOS_TRAINING_ENV=1; webhook cần https + token + vendor', () => {
+    expect(loadConfig(OK).portalOtp).toEqual({ mode: 'off' });
+    expect(problems({ ...OK, HCOS_PORTAL_OTP: 'training' })).toEqual(['HCOS_PORTAL_OTP=training requires HCOS_TRAINING_ENV=1 (fake-data environment only)']);
+    expect(loadConfig({ ...OK, HCOS_PORTAL_OTP: 'training', HCOS_TRAINING_ENV: '1' }).portalOtp).toEqual({ mode: 'training' });
+    expect(problems({ ...OK, HCOS_PORTAL_OTP: 'webhook', HCOS_PORTAL_OTP_URL: 'http://sms.example.vn', HCOS_PORTAL_OTP_TOKEN: 'short', HCOS_PORTAL_OTP_VENDOR: 'x' })).toHaveLength(3);
+    const ok = loadConfig({ ...OK, HCOS_PORTAL_OTP: 'webhook', HCOS_PORTAL_OTP_URL: 'https://sms.example.vn/send', HCOS_PORTAL_OTP_TOKEN: 'x'.repeat(24),
+      HCOS_PORTAL_OTP_VENDOR: '00000000-0000-4000-8000-000000000001' });
+    expect(ok.portalOtp).toMatchObject({ mode: 'webhook', url: 'https://sms.example.vn/send' });
+    expect(problems({ ...OK, HCOS_PORTAL_OTP: 'sms' })).toEqual(['HCOS_PORTAL_OTP must be off, training or webhook']);
+  });
 });

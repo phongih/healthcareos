@@ -238,6 +238,45 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
     columns: { note: FREE_TEXT_OPS },
   },
 
+  // ---- cổng bệnh nhân (F20) -------------------------------------------------------
+  'patient.guardian_links': {
+    level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'clinic_admin', retention: 'medical_record',
+    purpose: 'Liên kết người giám hộ — người phụ thuộc (lập và xác minh tại quầy), cho phép xem hồ sơ người phụ thuộc trên cổng; trẻ em tự hết hạn khi đủ 18 tuổi',
+    columns: { note: FREE_TEXT_OPS, revoke_reason: FREE_TEXT_OPS },
+  },
+  'portal.otp_challenges': {
+    level: 3, category: 'personal', subject: 'patient', steward: 'clinic_admin', retention: 'operational',
+    purpose: 'Thử thách OTP đăng nhập / đổi SĐT: chỉ HMAC của mã và định danh, SĐT mới ở dạng bản mã (xoá sau khi dùng); chống dò, giới hạn tần suất',
+    columns: {
+      code_mac: { storage: 'hashed', note: 'HMAC mã OTP (khoá chỉ mục F16) — không lưu mã' },
+      target_enc: { storage: 'encrypted', note: 'SĐT mới (khoá của người), xoá khi xác nhận' },
+      target_bidx: { storage: 'hashed', note: 'Blind index SĐT mới / HMAC định danh đăng nhập' },
+      ip_mac: { storage: 'hashed', note: 'HMAC địa chỉ IP' },
+    },
+  },
+  'portal.sessions': {
+    level: 3, category: 'personal', subject: 'patient', steward: 'clinic_admin', retention: 'operational',
+    purpose: 'Phiên cổng bệnh nhân: SHA-256 của token, HMAC địa chỉ IP, thời hạn, thu hồi',
+    columns: {
+      token_hash: { storage: 'hashed', note: 'SHA-256 token phiên' }, ip_mac: { storage: 'hashed', note: 'HMAC địa chỉ IP' },
+      user_agent: { level: 2, category: 'personal', note: 'Trình duyệt người bệnh (cắt 120 ký tự) — để người bệnh / nhân viên nhận ra phiên lạ' },
+      revoked_reason: { category: 'internal', note: 'Mã lý do thu hồi (logout / expired / phone_changed / staff), không phải văn bản tự do' },
+    },
+  },
+  'portal.requests': {
+    level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'clinic_admin', retention: 'medical_record',
+    purpose: 'Yêu cầu đính chính thông tin do người bệnh / người giám hộ gửi qua cổng và kết quả xử lý',
+    columns: { message: { level: 3, category: 'personal_sensitive', note: 'Người bệnh tự viết — có thể chứa thông tin sức khoẻ' }, resolution_note: FREE_TEXT_OPS },
+  },
+  'portal.shares': {
+    level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'clinic_admin', retention: 'operational',
+    purpose: 'Link chia sẻ một đợt khám cho bác sĩ tuyến trên (SHA-256 token, HMAC PIN, 24 giờ, khoá sau 5 lần sai PIN)',
+  },
+  'portal.share_views': {
+    level: 2, category: 'internal', subject: 'patient', steward: 'clinic_admin', retention: 'audit_log',
+    purpose: 'Nhật ký mở link chia sẻ (kết quả, HMAC IP, thời điểm) — chỉ-thêm',
+  },
+
   // ---- finance (F8–F10) ------------------------------------------------------------
   'finance.billing_cases': { level: 3, category: 'financial', subject: 'patient', steward: 'clinic_admin', retention: 'financial_record', purpose: 'Hồ sơ thanh toán của một lần đến khám' },
   'finance.cashier_shifts': {

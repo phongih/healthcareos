@@ -601,6 +601,8 @@ const DECISION_RULES: SeedRule[] = [
   ['Thiết bị sắp đến hạn kiểm định / hiệu chuẩn (30 ngày)', 'device_inspection', [['days_to_due', '<=', 30], ['overdue', '=', 0]], 2, 1440, ['notify_clinic_admin', 'suggest']],
   ['Thiết bị quá hạn / không đạt kiểm định bắt buộc', 'device_inspection', [['overdue', '=', 1], ['mandatory', '=', 1]], 1, 240, ['notify_clinic_admin', 'notify_doctor', 'notify_clinic_staff', 'suggest']],
   ['Thiết bị hỏng / đang bảo trì', 'device_out_of_service', [['out_of_service', '=', 1]], 1, 240, ['notify_clinic_admin', 'notify_doctor', 'notify_clinic_staff', 'suggest']],
+  // HCOS-F20
+  ['Cổng bệnh nhân: OTP bất thường từ một địa chỉ', 'portal_otp_abuse', [['failed_verifications', '>=', 10]], 2, 60, ['notify_clinic_admin', 'suggest']],
   ['Vật tư thiếu khi tất toán', 'supply_shortfall', [['shortfall_qty', '>', 0]], 2, 1440, ['notify_pharmacy_admin', 'notify_clinic_admin', 'suggest']],
   ['Lượt khám bất thường', 'visit_volume', [['abs_robust_z', '>=', 3]], 3, 1440, ['log_only'], true],
   ['Tỷ lệ vắng lịch hẹn tăng', 'booking_no_show', [['no_show_pct', '>=', 30], ['booked_count', '>=', 10]], 3, 10080, ['notify_clinic_admin'], true],

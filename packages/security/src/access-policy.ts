@@ -379,6 +379,20 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'portal:manage': {
+    basePermission: 'portal:manage',
+    description: 'Cổng bệnh nhân: lập / thu hồi liên kết người giám hộ (sau khi xác minh giấy tờ tại quầy), đăng xuất mọi thiết bị của người bệnh',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'portal:requests': {
+    basePermission: 'portal:requests',
+    description: 'Cổng bệnh nhân: xem và xử lý yêu cầu đính chính thông tin người bệnh gửi qua cổng',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',

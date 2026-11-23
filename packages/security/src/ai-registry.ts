@@ -75,8 +75,8 @@ export const AI_REGISTRY: readonly AiComponent[] = [
     changeNote: 'Bản đầu (F11).',
   },
   {
-    id: 'decision_engine_stats', name: 'Decision Engine: danh mục bộ phát hiện + thống kê bất thường', kind: 'statistics', version: '2026.11-f19',
-    sha256: '3f32a624f931cfcbc7b2a5f850a02218d6ead8cf851e7e7bf12ad6c97695d4b4',
+    id: 'decision_engine_stats', name: 'Decision Engine: danh mục bộ phát hiện + thống kê bất thường', kind: 'statistics', version: '2026.11-f20',
+    sha256: 'ca786c55539f7926e773b850f9966e1356a5bea310a9ebaf6775168c0bbc2452',
     files: ['services/api/src/decision/stats.ts', 'services/api/src/decision/catalog.ts'],
     source: 'Dữ liệu vận hành của chính chủ quản (lượt khám, tồn kho, quỹ, sinh hiệu, thiết bị) — robust z-score (trung vị / MAD), z Poisson.',
     owner: 'Quản lý phòng khám (ngưỡng luật) + nhóm phát triển (thuật toán)',
@@ -85,7 +85,7 @@ export const AI_REGISTRY: readonly AiComponent[] = [
     permittedUse: 'Phát hiện bất thường vận hành, gợi ý hành động; mọi hành động do người xử lý.',
     prohibitedUse: 'Tự động thay đổi dữ liệu lâm sàng / tài chính; gửi dữ liệu người bệnh trong thông báo ra ngoài.',
     runsAt: 'server', patientDataLeavesSystem: false,
-    changeNote: 'F19: thêm 3 bộ phát hiện quy tắc (không thống kê) — thiết bị đến hạn / quá hạn kiểm định, thiết bị hỏng / bảo trì, vật tư thiếu khi tất toán; "Thuốc dưới điểm đặt hàng" gồm cả vật tư. Thuật toán thống kê không đổi.',
+    changeNote: 'F20: thêm nhóm "An ninh" và bộ phát hiện quy tắc portal_otp_abuse (đếm OTP sai / yêu cầu OTP / số đích khác nhau theo một IP trong 60 phút; IP chỉ lưu dạng HMAC). Thuật toán thống kê không đổi. Trước đó F19: thêm 3 bộ phát hiện quy tắc (không thống kê) — thiết bị đến hạn / quá hạn kiểm định, thiết bị hỏng / bảo trì, vật tư thiếu khi tất toán; "Thuốc dưới điểm đặt hàng" gồm cả vật tư. Thuật toán thống kê không đổi.',
   },
 ];
 
