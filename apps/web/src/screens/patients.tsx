@@ -11,6 +11,7 @@ import { Reveal } from '../lib/reveal';
 import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, navigate, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
 import { IssueTicket } from './queue';
+import { PortalPanel } from './portal-admin';
 import { ErasurePanel } from './retention';
 
 type Mode = 'mrn' | 'cccd' | 'name';
@@ -310,6 +311,7 @@ export function PatientDetail({ id }: { id: string }) {
       )}
       {p && can.issueTicket(roles) && <IssueTicket patientId={p.id!} patientName={patientName(p)} birthDate={p.birthDate} />}
       {p && can.openEncounter(roles) && <OpenEncounter patient={p} />}
+      {p && <PortalPanel patientId={p.id!} />}
       {p && <ErasurePanel patientId={p.id!} />}
       <Card title="Các đợt khám">
         <ErrorBox error={encs.error} />

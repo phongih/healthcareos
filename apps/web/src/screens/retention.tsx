@@ -27,7 +27,7 @@ interface Assessment {
 }
 interface ErasureRequest {
   requestId: string; organizationId: string; patientId: string; mrn: string | null; personId: string; channel: string; note: string | null; receivedAt: string;
-  requestedBy: string; requestedByName: string | null; requestedAt: string; assessment: Assessment; status: 'pending' | 'rejected' | 'completed' | 'deferred';
+  requestedBy: string | null; requestedByName: string | null; requestedAt: string; assessment: Assessment; status: 'pending' | 'rejected' | 'completed' | 'deferred';
   decidedBy: string | null; decidedByName: string | null; decidedAt: string | null; decisionNote: string | null; deferredUntil: string | null;
   receiptId: string | null; finalReceiptId: string | null;
 }
@@ -40,6 +40,9 @@ interface Overview {
 const ACTION: Record<Rule['action'], string> = { anonymize: 'Ẩn danh (huỷ khoá)', delete: 'Xoá', hold: 'Giữ theo luật' };
 const STATUS: Record<ErasureRequest['status'], string> = { pending: 'Chờ duyệt', rejected: 'Từ chối', completed: 'Đã xoá', deferred: 'Đã xoá một phần — chờ hết hạn giữ' };
 const CHANNEL: Record<string, string> = { counter: 'Trực tiếp tại quầy', written: 'Văn bản', email: 'Email', phone: 'Điện thoại' };
+/** F20: yêu cầu người bệnh tự gửi qua cổng (không có nhân viên lập). */
+const CHANNEL_SHOW: Record<string, string> = { ...CHANNEL, portal: 'Cổng bệnh nhân (OTP)' };
+const requester = (r: { channel: string; requestedByName: string | null }) => (r.channel === 'portal' ? 'Người bệnh (qua cổng)' : r.requestedByName ?? '—');
 const RULE_LABEL: Record<string, string> = { booking_contact: 'Lịch hẹn quá hạn', idempotency: 'Chống gửi trùng', outbox: 'Sự kiện chờ phát' };
 const dDate = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('vi-VN') : '—');
 const years = (d: number) => (d % 365 === 0 && d >= 365 ? `${d / 365} năm` : `${d} ngày`);
@@ -189,9 +192,9 @@ function ErasureQueue({ v, onChange }: { v: Overview; onChange: () => void }) {
               const own = me.user.userId === r.requestedBy;
               return (
                 <tr key={r.requestId}>
-                  <td>{dDate(r.receivedAt)}<div className="muted small">{CHANNEL[r.channel] ?? r.channel}</div></td>
+                  <td>{dDate(r.receivedAt)}<div className="muted small">{CHANNEL_SHOW[r.channel] ?? r.channel}</div></td>
                   <td><a href={`#/patients/${r.patientId}`}>{r.mrn ?? '—'}</a>{r.note && <div className="muted small">{r.note}</div>}</td>
-                  <td>{r.requestedByName ?? '—'}</td>
+                  <td>{requester(r)}</td>
                   <td className="small"><HoldText a={r.assessment} /></td>
                   <td>
                     {STATUS[r.status]}
@@ -241,7 +244,7 @@ export function ErasurePanel({ patientId }: { patientId: string }) {
       {active?.status === 'deferred' && (
         <Notice kind="warn">Đang <strong>hạn chế xử lý</strong> theo yêu cầu xoá: phần còn nghĩa vụ lưu giữ sẽ tự xoá sau {dDate(active.deferredUntil)}. Chỉ dùng hồ sơ cho khám chữa bệnh / nghĩa vụ pháp lý.</Notice>
       )}
-      {active?.status === 'pending' && <Notice kind="info">Có yêu cầu xoá đang chờ duyệt (lập bởi {active.requestedByName ?? '—'} ngày {dDate(active.requestedAt)}).</Notice>}
+      {active?.status === 'pending' && <Notice kind="info">Có yêu cầu xoá đang chờ duyệt (lập bởi {requester(active)} ngày {dDate(active.requestedAt)}).</Notice>}
       {!active && !done && !open && <p className="muted small">Người bệnh có quyền yêu cầu xoá dữ liệu cá nhân (Luật Bảo vệ dữ liệu cá nhân 2025). Lập yêu cầu không xoá gì — cần người thứ hai duyệt.</p>}
       {open && <ErasureForm patientId={patientId} onDone={() => { setOpen(false); reqs.reload(); }} onCancel={() => setOpen(false)} />}
       <ErrorBox error={reqs.error} />

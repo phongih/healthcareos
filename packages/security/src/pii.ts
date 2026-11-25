@@ -292,6 +292,14 @@ export class TenantPii {
     const { key } = await this.active('index');
     return indexWith(key, domain, value);
   }
+  /**
+   * HMAC có khoá (khoá chỉ mục đang dùng, bọc bằng KEK) cho giá trị ngắn cần so khớp nhưng không được dò ngược từ CSDL:
+   * mã OTP / PIN 6 số, địa chỉ IP, định danh đăng nhập cổng bệnh nhân (F20). Tách miền bằng `label`.
+   */
+  async mac(label: string, value: string): Promise<string> {
+    const { key } = await this.active('index');
+    return createHmac('sha256', key).update(`hcos-mac|${label}\u0000${value}`).digest('hex');
+  }
   /** seal + index + hint trong một lần (giá trị null => cả ba null). */
   async protect(domain: PiiDomain, plain: string | null, subject: Subject): Promise<{ enc: string | null; bidx: string | null; hint: string | null }> {
     if (plain === null || plain === '') return { enc: null, bidx: null, hint: null };

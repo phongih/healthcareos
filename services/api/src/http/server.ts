@@ -35,6 +35,8 @@ import { buildGovernanceRoutes, type GovernanceApi } from './governance-routes';
 import { buildRetentionRoutes, type RetentionApi } from './retention-routes';
 import { buildF18Routes, type ExportApi, type VendorApi } from './f18-routes';
 import { buildEquipmentRoutes, type EquipmentApi } from './equipment-routes';
+import { buildPortalAdminRoutes, type PortalAdminApi } from './portal-admin-routes';
+import { handlePortal, type PortalApi } from './portal-routes';
 import { buildPiiRoutes, type PiiApi } from './pii-routes';
 import { buildRegistryRoutes, type RegistryApi } from './registry-routes';
 import {
@@ -92,6 +94,10 @@ export interface ApiDeps {
   readonly exports?: ExportApi;
   /** Tuỳ chọn (F19): thiết bị & vật tư y khoa. */
   readonly equipment?: EquipmentApi;
+  /** Tuỳ chọn (F20): cổng bệnh nhân /api/portal/* (xác thực riêng bằng OTP + token phiên, KHÔNG dùng JWT nhân viên). */
+  readonly portal?: PortalApi;
+  /** Tuỳ chọn (F20): phía nhân viên của cổng bệnh nhân. */
+  readonly portalAdmin?: PortalAdminApi;
   /** Tuỳ chọn: hiện dữ liệu mã hoá + quản lý khoá (/api/pii/*, /api/keys*). */
   readonly pii?: PiiApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
@@ -124,6 +130,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.retention ? buildRetentionRoutes(deps.retention) : []),
     ...buildF18Routes(deps.vendors, deps.exports),
     ...buildEquipmentRoutes(deps.equipment),
+    ...buildPortalAdminRoutes(deps.portalAdmin),
     ...(deps.pii ? buildPiiRoutes(deps.pii) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
@@ -176,6 +183,15 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
       await handlePublicBooking(req, res, url, {
         api: deps.publicBooking, limiter, baseHeaders,
         onError: (e) => logger.error('public booking failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' }),
+      });
+      return;
+    }
+
+    // Cổng bệnh nhân: xác thực riêng (OTP + token phiên), không qua JWT nhân viên.
+    if (deps.portal && url.pathname.startsWith('/api/portal/')) {
+      await handlePortal(req, res, url, {
+        api: deps.portal, limiter, baseHeaders,
+        onError: (e) => logger.error('patient portal failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' }),
       });
       return;
     }

@@ -388,3 +388,11 @@ button.linkish:disabled { color: #888; cursor: default; }
 .kpis strong { font-size: 20px; margin-right: 4px; }
 .kpis strong.danger { color: var(--danger); }
 @media print { .no-print { display: none !important; } }
+
+/* HCOS-F20: cổng bệnh nhân (phía nhân viên) */
+label.check { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; font-weight: normal; }
+label.check input { width: auto; margin-top: 3px; }
+ul.plain { list-style: none; padding: 0; margin: 4px 0; }
+ul.plain > li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.card.inset { background: var(--bg); margin-top: 10px; }
+button.link.danger { color: var(--danger); background: none; border: none; }

@@ -19,6 +19,7 @@ import { can, useSession } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, printOnly, useAction, useIntentKey, useLoad } from '../lib/ui';
 import { FinanceError, PrintReceipt, ReceiptFields, receiptBody, useMyShift, useSettings, type Receipt, type ReceiptDraft } from './finance';
 import { PRIORITY_LABEL, useServicePoints, type ServicePoint } from './queue';
+import { PortalRequestsCard } from './portal-admin';
 
 declare const __HCOS_ENV_LABEL__: string;
 
@@ -541,6 +542,7 @@ export function BookingsScreen() {
         )}
       </Card>
 
+      {isStaff && !denied && <PortalRequestsCard />}
       {canManage && <BookingSettings />}
     </div>
   );
@@ -808,6 +810,14 @@ function BookingSettings() {
             </button>
           </p>
           <p className="muted">Đăng đường dẫn này lên website / fanpage / mã QR tại quầy. Người bệnh không cần tài khoản.</p>
+          <h3>Cổng bệnh nhân</h3>
+          <p>
+            <code className="select-all">{`${location.origin}/app/portal.html#/portal/${portal.data.slug}`}</code>
+          </p>
+          <p className="muted">
+            Người bệnh đăng nhập bằng mã OTP (SĐT trong hồ sơ, hoặc mã BN + ngày sinh) để xem các lần khám đã hoàn tất, phiếu thu, đặt / huỷ lịch, gửi yêu cầu.
+            Người giám hộ được liên kết tại trang bệnh nhân sau khi đối chiếu giấy tờ.
+          </p>
         </>
       ) : (
         portal.data === null && (

@@ -31,6 +31,9 @@ import { RetentionScheduler, RetentionService } from './governance/retention.ser
 import { ExportService } from './governance/export.service';
 import { VendorService } from './governance/vendor.service';
 import { EquipmentService } from './equipment/equipment.service';
+import { otpSenderFor } from './portal/otp-sender';
+import { PortalAdminService } from './portal/portal-admin.service';
+import { PortalService } from './portal/portal.service';
 import { PiiService } from './security/pii.service';
 import { configureKeyProvider } from '../../../packages/security/src/pii';
 import { PersonRegistryService, PgRegistryUnitOfWork } from './registry/person-registry.service';
@@ -79,6 +82,9 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     const governance = new GovernanceService({ pool, audit });
     const finance = new FinanceService({ uow: new PgFinanceUnitOfWork(pool), audit });
     const equipment = new EquipmentService({ pool, audit });
+    const publicBooking = new PublicBookingService({ pool, audit });
+    // HCOS-F20: cổng bệnh nhân (tắt mặc định; HCOS_PORTAL_OTP=training|webhook để bật đăng nhập).
+    const portal = new PortalService({ pool, audit, sender: otpSenderFor(cfg.portalOtp, httpTransport()), publicBooking, retention });
     const retentionScheduler = new RetentionScheduler({ pool, service: retention, intervalMs: cfg.retentionIntervalSec * 1000, log });
     const server = createApiServer({
       tenant: {
@@ -96,7 +102,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       queue: new QueueService({ uow: new PgQueueUnitOfWork(pool), audit }),
       queueBoard: new PgQueueBoard(pool),
       bookings: new BookingService({ uow: new PgBookingUnitOfWork(pool), audit, registrar: (input, ctx) => registry.registerPersonAndPatient(input as never, ctx) }),
-      publicBooking: new PublicBookingService({ pool, audit }),
+      publicBooking,
       finance,
       forecast: new ForecastService({ uow: new PgForecastUnitOfWork(pool), audit }),
       decision,
@@ -107,6 +113,8 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       vendors: new VendorService({ pool, audit }),
       exports: new ExportService({ pool, audit, finance, governance, retention, equipment }),
       equipment,
+      portal,
+      portalAdmin: new PortalAdminService({ pool, audit }),
       pii: new PiiService({ pool, audit }),
       retention,
       readiness: new PgReadinessProbe(pool, {

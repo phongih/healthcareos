@@ -20,6 +20,10 @@
  *                         (API vẫn chạy). Tạo: openssl rand -base64 32. Mất khoá => phải nhập lại URL các kết nối.
  *   HCOS_PUBLIC_BASE_URL  vd https://smart.id.vn — để thẻ Teams có nút "Mở trong HealthcareOS"; bắt buộc https
  *   HCOS_INTEGRATION_DISPATCH_SEC  chu kỳ giao webhook (giây), mặc định 15; 0 = tắt
+ *   HCOS_PORTAL_OTP       HCOS-F20 kênh gửi OTP cổng bệnh nhân: off (mặc định, tắt đăng nhập cổng) | training | webhook.
+ *                         training: mã OTP hiện ngay trên màn đăng nhập — CHỈ được bật cùng HCOS_TRAINING_ENV=1 (môi trường dữ liệu giả).
+ *                         webhook: POST {to, text} tới HCOS_PORTAL_OTP_URL (https) với Bearer HCOS_PORTAL_OTP_TOKEN; nhà cung cấp
+ *                         HCOS_PORTAL_OTP_VENDOR (id trong sổ F18) phải có đánh giá còn hiệu lực cho loại dữ liệu 'personal' — kiểm mỗi lần gửi.
  *   HCOS_KEKS             BẮT BUỘC (HCOS-F16): KEK bọc khoá mã hoá dữ liệu, dạng "id:base64[,id:base64…]" (32 byte mỗi khoá),
  *                         khoá ĐẦU là khoá đang dùng. Tạo: echo "k1:$(openssl rand -base64 32)". KHÔNG để trong CSDL / bản sao lưu CSDL;
  *                         sao lưu riêng ngoại tuyến — mất KEK là mất dữ liệu đã mã hoá. Phải khác HCOS_INTEGRATION_KEY.
@@ -48,7 +52,13 @@ export interface AppConfig {
   readonly integrationDispatchSec: number;
   /** HCOS-F16: KEK cục bộ (bọc DEK). */
   readonly keyProvider: LocalKeyProvider | null;
+  /** HCOS-F20: kênh OTP cổng bệnh nhân. */
+  readonly portalOtp: PortalOtpConfig;
 }
+export type PortalOtpConfig =
+  | { readonly mode: 'off' }
+  | { readonly mode: 'training' }
+  | { readonly mode: 'webhook'; readonly url: string; readonly token: string; readonly vendorId: string };
 
 export class ConfigError extends Error {
   constructor(readonly problems: readonly string[]) {
@@ -138,7 +148,33 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     }
   }
 
+  // HCOS-F20
+  let portalOtp: PortalOtpConfig = { mode: 'off' };
+  const otpMode = env['HCOS_PORTAL_OTP']?.trim() || 'off';
+  if (otpMode === 'training') {
+    if (env['HCOS_TRAINING_ENV']?.trim() !== '1') problems.push('HCOS_PORTAL_OTP=training requires HCOS_TRAINING_ENV=1 (fake-data environment only)');
+    else portalOtp = { mode: 'training' };
+  } else if (otpMode === 'webhook') {
+    const url = env['HCOS_PORTAL_OTP_URL']?.trim() ?? '';
+    const token = env['HCOS_PORTAL_OTP_TOKEN']?.trim() ?? '';
+    const vendorId = (env['HCOS_PORTAL_OTP_VENDOR']?.trim() ?? '').toLowerCase();
+    let ok = true;
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'https:' || u.username || u.password) { problems.push('HCOS_PORTAL_OTP_URL must be a plain https URL'); ok = false; }
+    } catch {
+      problems.push('HCOS_PORTAL_OTP_URL is required (https)');
+      ok = false;
+    }
+    if (token.length < 16) { problems.push('HCOS_PORTAL_OTP_TOKEN must be at least 16 characters'); ok = false; }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(vendorId)) { problems.push('HCOS_PORTAL_OTP_VENDOR must be a vendor id (UUID) from the vendor register'); ok = false; }
+    if (ok) portalOtp = { mode: 'webhook', url, token, vendorId };
+  } else if (otpMode !== 'off') {
+    problems.push('HCOS_PORTAL_OTP must be off, training or webhook');
+  }
+
   const cfg: AppConfig = {
+    portalOtp,
     databaseUrl,
     keyProvider,
     issuer,

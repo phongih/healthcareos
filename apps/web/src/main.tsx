@@ -230,10 +230,13 @@ function Root() {
   if (book) return book[2] ? <PublicLookupScreen slug={book[1]!} /> : <PublicBookingScreen slug={book[1]!} />;
   return <App />;
 }
+// HCOS-F20: cổng bệnh nhân / link chia sẻ chạy ở bundle riêng (portal.html) — chuyển trước khi khởi tạo đăng nhập nhân viên.
+const TO_PORTAL = /^#\/(portal|s)\//.test(location.hash);
 const PUBLIC_RE = /^#\/(board|book)\//;
 const startedPublic = PUBLIC_RE.test(location.hash);
 addEventListener('hashchange', () => {
   // Rời trang công khai sang ứng dụng (hoặc ngược lại) => tải lại để luồng đăng nhập chạy sạch.
   if (PUBLIC_RE.test(location.hash) !== startedPublic) location.reload();
 });
-createRoot(document.getElementById('root')!).render(<Root />);
+if (TO_PORTAL) location.replace(`portal.html${location.hash}`);
+else createRoot(document.getElementById('root')!).render(<Root />);

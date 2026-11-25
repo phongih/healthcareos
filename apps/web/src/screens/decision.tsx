@@ -12,7 +12,7 @@ import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 
 type Op = '<' | '<=' | '>' | '>=' | '=' | '!=';
 interface Metric { id: string; label: string; unit: string }
-interface Detector { id: string; group: 'clinical' | 'operations' | 'pharmacy' | 'finance'; label: string; description: string; method: string; metrics: Metric[]; targets: string[]; suggestion: string }
+interface Detector { id: string; group: 'clinical' | 'operations' | 'pharmacy' | 'finance' | 'equipment' | 'security'; label: string; description: string; method: string; metrics: Metric[]; targets: string[]; suggestion: string }
 interface Catalog { detectors: Detector[]; actions: Array<{ id: string; label: string }>; ops: Op[]; notifyRoles: string[] }
 interface Condition { metric: string; op: Op; value: number }
 interface Rule {
@@ -36,7 +36,9 @@ interface Overview {
 }
 interface Preview { candidates: number; matched: number; suppressed: number; sample: Array<{ title: string; metrics: Record<string, number | null>; link: string | null; inCooldown: boolean }> }
 
-const GROUP: Record<Detector['group'], string> = { clinical: 'Lâm sàng', operations: 'Vận hành', pharmacy: 'Dược', finance: 'Tài chính' };
+const GROUP: Record<Detector['group'], string> = {
+  clinical: 'Lâm sàng', operations: 'Vận hành', pharmacy: 'Dược', finance: 'Tài chính', equipment: 'Thiết bị & vật tư', security: 'An ninh',
+};
 const ACTION_TEXT: Record<string, string> = {
   log_only: 'Chỉ ghi nhật ký', suggest: 'Gợi ý', human_handled: 'Đánh dấu đã xử lý', human_applied: 'Áp dụng gợi ý', human_dismissed: 'Bỏ qua gợi ý', human_reopened: 'Mở lại',
 };
@@ -363,7 +365,7 @@ function RuleForm({ catalog, rule, onDone, onCancel }: { catalog: Catalog; rule:
           </Field>
           <Field label="Bộ phát hiện (Observe)" hint={rule ? 'không đổi được sau khi tạo' : undefined}>
             <select value={detectorId} disabled={!!rule} onChange={(e) => changeDetector(e.target.value)}>
-              {(['clinical', 'operations', 'pharmacy', 'finance'] as const).map((g) => (
+              {(['clinical', 'operations', 'pharmacy', 'finance', 'equipment', 'security'] as const).map((g) => (
                 <optgroup key={g} label={GROUP[g]}>
                   {catalog.detectors
                     .filter((x) => x.group === g)

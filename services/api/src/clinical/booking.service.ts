@@ -219,6 +219,11 @@ export class PgBookingRepository extends PgQueueRepository {
     super(db);
   }
 
+  /** HCOS-F20: lịch tạo tiếp theo trong transaction này là của person đặt qua cổng bệnh nhân. */
+  async markPortalPerson(personId: string): Promise<void> {
+    await this.db.query("SELECT set_config('app.portal_booking_person', $1, true)", [personId]);
+  }
+
   async listBookableServicePoints(organizationId: OrganizationId): Promise<ServicePoint[]> {
     return (await this.listServicePoints(organizationId)).filter((sp) => sp.isActive && sp.bookingCapacity > 0);
   }
@@ -481,7 +486,8 @@ export class PublicBookingService {
     });
   }
 
-  async create(slug: string, input: PublicCreateInput): Promise<PublicBookingResult | null> {
+  /** `opts.portalPersonId` (HCOS-F20): lịch đặt từ cổng bệnh nhân — gắn person (trigger đọc biến transaction). */
+  async create(slug: string, input: PublicCreateInput, opts: { portalPersonId?: string } = {}): Promise<PublicBookingResult | null> {
     const portal = await this.portal(slug);
     if (!portal) return null;
     const now = this.clock();
@@ -493,6 +499,7 @@ export class PublicBookingService {
       if (!(await repo.reserveSlot(room.servicePointId, v.visitDate, v.period, room.bookingCapacity))) {
         throw new ClinicalError('CONFLICT', 'This session is fully booked', { reason: 'SESSION_FULL' });
       }
+      if (opts.portalPersonId) await repo.markPortalPerson(opts.portalPersonId);
       const code = newBookingCode();
       const booking: Booking = {
         ...v, tenantId: portal.tenantId, bookingId: randomUUID(), organizationId: portal.organizationId, status: 'booked', patientId: null, ticketId: null,

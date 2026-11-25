@@ -44,7 +44,8 @@ const PERMISSIONS: Readonly<Record<Permission, readonly Role[]>> = {
 };
 
 export const ERASURE_CHANNELS = ['counter', 'written', 'email', 'phone'] as const;
-export type ErasureChannel = (typeof ERASURE_CHANNELS)[number];
+/** Kênh nhân viên chọn được + 'portal' (F20: người bệnh tự gửi qua cổng, không có người lập là nhân viên). */
+export type ErasureChannel = (typeof ERASURE_CHANNELS)[number] | 'portal';
 
 export interface RuleView {
   readonly id: RetentionRuleId;
@@ -88,7 +89,8 @@ export interface ErasureRequest {
   readonly channel: ErasureChannel;
   readonly note: string | null;
   readonly receivedAt: string;
-  readonly requestedBy: string;
+  /** null = người bệnh / người giám hộ tự lập qua cổng (F20). */
+  readonly requestedBy: string | null;
   readonly requestedByName: string | null;
   readonly requestedAt: string;
   readonly assessment: Assessment;
@@ -402,6 +404,35 @@ export class RetentionService {
     });
   }
 
+  /**
+   * HCOS-F20: người bệnh (hoặc người giám hộ) tự lập yêu cầu xoá qua cổng. Không có nhân viên lập => một quản trị viên bất kỳ duyệt.
+   * Quyền do PortalService kiểm (person thuộc phiên); ctx là ngữ cảnh dịch vụ của cổng.
+   */
+  async requestFromPortal(input: { patientId: string; submittedByPersonId: string; note: string | null }, ctx: TenantContext): Promise<{ requestId: string }> {
+    return this.run(ctx, 'erasure.request.portal', async (repo) => {
+      const pt = await repo.patientOrg(input.patientId);
+      if (!pt) throw new ClinicalError('NOT_FOUND', 'Patient not found');
+      if (pt.erased) throw new ClinicalError('CONFLICT', 'Patient data has already been erased', { reason: 'ALREADY_ERASED' });
+      const assessment = await repo.rawAssessment(pt.personId);
+      const id = randomUUID();
+      try {
+        await repo.tdb.query(
+          `INSERT INTO governance.erasure_requests (request_id, tenant_id, organization_id, patient_id, person_id, channel, note, received_at, requested_by, portal_person_id, assessment)
+           VALUES ($1, $2, $3, $4, $5, 'portal', $6, now(), NULL, $7, $8::jsonb)`,
+          [id, ctx.tenantId, pt.org, input.patientId, pt.personId, input.note, input.submittedByPersonId, JSON.stringify(assessment)],
+        );
+      } catch (e) {
+        if ((e as { code?: string }).code === '23505') throw new ClinicalError('CONFLICT', 'An erasure request is already open for this person', { reason: 'ERASURE_ALREADY_OPEN' });
+        throw e;
+      }
+      await repo.appendAudit({
+        ...this.event(ctx, 'erasure.request', 'success', null, { requestId: id, channel: 'portal', submittedByPersonId: input.submittedByPersonId }, 'ErasureRequest', id),
+        actor: { type: 'service', id: 'patient-portal' }, organizationId: pt.org, patientId: input.patientId as never, personId: input.submittedByPersonId as never,
+      });
+      return { requestId: id };
+    });
+  }
+
   async decide(requestId: unknown, input: { decision: unknown; note?: unknown }, ctx: TenantContext = requireTenantContext()): Promise<{ request: ErasureRequest; receipt: Receipt | null }> {
     const id = this.uuid(requestId, 'requestId');
     if (input.decision !== 'approve' && input.decision !== 'reject') throw new ClinicalError('VALIDATION', "decision must be 'approve' or 'reject'");
@@ -505,7 +536,7 @@ export class RetentionService {
   }
 
   /** Thực thi một yêu cầu đã duyệt (ngay khi duyệt, hoặc khi hết hạn giữ). Ghi biên nhận + cập nhật trạng thái. */
-  private async executeRequest(repo: Repo, id: string, approvedBy: string | null, _requestedBy: string, column: 'receipt_id' | 'final_receipt_id', policyIn?: string): Promise<Receipt> {
+  private async executeRequest(repo: Repo, id: string, approvedBy: string | null, _requestedBy: string | null, column: 'receipt_id' | 'final_receipt_id', policyIn?: string): Promise<Receipt> {
     const started = this.clock();
     const policy = policyIn ?? retentionPolicyVersion(await repo.effectiveDays());
     const rid = randomUUID();
@@ -654,7 +685,7 @@ export class RetentionScheduler {
 
 // ---------------------------------------------------------------------------
 const vnDate = (s: string) => new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(s));
-const CHANNEL_LABEL: Readonly<Record<ErasureChannel, string>> = { counter: 'trực tiếp tại quầy', written: 'văn bản', email: 'email', phone: 'điện thoại' };
+const CHANNEL_LABEL: Readonly<Record<ErasureChannel, string>> = { counter: 'trực tiếp tại quầy', written: 'văn bản', email: 'email', phone: 'điện thoại', portal: 'cổng bệnh nhân trực tuyến (xác thực OTP)' };
 export function renderLetter(req: ErasureRequest, receipts: readonly Receipt[]): string {
   const L: string[] = [];
   L.push('# Thông báo kết quả xử lý yêu cầu xoá dữ liệu cá nhân', '');
