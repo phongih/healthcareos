@@ -717,7 +717,7 @@ async function seedEquipment(): Promise<void> {
     }
   }
   // Loại thiết bị, thiết bị, kiểm định lần đầu, dịch vụ cần máy.
-  const list = (await call<{ devices: Array<{ serialNo: string | null }>; types: Array<{ typeId: string; code: string }>; rooms: Array<{ servicePointId: string; code: string }>;
+  const list = (await call<{ devices: Array<Record<string, unknown> & { deviceId: string; serialNo: string | null; registrationNo: string | null; status: string }>; types: Array<{ typeId: string; code: string }>; rooms: Array<{ servicePointId: string; code: string }>;
     requirements: Array<{ itemId: string; typeId: string }> }>(QL, 'GET', `/api/equipment?organization=${ORG}`)).data;
   const typeId = new Map(list.types.map((t) => [t.code, t.typeId]));
   for (const [code, name] of DEVICE_TYPES) {
@@ -725,13 +725,23 @@ async function seedEquipment(): Promise<void> {
     typeId.set(code, (await call<{ typeId: string }>(QL, 'POST', '/api/equipment/types', { code, name })).data.typeId);
     bump('loại thiết bị');
   }
+  // Số lưu hành mẫu: "MẪU-TT-<model>" (vd. TT-NEB1-0001 => MẪU-TT-NEB1). Bản cũ cắt cứng 5 ký tự => "MẪU-TT-NEB1-" — sửa lại nếu gặp.
+  const regNo = (serial: string) => `MẪU-TT-${serial.slice(3).replace(/-\d+$/, '')}`;
   const serials = new Set(list.devices.map((d) => d.serialNo));
+  for (const dev of list.devices) {
+    const want = DEVICES.find((d) => d.serialNo === dev.serialNo);
+    if (!want || dev.status === 'retired' || !dev.registrationNo?.startsWith('MẪU-TT-') || dev.registrationNo === regNo(want.serialNo)) continue;
+    const body = Object.fromEntries(['typeId', 'name', 'manufacturer', 'model', 'serialNo', 'riskClass', 'warrantyUntil', 'acquiredOn', 'inServiceOn', 'cost', 'usefulLifeMonths', 'version']
+      .map((k) => [k, dev[k]]).filter(([, v]) => v !== null && v !== undefined));
+    await call(QL, 'POST', `/api/equipment/devices/${dev.deviceId}`, { ...body, registrationNo: regNo(want.serialNo) });
+    bump('số lưu hành mẫu đã sửa');
+  }
   for (const d of DEVICES) {
     if (serials.has(d.serialNo)) continue;
     const room = d.room ? list.rooms.find((r) => r.code === d.room)?.servicePointId : undefined;
     const dev = (await call<{ deviceId: string; assetCode: string }>(QL, 'POST', '/api/equipment/devices', {
       organizationId: ORG, typeId: typeId.get(d.type), name: d.name, manufacturer: d.manufacturer, model: d.model, serialNo: d.serialNo,
-      ...(room ? { servicePointId: room } : {}), riskClass: d.riskClass, registrationNo: `MẪU-TT-${d.serialNo.slice(3, 8)}`,
+      ...(room ? { servicePointId: room } : {}), riskClass: d.riskClass, registrationNo: regNo(d.serialNo),
       warrantyUntil: ymd(365 - d.inServiceDaysAgo + 730), acquiredOn: ymd(-d.inServiceDaysAgo - 10), inServiceOn: ymd(-d.inServiceDaysAgo),
       cost: d.cost, usefulLifeMonths: d.life, regimes: [{ regime: d.regime, cycleMonths: d.cycle, mandatory: d.mandatory }],
     })).data;

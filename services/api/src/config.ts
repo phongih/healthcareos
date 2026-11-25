@@ -13,6 +13,7 @@
  *   HCOS_DB_POOL_MAX    mặc định 10
  *   HCOS_READY_TIMEOUT_MS  timeout của /readyz, mặc định 2000
  *   HCOS_DECISION_INTERVAL_SEC  chu kỳ chạy Decision Engine (giây), mặc định 300; 0 = tắt bộ lập lịch (vẫn bấm "Chạy ngay" được)
+ *   HCOS_NO_SHOW_INTERVAL_SEC   chu kỳ job đánh dấu vắng lịch hẹn (giây), mặc định 3600; 0 = tắt, tối thiểu 300
  *   HCOS_RETENTION_INTERVAL_SEC chu kỳ job lưu giữ / xoá (giây), mặc định 86400 (1 ngày); 0 = tắt (vẫn bấm "Chạy ngay" được), tối thiểu 300
  *   HCOS_BACKUP_HORIZON_DAYS  thời hạn giữ bản sao lưu dài nhất (bucket + bản dump cục bộ), mặc định 90 — ghi vào biên nhận xoá:
  *                             ngày "không thể khôi phục" = lúc xoá + số ngày này
@@ -45,6 +46,7 @@ export interface AppConfig {
   /** Chu kỳ chạy Decision Engine (giây); 0 = tắt bộ lập lịch. */
   readonly decisionIntervalSec: number;
   readonly retentionIntervalSec: number;
+  readonly noShowIntervalSec: number;
   readonly backupHorizonDays: number;
   /** Khoá mã hoá bí mật tích hợp (32 byte); null = tắt tích hợp. */
   readonly integrationKey: Buffer | null;
@@ -188,6 +190,11 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     retentionIntervalSec: (() => {
       const v = int('HCOS_RETENTION_INTERVAL_SEC', 86_400, 0, 7 * 86_400);
       if (v > 0 && v < 300) problems.push('HCOS_RETENTION_INTERVAL_SEC must be 0 (off) or at least 300');
+      return v;
+    })(),
+    noShowIntervalSec: (() => {
+      const v = int('HCOS_NO_SHOW_INTERVAL_SEC', 3600, 0, 86_400);
+      if (v > 0 && v < 300) problems.push('HCOS_NO_SHOW_INTERVAL_SEC must be 0 (off) or at least 300');
       return v;
     })(),
     backupHorizonDays: int('HCOS_BACKUP_HORIZON_DAYS', 90, 0, 3650),
