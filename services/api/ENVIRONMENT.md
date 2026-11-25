@@ -20,6 +20,7 @@ Cấu hình **chỉ** qua biến môi trường lúc chạy. Image không chứa
 | `HCOS_TRAINING_ENV` | không | — | `1` = môi trường dữ liệu giả (cho phép `HCOS_PORTAL_OTP=training`). **Không** đặt ở production |
 | `HCOS_PORTAL_OTP_URL` / `HCOS_PORTAL_OTP_TOKEN` / `HCOS_PORTAL_OTP_VENDOR` | khi `webhook` | — | URL https của nhà cung cấp, Bearer token (≥ 16 ký tự), id nhà cung cấp trong sổ F18 — phải có đánh giá còn hiệu lực cho dữ liệu "Cá nhân" (kiểm trước mỗi lần gửi). Chỉ bật khi đã có DPA thật |
 | `HCOS_RETENTION_INTERVAL_SEC` | không | `86400` | HCOS-F17: chu kỳ job lưu giữ / xoá (giây); `0` = tắt (vẫn bấm "Chạy ngay" được), tối thiểu 300 |
+| `HCOS_NO_SHOW_INTERVAL_SEC` | không | `3600` | Chu kỳ job đánh dấu **vắng** (`no_show`) cho lịch hẹn còn "Đã đặt" khi ngày khám đã qua (giờ VN); `0` = tắt, tối thiểu 300 |
 | `HCOS_BACKUP_HORIZON_DAYS` | không | `90` | Thời hạn giữ bản sao lưu dài nhất (vòng đời bucket); ghi vào biên nhận xoá làm ngày "không thể khôi phục". Đổi vòng đời bucket thì đổi theo |
 | `HCOS_PUBLIC_BASE_URL` | không | — | Địa chỉ https công khai (vd `https://smart.id.vn`) để thẻ Teams có nút "Mở trong HealthcareOS" |
 | `HCOS_INTEGRATION_DISPATCH_SEC` | không | `15` | Chu kỳ giao webhook (giây); `0` = tắt, ≥ 5 |

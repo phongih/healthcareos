@@ -96,7 +96,11 @@ jobs:
           export HCOS_DATABASE_URL=postgres://ci_api:ci_api@localhost:5432/hcos_training TT_PATIENTS=6
           export HCOS_KEKS="ci:$(openssl rand -base64 32)"
           npx tsx scripts/seed-training.ts
+          # Giả lập số lưu hành mẫu bị cắt của bản seed cũ ("MẪU-TT-NEB1-"): lần chạy sau phải tự sửa cả 5 thiết bị.
+          psql -X -q -v ON_ERROR_STOP=1 -d hcos_training -c "UPDATE equipment.devices SET registration_no = registration_no || '-'"
           npx tsx scripts/seed-training.ts | tee second-run.txt
+          grep -q 'số lưu hành mẫu đã sửa *5' second-run.txt
+          test "$(psql -X -tA -d hcos_training -c "SELECT count(*) FROM equipment.devices WHERE registration_no LIKE '%-'")" = 0
           grep -q 'bệnh nhân đã có (bỏ qua) *6' second-run.txt
           # HCOS-F16: script backfill (driver pg thật) chạy được và báo 0 bản rõ còn lại.
           npx tsx scripts/pii-backfill.ts 00000000-0000-4000-8000-0000000000a1 | tee backfill.txt

@@ -28,6 +28,7 @@ import { PgQueueBoard, PgQueueUnitOfWork, QueueService } from './clinical/queue.
 import { HandoverService } from './clinical/handover.service';
 import { GovernanceService } from './governance/governance.service';
 import { RetentionScheduler, RetentionService } from './governance/retention.service';
+import { NoShowJob } from './clinical/no-show.job';
 import { ExportService } from './governance/export.service';
 import { VendorService } from './governance/vendor.service';
 import { EquipmentService } from './equipment/equipment.service';
@@ -85,6 +86,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     const publicBooking = new PublicBookingService({ pool, audit });
     // HCOS-F20: cổng bệnh nhân (tắt mặc định; HCOS_PORTAL_OTP=training|webhook để bật đăng nhập).
     const portal = new PortalService({ pool, audit, sender: otpSenderFor(cfg.portalOtp, httpTransport()), publicBooking, retention });
+    const noShow = new NoShowJob({ pool, intervalMs: cfg.noShowIntervalSec * 1000, log });
     const retentionScheduler = new RetentionScheduler({ pool, service: retention, intervalMs: cfg.retentionIntervalSec * 1000, log });
     const server = createApiServer({
       tenant: {
@@ -135,12 +137,13 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     scheduler.start();
     dispatcher.start();
     retentionScheduler.start();
+    noShow.start();
 
     let stopping: Promise<void> | undefined;
     const stop = (): Promise<void> =>
       (stopping ??= new Promise<void>((resolve) => {
         server.close(() => {
-          Promise.all([scheduler.stop(), dispatcher.stop(), retentionScheduler.stop()])
+          Promise.all([scheduler.stop(), dispatcher.stop(), retentionScheduler.stop(), noShow.stop()])
             .catch(() => undefined)
             .then(() => pgPool.end())
             .then(() => resolve(), () => resolve());
