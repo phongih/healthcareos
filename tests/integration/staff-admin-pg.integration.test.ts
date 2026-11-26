@@ -33,7 +33,7 @@ const outcome = (p: Promise<unknown>) => p.then(() => 'OK', (e: { code?: string;
 const run = ENABLED ? describe : (describe as unknown as { skip: typeof describe }).skip;
 
 class FakeIdp implements IdentityProviderAdmin {
-  users = new Map<string, IdpUser & { password?: string; otp: boolean; sessions: number }>();
+  users = new Map<string, Omit<IdpUser, 'enabled'> & { enabled: boolean; password?: string; otp: boolean; sessions: number }>();
   calls: string[] = [];
   fail: IdpError | null = null;
   private n = 900;
@@ -103,7 +103,7 @@ run('Quản trị nhân sự & cơ sở / PostgreSQL', () => {
     expect(a.grantableRoles).toEqual(['doctor', 'clinic_staff', 'cashier', 'pharmacist', 'pharmacy_admin']);
     expect(a.staff.map((s) => s.username).sort()).toEqual(['bs2noi', 'ds1', 'lt1', 'ql1', 'qtv']);
     const doc = a.staff.find((s) => s.username === 'bs2noi')!;
-    expect(doc.memberships.map((m: { organizationName: string }) => m.organizationName)).toEqual(['PK 1']); // chỉ thấy membership ở cơ sở mình
+    expect(doc.memberships.map((m) => (m as { organizationName: string }).organizationName)).toEqual(['PK 1']); // chỉ thấy membership ở cơ sở mình
     expect(doc.manageable).toBe(true); // giao diện; thao tác khoá vẫn bị chặn vì làm ở PK 2 (xem dưới)
     expect(a.staff.find((s) => s.username === 'qtv')!.manageable).toBe(false);
     expect(a.staff.find((s) => s.username === 'ql1')!.self).toBe(true);
