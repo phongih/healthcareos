@@ -65,7 +65,13 @@ npm run build      # ra dist/index.html, dist/app-<hash>.js, dist/app-<hash>.css
 - Realm template thêm redirect `https://smart.id.vn/app/callback` và post-logout `https://smart.id.vn/app/` cho client `hcos-web`.
 - Realm đang chạy phải được cập nhật bằng kcadm (xem runbook staging).
 
-## 5. Giới hạn đã biết
+## 5. Điều hướng (giao diện đợt 2)
+- Danh mục ứng dụng ở `apps/web/src/lib/nav.tsx` (`APPS`): khoá, đường dẫn, nhóm, biểu tượng (`lib/icons.tsx`, nét đơn, không thư viện ngoài), từ khoá tìm không dấu, hàm quyền (`can.*`) và các route thuộc ứng dụng. Chỉ hiện ứng dụng vai trò được phép; máy chủ vẫn kiểm tra quyền ở từng API.
+- ≥ 1024px: thanh bên theo nhóm + thanh trên sáng (tên mục, ô Cơ sở, chuông). Hẹp hơn: thanh trên màu thương hiệu + **thanh dưới đáy** (tối đa 4 mục ghim + "Ứng dụng") + **lưới ứng dụng** (bảng trượt, ô tìm, Esc để đóng).
+- Ghim mặc định theo vai trò (`ROLE_PINS`, vai trò quản trị ưu tiên trước); người dùng sửa ghim, lưu ở `localStorage` khoá `hcos.nav.pins.v1.<userId>` (chỉ là tiện ích theo trình duyệt; không lưu được thì dùng mặc định). Không lưu dữ liệu bệnh nhân.
+- Vào `#/` => mở mục ghim đầu tiên.
+
+## 6. Giới hạn đã biết
 - Không có chế độ offline. Tải lại trang thì phải đăng nhập lại; đây là đánh đổi có chủ ý để token không bị lưu.
 - Danh sách membership tối đa 500 dòng mỗi organization. Chưa có phân trang trong danh sách đợt khám (lấy tối đa 50 đợt gần nhất).
 - Chưa có in ấn hay xuất đơn thuốc. Chưa có giao diện gộp hoặc tách hồ sơ person.
