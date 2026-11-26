@@ -37,4 +37,15 @@ python3 idp-scope-mfa.py status     # hiện trạng: luồng đăng nhập, tha
 python3 idp-scope-mfa.py apply      # chép luồng + gắn amr + gỡ claim cố định (chạy lại được)
 python3 idp-scope-mfa.py rollback   # quay về luồng browser + claim cố định cũ
 ```
-Thứ tự an toàn: deploy API mới (chưa đặt `HCOS_REQUIRE_AMR`) => `apply` => đăng nhập lại, `pkce-token.sh` thấy `amr: ['pwd', 'otp']` => đặt `HCOS_REQUIRE_AMR=otp` trong `hcos.env` => tạo lại container `api`.
+Thứ tự an toàn: deploy API mới (chưa đặt `HCOS_REQUIRE_AMR`) => `apply` => đăng nhập lại => **chỉ** ghi `HCOS_REQUIRE_AMR=otp` khi token thật sự có `otp`:
+```bash
+bash pkce-token.sh | tee /tmp/hcos-token.txt          # mở URL bằng cửa sổ ẩn danh
+if grep -q "^amr: .*'otp'" /tmp/hcos-token.txt; then
+  grep -q '^HCOS_REQUIRE_AMR=' hcos.env || echo 'HCOS_REQUIRE_AMR=otp' | tee -a hcos.env
+  docker compose --env-file secrets.env up -d --no-deps --force-recreate api
+else
+  echo "KHÔNG bật HCOS_REQUIRE_AMR: token chưa có amr otp"
+fi
+rm -f /tmp/hcos-token.txt
+```
+Bài học (26/11): bật `HCOS_REQUIRE_AMR` khi token chưa có `amr` => mọi nhân viên bị chặn đăng nhập. Gỡ: `sed -i '/^HCOS_REQUIRE_AMR=/d' hcos.env` rồi tạo lại container `api`.
