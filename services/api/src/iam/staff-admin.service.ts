@@ -135,7 +135,13 @@ export class StaffAdminService extends GovernanceBase<Permission> {
                   'membershipId', m.membership_id, 'organizationId', m.organization_id, 'organizationName', o.name, 'role', m.role, 'status', m.status,
                   'validFrom', m.valid_from, 'validTo', m.valid_to, 'grantedByName', g.display_name, 'revokedAt', m.revoked_at,
                   'revokedByName', rv.display_name, 'revokeReason', m.revoke_reason, 'accessPolicyId', m.access_policy_id
-                ) ORDER BY o.code, m.role, m.valid_from DESC) FILTER (WHERE m.membership_id IS NOT NULL), '[]') AS memberships
+                ) ORDER BY o.code, m.role, m.valid_from DESC) FILTER (WHERE m.membership_id IS NOT NULL), '[]') AS memberships,
+                -- Mọi vai trò còn hiệu lực ở MỌI cơ sở (kể cả cơ sở người xem không quản lý): để tính "manageable" đúng như
+                -- assertManagesUser ở máy chủ, không theo danh sách đã lọc theo phạm vi.
+                (SELECT COALESCE(json_agg(json_build_object('o', x.organization_id, 'r', x.role)), '[]')
+                   FROM iam.memberships x
+                  WHERE x.tenant_id = u.tenant_id AND x.user_id = u.user_id AND x.status = 'active'
+                    AND (x.valid_to IS NULL OR x.valid_to > now())) AS all_active
            FROM iam.users u
            JOIN iam.memberships m ON m.tenant_id = u.tenant_id AND m.user_id = u.user_id
                                  AND ($3::boolean OR m.status <> 'revoked')
@@ -154,11 +160,19 @@ export class StaffAdminService extends GovernanceBase<Permission> {
         staff: r.rows.map((u) => {
           const raw = u['memberships'];
           const ms = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ role: string; status: string; organizationId: string }>;
-          const active = ms.filter((m) => m.status === 'active');
-          const manageable = u['user_id'] !== s.user.userId && (s.tenantAdmin || (!active.some((m) => ADMIN_ROLES.has(m.role)) && active.every((m) => s.adminOrgs.has(m.organizationId))));
+          const rawAll = u['all_active'];
+          const allActive = (typeof rawAll === 'string' ? JSON.parse(rawAll) : rawAll ?? []) as Array<{ o: string; r: string }>;
+          const self = u['user_id'] === s.user.userId;
+          // Khớp assertManagesUser: không phải mình; tenant_admin => được; quản lý cơ sở => người đó không giữ vai trò quản trị
+          // và mọi vai trò còn hiệu lực đều ở cơ sở mình quản lý.
+          const manageable = !self && (s.tenantAdmin || (!allActive.some((m) => ADMIN_ROLES.has(m.r)) && allActive.every((m) => s.adminOrgs.has(m.o))));
+          // Khớp revokeMembership: không phải vai trò của mình; tenant_admin => mọi vai trò; quản lý cơ sở => vai trò nghiệp vụ ở cơ sở mình.
+          for (const m of ms as Array<{ role: string; status: string; organizationId: string; revocable?: boolean }>) {
+            m.revocable = m.status === 'active' && !self && (s.tenantAdmin || (CLINIC_ADMIN_GRANTS.has(m.role) && s.adminOrgs.has(m.organizationId)));
+          }
           return {
             userId: u['user_id'], displayName: u['display_name'], username: u['username'], email: u['email'], status: u['status'],
-            lastLoginAt: u['last_login_at'], createdAt: u['created_at'], memberships: ms as unknown[], manageable, self: u['user_id'] === s.user.userId,
+            lastLoginAt: u['last_login_at'], createdAt: u['created_at'], memberships: ms as unknown[], manageable, self,
           };
         }),
         grantableRoles: adminRoles,
