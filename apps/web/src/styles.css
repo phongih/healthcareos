@@ -396,3 +396,9 @@ ul.plain { list-style: none; padding: 0; margin: 4px 0; }
 ul.plain > li { padding: 6px 0; border-bottom: 1px solid var(--line); }
 .card.inset { background: var(--bg); margin-top: 10px; }
 button.link.danger { color: var(--danger); background: none; border: none; }
+
+/* HCOS-F21: nhân sự & cơ sở */
+code.big { font-size: 20px; letter-spacing: 1px; padding: 4px 8px; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+fieldset.roles { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+fieldset.roles label.check { margin: 4px 0; }
+td .badge + .badge { margin-left: 4px; }

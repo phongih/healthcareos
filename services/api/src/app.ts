@@ -29,6 +29,9 @@ import { HandoverService } from './clinical/handover.service';
 import { GovernanceService } from './governance/governance.service';
 import { RetentionScheduler, RetentionService } from './governance/retention.service';
 import { NoShowJob } from './clinical/no-show.job';
+import { KeycloakAdminClient, NOT_CONFIGURED } from './iam/keycloak-admin';
+import { StaffAdminService } from './iam/staff-admin.service';
+import { asTenantId } from '../../../packages/domain/src/s0-contracts';
 import { PgOrgScopeLookup } from '../../../packages/security/src/pg-org-scope';
 import { ExportService } from './governance/export.service';
 import { VendorService } from './governance/vendor.service';
@@ -87,6 +90,12 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     const publicBooking = new PublicBookingService({ pool, audit });
     // HCOS-F20: cổng bệnh nhân (tắt mặc định; HCOS_PORTAL_OTP=training|webhook để bật đăng nhập).
     const portal = new PortalService({ pool, audit, sender: otpSenderFor(cfg.portalOtp, httpTransport()), publicBooking, retention });
+    const orgScope = new PgOrgScopeLookup(pool);
+    // HCOS-F21: quản trị nhân sự & cơ sở (tài khoản Keycloak qua client service-account riêng).
+    const staffAdmin = new StaffAdminService({
+      pool, audit, idp: cfg.keycloakAdmin ? new KeycloakAdminClient(cfg.keycloakAdmin) : NOT_CONFIGURED,
+      onAccessChanged: (t) => orgScope.invalidate(asTenantId(t)),
+    });
     const noShow = new NoShowJob({ pool, intervalMs: cfg.noShowIntervalSec * 1000, log });
     const retentionScheduler = new RetentionScheduler({ pool, service: retention, intervalMs: cfg.retentionIntervalSec * 1000, log });
     const server = createApiServer({
@@ -96,7 +105,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         key: createRemoteJWKSet(new URL(cfg.jwksUrl)),
         tenantStatus: new PgTenantStatusLookup(pool),
         // Cơ sở được phép theo membership trong DB của từng user (không tin claim org_ids cố định của IdP).
-        orgScope: new PgOrgScopeLookup(pool),
+        orgScope,
         requireAmr: cfg.requireAmr,
         audit,
       },
@@ -121,6 +130,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       equipment,
       portal,
       portalAdmin: new PortalAdminService({ pool, audit }),
+      staffAdmin,
       pii: new PiiService({ pool, audit }),
       retention,
       readiness: new PgReadinessProbe(pool, {
@@ -155,7 +165,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         server.closeIdleConnections();
       }));
 
-    log({ level: 'info', msg: 'hcos-api listening', port, decisionIntervalSec: cfg.decisionIntervalSec, integrations: cfg.integrationKey ? 'enabled' : 'disabled (HCOS_INTEGRATION_KEY not set)', mfa: cfg.requireAmr.length ? cfg.requireAmr.join(',') : 'not enforced at API' });
+    log({ level: 'info', msg: 'hcos-api listening', port, decisionIntervalSec: cfg.decisionIntervalSec, integrations: cfg.integrationKey ? 'enabled' : 'disabled (HCOS_INTEGRATION_KEY not set)', mfa: cfg.requireAmr.length ? cfg.requireAmr.join(',') : 'not enforced at API', staffAdmin: cfg.keycloakAdmin ? 'keycloak' : 'disabled (HCOS_KC_ADMIN_CLIENT_SECRET not set)' });
     return { server, port, stop };
   } catch (e) {
     await pgPool.end().catch(() => undefined);

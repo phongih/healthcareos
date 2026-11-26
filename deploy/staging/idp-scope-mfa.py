@@ -5,6 +5,8 @@ Keycloak realm `hcos`: phạm vi theo tài khoản + claim MFA (`amr`) cho API.
   python3 idp-scope-mfa.py apply      # chạy lại được (idempotent)
   python3 idp-scope-mfa.py status     # chỉ in hiện trạng
   python3 idp-scope-mfa.py rollback   # quay về luồng `browser` mặc định + claim cố định cũ
+  python3 idp-scope-mfa.py admin-client   # F21: client service-account `hcos-admin-api` cho quản trị nhân sự,
+                                          # ghi HCOS_KC_ADMIN_CLIENT_SECRET vào hcos.env (KHÔNG in ra màn hình)
 
 `apply` làm:
   1. Kiểm Keycloak có mapper `oidc-amr-mapper`.
@@ -145,9 +147,45 @@ def rollback() -> None:
     status()
 
 
+ADMIN_CLIENT = 'hcos-admin-api'
+ADMIN_ROLES = ('manage-users', 'view-users', 'query-users')
+
+
+def admin_client() -> None:
+    """Client confidential chỉ có service account; quyền realm-management tối thiểu để tạo / khoá / đặt lại user của realm hcos."""
+    cs = kj('get', 'clients', '-r', REALM, '-q', f'clientId={ADMIN_CLIENT}', '--fields', 'id,clientId')
+    if not cs:
+        kc('create', 'clients', '-r', REALM, '-f', '-', body={
+            'clientId': ADMIN_CLIENT, 'name': 'HealthcareOS API — quản trị nhân sự (service account)', 'enabled': True,
+            'protocol': 'openid-connect', 'publicClient': False, 'serviceAccountsEnabled': True,
+            'standardFlowEnabled': False, 'implicitFlowEnabled': False, 'directAccessGrantsEnabled': False,
+            'clientAuthenticatorType': 'client-secret', 'attributes': {'access.token.lifespan': '300'},
+        })
+        print(f'Đã tạo client {ADMIN_CLIENT}')
+        cs = kj('get', 'clients', '-r', REALM, '-q', f'clientId={ADMIN_CLIENT}', '--fields', 'id,clientId')
+    cid = cs[0]['id']  # type: ignore[index]
+    kc('add-roles', '-r', REALM, '--uusername', f'service-account-{ADMIN_CLIENT}', '--cclientid', 'realm-management',
+       *[x for r in ADMIN_ROLES for x in ('--rolename', r)])
+    print('Service account có quyền realm-management: ' + ', '.join(ADMIN_ROLES))
+    secret = kj('get', f'clients/{cid}/client-secret', '-r', REALM)['value']  # type: ignore[index]
+    if not secret or len(secret) < 16:
+        sys.exit('Không lấy được client secret')
+    env = 'hcos.env'
+    lines = open(env, encoding='utf-8').read().splitlines()
+    keep = [l for l in lines if not l.startswith('HCOS_KC_ADMIN_CLIENT_SECRET=')]
+    keep.append(f'HCOS_KC_ADMIN_CLIENT_SECRET={secret}')
+    import os
+    mode = os.stat(env).st_mode & 0o777
+    tmp = env + '.tmp'
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode), 'w', encoding='utf-8') as f:
+        f.write('\n'.join(keep) + '\n')
+    os.replace(tmp, env)
+    print(f'Đã ghi HCOS_KC_ADMIN_CLIENT_SECRET vào {env} (quyền {oct(mode)}; giá trị không in ra).')
+
+
 if __name__ == '__main__':
     action = sys.argv[1] if len(sys.argv) > 1 else 'status'
-    if action not in ('apply', 'status', 'rollback'):
+    if action not in ('apply', 'status', 'rollback', 'admin-client'):
         sys.exit(__doc__)
     login()
-    {'apply': apply, 'status': status, 'rollback': rollback}[action]()
+    {'apply': apply, 'status': status, 'rollback': rollback, 'admin-client': admin_client}[action]()

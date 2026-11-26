@@ -7,6 +7,7 @@ import { can, organizationsOf, ROLE_LABEL, rolesAt, SessionContext, type Me, typ
 import { InboxScreen, NotificationBell } from './lib/notifications';
 import { ErrorBox } from './lib/ui';
 import { AdminScreen } from './screens/admin';
+import { StaffScreen } from './screens/staff';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
 import { DecisionScreen } from './screens/decision';
@@ -42,6 +43,7 @@ type Route =
   | { name: 'financeCase'; id: string }
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
+  | { name: 'staff' }
   | { name: 'equipment' }
   | { name: 'device'; code: string; qr: boolean }
   | { name: 'home' };
@@ -69,6 +71,7 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/integrations')) return { name: 'integrations' };
   if (hash.startsWith('#/inbox')) return { name: 'inbox' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
+  if (hash.startsWith('#/staff')) return { name: 'staff' };
   return { name: 'home' };
 }
 
@@ -103,6 +106,7 @@ function Shell({ me }: { me: Me }) {
     can.handover(roles) && { hash: '#/handover', label: 'Quầy trả', active: route.name === 'handover' },
     can.equipment(roles) && { hash: '#/equipment', label: 'Thiết bị', active: route.name === 'equipment' || route.name === 'device' },
     can.governance(roles) && { hash: '#/governance', label: 'Quản trị dữ liệu', active: route.name === 'governance' },
+    can.staff(roles) && { hash: '#/staff', label: 'Nhân sự', active: route.name === 'staff' },
     can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
   ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
 
@@ -190,6 +194,8 @@ function Shell({ me }: { me: Me }) {
           <GovernanceScreen />
         ) : route.name === 'admin' ? (
           <AdminScreen />
+        ) : route.name === 'staff' ? (
+          <StaffScreen />
         ) : null}
       </main>
     </SessionContext.Provider>

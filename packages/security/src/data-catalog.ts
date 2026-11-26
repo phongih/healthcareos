@@ -368,7 +368,10 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
   // ---- iam ------------------------------------------------------------
   'iam.access_policies': { level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'reference', purpose: 'Access policy thu hẹp quyền' },
   'iam.access_policy_versions': { level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'audit_log', purpose: 'Lịch sử access policy' },
-  'iam.memberships': { level: 2, category: 'security', subject: 'staff', steward: 'tenant_admin', retention: 'audit_log', purpose: 'Vai trò của nhân viên tại cơ sở' },
+  'iam.memberships': {
+    level: 2, category: 'security', subject: 'staff', steward: 'tenant_admin', retention: 'audit_log', purpose: 'Vai trò của nhân viên tại cơ sở',
+    columns: { revoke_reason: { category: 'internal', note: 'Lý do thu hồi vai trò (F21) — không ghi thông tin sức khoẻ' } },
+  },
   'iam.organizations': { level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Cơ sở khám chữa bệnh' },
   'iam.tenants': { level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Chủ quản dữ liệu (đơn vị sử dụng)' },
   'iam.users': {
@@ -378,6 +381,7 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
       external_subject: { category: 'security', note: 'Mã định danh ở IdP' },
       email: { level: 2, category: 'personal', note: 'Email công việc' },
       display_name: { level: 2, category: 'personal', note: 'Tên hiển thị nhân viên' },
+      username: { level: 2, category: 'personal', note: 'Tên đăng nhập ở IdP (F21)' },
     },
   },
 

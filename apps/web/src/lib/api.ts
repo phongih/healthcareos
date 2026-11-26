@@ -55,6 +55,31 @@ const REASON_TEXT: Record<string, string> = {
   AUTH_MFA_REQUIRED: 'Cần đăng nhập bằng mật khẩu và mã OTP (ứng dụng xác thực). Bấm "Đăng nhập lại có OTP".',
   USER_NOT_PROVISIONED: 'Tài khoản chưa được cấp quyền tại cơ sở nào (hoặc đã bị khoá). Liên hệ quản trị viên.',
   ORG_NOT_ALLOWED: 'Tài khoản không có quyền tại cơ sở được yêu cầu.',
+  // HCOS-F21 nhân sự & cơ sở
+  ROLE_CEILING: 'Chỉ quản trị hệ thống mới cấp / thu hồi vai trò quản trị hoặc thay đổi tài khoản quản trị.',
+  ORG_SCOPE: 'Bạn không quản lý cơ sở này (hoặc nhân viên còn làm ở cơ sở khác — liên hệ quản trị hệ thống).',
+  SELF_CHANGE: 'Không thể tự thay đổi quyền / khoá / đặt lại tài khoản của chính mình.',
+  ROLE_INVALID: 'Vai trò không hợp lệ.',
+  ROLES_REQUIRED: 'Chọn 1–4 vai trò.',
+  USERNAME_INVALID: 'Tên đăng nhập: 3–64 ký tự chữ thường không dấu, số, dấu chấm / gạch.',
+  USER_EXISTS: 'Đã có tài khoản với tên đăng nhập hoặc email này.',
+  IDP_USER_EXISTS: 'Tên đăng nhập đã có trên Keycloak — tích "Tài khoản đã có sẵn" để liên kết.',
+  IDP_USER_LINKED: 'Tài khoản Keycloak này đã được liên kết với một nhân viên khác.',
+  IDP_NOT_CONFIGURED: 'Chưa cấu hình kết nối Keycloak để tạo / khoá tài khoản (HCOS_KC_ADMIN_CLIENT_SECRET).',
+  IDP_UNAVAILABLE: 'Không kết nối được Keycloak. Chưa thay đổi gì — thử lại sau.',
+  IDP_CONFLICT: 'Keycloak báo trùng tên đăng nhập hoặc email.',
+  IDP_REJECTED: 'Keycloak từ chối yêu cầu (kiểm tra chính sách mật khẩu / hồ sơ người dùng).',
+  ROLE_EXISTS: 'Nhân viên đã có vai trò này tại cơ sở này.',
+  ALREADY_REVOKED: 'Vai trò đã được thu hồi.',
+  LAST_TENANT_ADMIN: 'Phải còn ít nhất một quản trị hệ thống khác đang hoạt động.',
+  USER_NOT_ACTIVE: 'Tài khoản đang bị khoá — mở khoá trước.',
+  NO_CHANGE: 'Không có gì thay đổi.',
+  ORG_INACTIVE: 'Cơ sở đã ngừng hoạt động.',
+  ORG_CODE_INVALID: 'Mã cơ sở: 2–40 ký tự chữ thường, số, gạch.',
+  ORG_CODE_EXISTS: 'Mã cơ sở đã tồn tại.',
+  MRN_PREFIX_INVALID: 'Tiền tố mã BN: 1–4 chữ cái in hoa.',
+  LAST_ORGANIZATION: 'Phải còn ít nhất một cơ sở đang hoạt động.',
+  STATUS_INVALID: 'Trạng thái không hợp lệ.',
   // HCOS-F20 cổng bệnh nhân (phía nhân viên)
   VERIFICATION_REQUIRED: 'Cần xác nhận đã đối chiếu giấy tờ tuỳ thân và giấy tờ chứng minh quan hệ tại quầy.',
   GUARDIAN_NOT_FOUND: 'Không tìm thấy mã BN người giám hộ tại cơ sở này — người giám hộ cần có hồ sơ trước.',
@@ -127,7 +152,7 @@ export async function api<T = unknown>(
     const custom = data as { error?: string; message?: string } | undefined;
     const detail = issue?.details?.text ?? custom?.error ?? null;
     const message = (detail ? REASON_TEXT[detail] : undefined) ?? issue?.diagnostics ?? custom?.message ?? custom?.error ?? STATUS_TEXT[res.status] ?? `Lỗi ${res.status}`;
-    const keep = detail === 'USER_NOT_PROVISIONED' || detail === 'ORG_NOT_ALLOWED' || detail === 'AUTH_MFA_REQUIRED';
+    const keep = detail !== null && detail in REASON_TEXT;
     throw new ApiError(res.status, res.status === 403 && !keep ? STATUS_TEXT[403]! : message, detail, data);
   }
   return { status: res.status, data: data as T, headers: res.headers };

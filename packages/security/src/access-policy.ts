@@ -393,6 +393,20 @@ export const ACCESS_POLICY_CATALOG = {
     hiddenFields: [],
     readonlyFields: [],
   },
+  'staff:manage': {
+    basePermission: 'staff:manage',
+    description: 'Nhân sự: thêm tài khoản nhân viên, cấp / thu hồi vai trò tại cơ sở, khoá / mở khoá, đặt lại mật khẩu + OTP (quản lý cơ sở không cấp được vai trò quản trị)',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
+  'org:manage': {
+    basePermission: 'org:manage',
+    description: 'Cơ sở: tạo cơ sở mới (tuỳ chọn sao chép cấu hình từ cơ sở có sẵn), ngừng / mở lại cơ sở',
+    criteria: [],
+    hiddenFields: [],
+    readonlyFields: [],
+  },
   'prescription:read': {
     basePermission: 'prescription:read',
     description: 'Xem đơn thuốc theo đợt khám và hàng đợi đơn của dược',
