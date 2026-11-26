@@ -8,6 +8,8 @@ Cấu hình **chỉ** qua biến môi trường lúc chạy. Image không chứa
 | `HCOS_JWT_ISSUER` | có | — | Nhiều giá trị: phân tách bằng dấu phẩy |
 | `HCOS_JWT_AUDIENCE` | có | — | Nhiều giá trị: phân tách bằng dấu phẩy |
 | `HCOS_REQUIRE_AMR` | không (staging / production: **nên đặt**) | — | Bắt buộc MFA ở API: claim `amr` của token phải chứa một trong các giá trị (vd. `otp` hoặc `otp,hwk`). Thiếu => 401 `AUTH_MFA_REQUIRED`. Cần Keycloak phát `amr` (`deploy/staging/idp-scope-mfa.py apply`). Rỗng = không kiểm (dev / test) |
+| `HCOS_KC_ADMIN_CLIENT_SECRET` | không (thiếu = tắt tạo / khoá / đặt lại tài khoản) | — | HCOS-F21: secret của client service-account `hcos-admin-api` (quyền realm-management: manage-users, view-users, query-users). Ghi bằng `deploy/staging/idp-scope-mfa.py admin-client`, **không** in / dán ra ngoài |
+| `HCOS_KC_ADMIN_URL` / `HCOS_KC_REALM` / `HCOS_KC_ADMIN_CLIENT_ID` | không | `http://127.0.0.1:8081/auth` / `hcos` / `hcos-admin-api` | HCOS-F21: địa chỉ Keycloak (API chạy network host trên staging), realm, client id |
 | `HCOS_JWKS_URL` | có | — | `https://…` (http chỉ cho localhost/127.0.0.1) |
 | `HCOS_PORT` | không | `8080` | 1–65535 |
 | `HCOS_HOST` | không | mọi giao diện | Địa chỉ IP (v4/v6) để lắng nghe. Đặt `127.0.0.1` khi chạy sau reverse proxy cùng máy (network host) để API không lộ ra ngoài proxy. Trong container bridge mạng mặc định phải để trống. Tên host không được chấp nhận |

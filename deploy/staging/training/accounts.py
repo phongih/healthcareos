@@ -49,17 +49,17 @@ def sql(d):
             "INSERT INTO iam.users (user_id, tenant_id, external_subject, email, display_name) VALUES "
             f"({q(a['id'])}, {q(t)}, {q(a['id'])}, {q(a['username'] + '@example.invalid')}, {q(a['displayName'])}) ON CONFLICT DO NOTHING;"
         )
-        for r in a["roles"]:
-            out.append(
-                "INSERT INTO iam.memberships (tenant_id, user_id, organization_id, role) VALUES "
-                f"({q(t)}, {q(a['id'])}, {q(o)}, {q(r)}) ON CONFLICT DO NOTHING;"
-            )
+        out.append(
+            f"UPDATE iam.users SET username = {q(a['username'])} WHERE tenant_id = {q(t)} AND user_id = {q(a['id'])} AND username IS NULL;"
+        )
+        # Chỉ cấp khi CHƯA TỪNG có membership này (kể cả đã thu hồi): chạy lại script không cấp lại quyền quản trị đã thu hồi.
         o2 = d.get("secondOrganization")
-        for r in a.get("rolesAtSecond", []) if o2 else []:
+        grants = [(o, r) for r in a["roles"]] + ([(o2["id"], r) for r in a.get("rolesAtSecond", [])] if o2 else [])
+        for org, r in grants:
             out.append(
                 "INSERT INTO iam.memberships (tenant_id, user_id, organization_id, role) "
-                f"SELECT {q(t)}, {q(a['id'])}, {q(o2['id'])}, {q(r)} WHERE NOT EXISTS (SELECT 1 FROM iam.memberships "
-                f"WHERE tenant_id = {q(t)} AND user_id = {q(a['id'])} AND organization_id = {q(o2['id'])} AND role = {q(r)});"
+                f"SELECT {q(t)}, {q(a['id'])}, {q(org)}, {q(r)} WHERE NOT EXISTS (SELECT 1 FROM iam.memberships "
+                f"WHERE tenant_id = {q(t)} AND user_id = {q(a['id'])} AND organization_id = {q(org)} AND role = {q(r)});"
             )
     out.append("COMMIT;")
     return "\n".join(out) + "\n"

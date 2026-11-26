@@ -49,3 +49,13 @@ fi
 rm -f /tmp/hcos-token.txt
 ```
 Bài học (26/11): bật `HCOS_REQUIRE_AMR` khi token chưa có `amr` => mọi nhân viên bị chặn đăng nhập. Gỡ: `sed -i '/^HCOS_REQUIRE_AMR=/d' hcos.env` rồi tạo lại container `api`.
+
+## Quản trị nhân sự từ HealthcareOS (PR #34, F21)
+API tạo / khoá / đặt lại tài khoản Keycloak qua client service-account riêng `hcos-admin-api` (không dùng admin master). Quyền tối thiểu: realm-management `manage-users`, `view-users`, `query-users` trên realm `hcos`.
+```bash
+cd ~/healthcareos/deploy/staging
+python3 idp-scope-mfa.py admin-client        # tạo client + gán quyền + ghi HCOS_KC_ADMIN_CLIENT_SECRET vào hcos.env (không in ra)
+grep -c '^HCOS_KC_ADMIN_CLIENT_SECRET=' hcos.env   # phải ra 1
+docker compose --env-file secrets.env up -d --no-deps --force-recreate api
+```
+Gỡ: xoá client `hcos-admin-api` (`kcadm.sh delete clients/<id> -r hcos`) và dòng `HCOS_KC_ADMIN_CLIENT_SECRET` trong `hcos.env`; API trả `IDP_NOT_CONFIGURED` cho thao tác cần Keycloak, phần còn lại vẫn chạy.

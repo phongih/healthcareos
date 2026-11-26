@@ -6,6 +6,7 @@
  *                       KHÔNG superuser/BYPASSRLS (main.ts kiểm tra lúc khởi động và từ chối nếu vi phạm)
  *   HCOS_JWT_ISSUER     vd https://idp.example.vn/        (nhiều giá trị: phân tách bằng dấu phẩy)
  *   HCOS_JWT_AUDIENCE   vd hcos-api
+ *   HCOS_KC_ADMIN_URL / HCOS_KC_REALM / HCOS_KC_ADMIN_CLIENT_ID / HCOS_KC_ADMIN_CLIENT_SECRET  client Keycloak Admin cho quản trị nhân sự (F21); thiếu secret = tắt tạo tài khoản
  *   HCOS_REQUIRE_AMR    bắt buộc MFA: danh sách amr chấp nhận, cách nhau dấu phẩy (vd otp,hwk). Rỗng = không kiểm (chỉ dev / test)
  *   HCOS_JWKS_URL       https://idp.example.vn/.well-known/jwks.json (bắt buộc https, trừ localhost)
  *   HCOS_PORT           mặc định 8080
@@ -50,6 +51,8 @@ export interface AppConfig {
   readonly noShowIntervalSec: number;
   /** Rỗng = không kiểm MFA ở API. */
   readonly requireAmr: readonly string[];
+  /** null = chưa cấu hình (tạo / khoá tài khoản trên Keycloak bị tắt, báo IDP_NOT_CONFIGURED). */
+  readonly keycloakAdmin: { readonly baseUrl: string; readonly realm: string; readonly clientId: string; readonly clientSecret: string } | null;
   readonly backupHorizonDays: number;
   /** Khoá mã hoá bí mật tích hợp (32 byte); null = tắt tích hợp. */
   readonly integrationKey: Buffer | null;
@@ -194,6 +197,14 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       const v = int('HCOS_RETENTION_INTERVAL_SEC', 86_400, 0, 7 * 86_400);
       if (v > 0 && v < 300) problems.push('HCOS_RETENTION_INTERVAL_SEC must be 0 (off) or at least 300');
       return v;
+    })(),
+    keycloakAdmin: (() => {
+      const secret = env['HCOS_KC_ADMIN_CLIENT_SECRET']?.trim() ?? '';
+      if (!secret) return null;
+      const baseUrl = env['HCOS_KC_ADMIN_URL']?.trim() || 'http://127.0.0.1:8081/auth';
+      if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) problems.push('HCOS_KC_ADMIN_URL must be an http(s) URL');
+      if (secret.length < 16) problems.push('HCOS_KC_ADMIN_CLIENT_SECRET looks too short');
+      return Object.freeze({ baseUrl, realm: env['HCOS_KC_REALM']?.trim() || 'hcos', clientId: env['HCOS_KC_ADMIN_CLIENT_ID']?.trim() || 'hcos-admin-api', clientSecret: secret });
     })(),
     requireAmr: (() => {
       const v = list(env['HCOS_REQUIRE_AMR'] ?? '');
