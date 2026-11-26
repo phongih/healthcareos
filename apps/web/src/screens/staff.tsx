@@ -197,7 +197,7 @@ function StaffRow({ s, open, onToggle, orgs, roles, defaultOrg, onChanged, onSec
             <span key={m.membershipId} className="badge" title={m.organizationName}>{ROLE_LABEL[m.role]} · {m.organizationName}{m.validTo ? ` · đến ${fmt(m.validTo)}` : ''}</span>
           ))}
         </td>
-        <td>{s.status === 'locked' ? <span className="badge danger">{STATUS[s.status]}</span> : STATUS[s.status] ?? s.status}</td>
+        <td className="nowrap"><span className={`badge ${s.status === 'active' ? 'ok' : s.status === 'locked' ? 'danger' : ''}`}>{STATUS[s.status] ?? s.status}</span></td>
         <td>{(s.manageable || roles.length > 0) && !s.self && <button className="link" onClick={onToggle}>{open ? 'Đóng' : 'Quản lý'}</button>}</td>
       </tr>
       {open && (
@@ -329,7 +329,7 @@ function Organizations({ data, reload }: { data: { organizations: Org[]; canMana
           {data.organizations.map((o) => (
             <tr key={o.organizationId}>
               <td>{o.name}</td><td>{o.code}</td><td>{o.staff}</td><td>{o.rooms}</td><td>{o.prices}</td>
-              <td>{o.status === 'active' ? 'Đang hoạt động' : <span className="badge danger">Đã ngừng</span>}</td>
+              <td className="nowrap">{o.status === 'active' ? <span className="badge ok">Đang hoạt động</span> : <span className="badge danger">Đã ngừng</span>}</td>
               <td>{data.canManage && <button className="link" disabled={toggle.busy} onClick={() => void toggle.run(o)}>{o.status === 'active' ? 'Ngừng' : 'Mở lại'}</button>}</td>
             </tr>
           ))}
