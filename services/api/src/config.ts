@@ -6,6 +6,7 @@
  *                       KHÔNG superuser/BYPASSRLS (main.ts kiểm tra lúc khởi động và từ chối nếu vi phạm)
  *   HCOS_JWT_ISSUER     vd https://idp.example.vn/        (nhiều giá trị: phân tách bằng dấu phẩy)
  *   HCOS_JWT_AUDIENCE   vd hcos-api
+ *   HCOS_REQUIRE_AMR    bắt buộc MFA: danh sách amr chấp nhận, cách nhau dấu phẩy (vd otp,hwk). Rỗng = không kiểm (chỉ dev / test)
  *   HCOS_JWKS_URL       https://idp.example.vn/.well-known/jwks.json (bắt buộc https, trừ localhost)
  *   HCOS_PORT           mặc định 8080
  *   HCOS_HOST           địa chỉ IP (v4/v6) để lắng nghe, vd 127.0.0.1 khi chạy sau reverse proxy cùng máy; mặc định: mọi giao diện
@@ -47,6 +48,8 @@ export interface AppConfig {
   readonly decisionIntervalSec: number;
   readonly retentionIntervalSec: number;
   readonly noShowIntervalSec: number;
+  /** Rỗng = không kiểm MFA ở API. */
+  readonly requireAmr: readonly string[];
   readonly backupHorizonDays: number;
   /** Khoá mã hoá bí mật tích hợp (32 byte); null = tắt tích hợp. */
   readonly integrationKey: Buffer | null;
@@ -191,6 +194,11 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       const v = int('HCOS_RETENTION_INTERVAL_SEC', 86_400, 0, 7 * 86_400);
       if (v > 0 && v < 300) problems.push('HCOS_RETENTION_INTERVAL_SEC must be 0 (off) or at least 300');
       return v;
+    })(),
+    requireAmr: (() => {
+      const v = list(env['HCOS_REQUIRE_AMR'] ?? '');
+      for (const x of v) if (!/^[a-z0-9_-]{2,32}$/.test(x)) problems.push('HCOS_REQUIRE_AMR must be a comma list of amr values (e.g. otp,hwk)');
+      return Object.freeze([...new Set(v)]);
     })(),
     noShowIntervalSec: (() => {
       const v = int('HCOS_NO_SHOW_INTERVAL_SEC', 3600, 0, 86_400);

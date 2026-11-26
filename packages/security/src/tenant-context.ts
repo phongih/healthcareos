@@ -57,6 +57,16 @@ export interface TenantStatusLookup {
   getStatus(tenantId: TenantId): Promise<'provisioning' | 'active' | 'suspended' | 'closed' | null>;
 }
 
+/**
+ * Phạm vi cơ sở THEO TỪNG USER lấy từ DB (iam.users + iam.memberships còn hiệu lực), không lấy từ claim cố định.
+ * null => user chưa được cấp trong tenant (không có user, user bị khoá, hoặc không còn membership nào).
+ */
+export interface OrgScopeLookup {
+  /** Tenant của tài khoản theo `sub` (tối đa 2 phần tử là đủ để biết có mơ hồ không). Dùng khi token không có claim tenant_id. */
+  tenantsFor?(subject: string): Promise<readonly TenantId[]>;
+  scopeFor(tenantId: TenantId, subject: string): Promise<{ readonly userId: UserId; readonly organizationIds: readonly OrganizationId[] } | null>;
+}
+
 export interface TenantContextOptions {
   readonly issuer: string | string[];
   readonly audience: string | string[];
@@ -69,6 +79,13 @@ export interface TenantContextOptions {
   readonly audit?: AuditSink;
   /** Tên header tenant client có thể gửi (chỉ để so khớp, không để tin tưởng). */
   readonly tenantHeaderName?: string;
+  /**
+   * Bắt buộc MFA: claim `amr` phải chứa ÍT NHẤT MỘT giá trị trong danh sách (vd. ['otp','hwk']).
+   * Rỗng / không đặt => không kiểm (dev, test).
+   */
+  readonly requireAmr?: readonly string[];
+  /** Có => cơ sở được phép = membership trong DB (giao với claim org_ids nếu token có). */
+  readonly orgScope?: OrgScopeLookup;
 }
 
 export interface RequestLike {
@@ -160,7 +177,15 @@ export async function buildTenantContext(
     throw new TenantIsolationError('AUTH_INVALID_TOKEN', 'Token verification failed', 401);
   }
 
-  const tenantId = parseTenantClaim(claims.tenant_id);
+  let tenantId: TenantId;
+  if ((claims.tenant_id === undefined || claims.tenant_id === null || (claims.tenant_id as unknown) === '') && opts.orgScope?.tenantsFor) {
+    // Không có claim tenant: tenant theo tài khoản trong DB; mơ hồ (nhiều tenant) hoặc không có => từ chối.
+    const ts = await opts.orgScope.tenantsFor(claims.sub);
+    if (ts.length !== 1) throw new TenantIsolationError(ts.length === 0 ? 'USER_NOT_PROVISIONED' : 'TENANT_CLAIM_MISSING', 'Cannot resolve tenant for this account', 403);
+    tenantId = ts[0]!;
+  } else {
+    tenantId = parseTenantClaim(claims.tenant_id);
+  }
 
   // Client KHÔNG được chọn tenant khác với token.
   const headerName = (opts.tenantHeaderName ?? 'x-tenant-id').toLowerCase();
@@ -178,13 +203,34 @@ export async function buildTenantContext(
     }
   }
 
-  const { active, allowed } = parseOrgClaims(claims);
+  if (opts.requireAmr && opts.requireAmr.length > 0) {
+    const amr = Array.isArray(claims.amr) ? claims.amr.filter((x): x is string => typeof x === 'string') : [];
+    if (!opts.requireAmr.some((m) => amr.includes(m))) {
+      throw new TenantIsolationError('AUTH_MFA_REQUIRED', 'Multi-factor authentication required', 401, { claimTenant: tenantId });
+    }
+  }
+
+  let { active, allowed } = parseOrgClaims(claims);
+  let userId: UserId | null = null;
+  if (opts.orgScope) {
+    const scope = await opts.orgScope.scopeFor(tenantId, claims.sub);
+    if (!scope || scope.organizationIds.length === 0) {
+      throw new TenantIsolationError('USER_NOT_PROVISIONED', 'No active membership for this account', 403, { claimTenant: tenantId });
+    }
+    userId = scope.userId;
+    // Claim chỉ được THU HẸP phạm vi trong DB, không bao giờ mở rộng.
+    const fromClaim = claims.org_ids !== undefined || claims.org_id !== undefined ? new Set(allowed) : null;
+    allowed = scope.organizationIds.filter((o) => !fromClaim || fromClaim.has(o));
+    if (allowed.length === 0) throw new TenantIsolationError('ORG_NOT_ALLOWED', 'Token organizations are outside the account memberships', 403, { claimTenant: tenantId });
+    if (active && !allowed.includes(active)) active = null;
+    if (!active && allowed.length === 1) active = allowed[0]!;
+  }
   const roles = (claims.roles ?? []).filter((r): r is Role => KNOWN_ROLES.has(r));
 
   return Object.freeze({
     tenantId,
     userSubject: claims.sub,
-    userId: null as UserId | null,
+    userId,
     personId: claims.person_id && isUuid(claims.person_id) ? asPersonId(claims.person_id) : null,
     activeOrganizationId: active,
     allowedOrganizationIds: Object.freeze(allowed),

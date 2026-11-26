@@ -24,8 +24,17 @@ Sau khi ổn: `rm -rf kc-import` (chứa mật khẩu demo) và `sudo rm -rf kc-
 Admin console không mở ra Internet; dùng khi cần: `gcloud compute ssh ... --tunnel-through-iap -- -L 8081:127.0.0.1:8081` rồi mở `http://localhost:8081/auth/`.
 
 ## Giới hạn (chưa đạt mức dùng thật)
-- API **không kiểm tra** claim MFA (`acr`/`amr`): MFA được ép ở Keycloak, API tin token đã ký. Cần cấu hình step-up/ACR nếu chính sách yêu cầu.
+- ~~API không kiểm tra claim MFA~~ — từ PR #32: `HCOS_REQUIRE_AMR=otp` => API chỉ nhận token có `amr` chứa `otp`. Keycloak phát `amr` nhờ luồng `hcos browser` (bản sao của `browser`, bước mật khẩu gắn tham chiếu `pwd`, bước OTP gắn `otp`, hiệu lực 10 giờ) + mapper `amr` trên client `hcos-web`. Cấu hình bằng `python3 idp-scope-mfa.py apply` (xem bên dưới). Chưa có step-up theo thao tác (vd. bắt OTP lại khi duyệt xoá dữ liệu).
 - Vẫn là một Keycloak, một VM, cùng máy với DB nghiệp vụ; chưa có SMTP (quên mật khẩu/xác minh email), chưa có quy trình cấp–thu hồi quyền, chưa có break-glass.
-- `tenant_id`/`org_ids`/`roles` vẫn là claim cố định trong client mapper (một tenant giả). Production cần ánh xạ theo người dùng/tổ chức (user attributes hoặc nhóm).
+- ~~`tenant_id`/`org_ids` là claim cố định~~ — từ PR #32 API tra **tenant theo `sub`** (`iam.tenants_for_subject`, migration 024) và **cơ sở theo membership còn hiệu lực trong DB** (cache 30 giây). Claim `org_ids` / `org_id` nếu có chỉ thu hẹp, không mở rộng; tenant_admin thấy mọi cơ sở đang hoạt động. Claim `roles` không dùng để phân quyền (vai trò luôn lấy từ DB). Tài khoản IdP chưa có user / membership => 403 `USER_NOT_PROVISIONED`.
 - Chưa có ứng dụng web; `redirect_uri` hiện là điểm đến thử nghiệm (`https://smart.id.vn/callback` trả 404 chấp nhận được để lấy code, và `http://127.0.0.1:9999/callback`).
 - Các script kiểm tra (`verify-idp.sh`, `pkce-token.sh`) chưa chạy được với Keycloak thật trong sandbox của mình: kết quả đầu tiên trên VM là bằng chứng đầu tiên.
+
+## Phạm vi theo tài khoản + MFA (PR #32)
+```bash
+cd ~/healthcareos/deploy/staging
+python3 idp-scope-mfa.py status     # hiện trạng: luồng đăng nhập, tham chiếu AMR, mapper của hcos-web
+python3 idp-scope-mfa.py apply      # chép luồng + gắn amr + gỡ claim cố định (chạy lại được)
+python3 idp-scope-mfa.py rollback   # quay về luồng browser + claim cố định cũ
+```
+Thứ tự an toàn: deploy API mới (chưa đặt `HCOS_REQUIRE_AMR`) => `apply` => đăng nhập lại, `pkce-token.sh` thấy `amr: ['pwd', 'otp']` => đặt `HCOS_REQUIRE_AMR=otp` trong `hcos.env` => tạo lại container `api`.

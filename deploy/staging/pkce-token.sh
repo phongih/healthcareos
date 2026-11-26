@@ -26,5 +26,5 @@ import sys,json,base64
 r=json.loads(sys.argv[1])
 if "access_token" not in r: print("LỖI:", r); sys.exit(1)
 p=r["access_token"].split(".")[1]; c=json.loads(base64.urlsafe_b64decode(p+"="*(-len(p)%4)))
-for k in ("iss","aud","tenant_id","org_ids","roles","acr","exp"): print(f"{k}: {c.get(k)}")
+for k in ("iss","aud","sub","tenant_id","org_ids","roles","acr","amr","exp"): print(f"{k}: {c.get(k)}")
 PY

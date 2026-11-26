@@ -51,6 +51,10 @@ const REASON_TEXT: Record<string, string> = {
   LEGACY_MRN_DISABLED: 'Cơ sở không cho nhập mã cũ — bỏ trống để hệ thống tự cấp mã.',
   MRN_TAKEN: 'Mã bệnh nhân này đã được dùng trong cơ sở.',
   INVALID_PREFIX: 'Tiền tố phải gồm 1–4 chữ cái in hoa A–Z.',
+  // Đăng nhập nhân viên: MFA + phạm vi cơ sở theo tài khoản
+  AUTH_MFA_REQUIRED: 'Cần đăng nhập bằng mật khẩu và mã OTP (ứng dụng xác thực). Bấm "Đăng nhập lại có OTP".',
+  USER_NOT_PROVISIONED: 'Tài khoản chưa được cấp quyền tại cơ sở nào (hoặc đã bị khoá). Liên hệ quản trị viên.',
+  ORG_NOT_ALLOWED: 'Tài khoản không có quyền tại cơ sở được yêu cầu.',
   // HCOS-F20 cổng bệnh nhân (phía nhân viên)
   VERIFICATION_REQUIRED: 'Cần xác nhận đã đối chiếu giấy tờ tuỳ thân và giấy tờ chứng minh quan hệ tại quầy.',
   GUARDIAN_NOT_FOUND: 'Không tìm thấy mã BN người giám hộ tại cơ sở này — người giám hộ cần có hồ sơ trước.',
@@ -115,13 +119,16 @@ export async function api<T = unknown>(
   } catch {
     data = text;
   }
-  if (res.status === 401) return login();
+  const issue0 = (data as { issue?: Array<{ details?: { text?: string } }> } | undefined)?.issue?.[0]?.details?.text ?? null;
+  // Thiếu MFA: KHÔNG tự chuyển đăng nhập (tránh vòng lặp nếu IdP chưa cấu hình amr) — hiện lý do + nút đăng nhập lại có OTP.
+  if (res.status === 401 && issue0 !== 'AUTH_MFA_REQUIRED') return login();
   if (!res.ok) {
     const issue = (data as { issue?: Array<{ diagnostics?: string; details?: { text?: string } }> } | undefined)?.issue?.[0];
     const custom = data as { error?: string; message?: string } | undefined;
     const detail = issue?.details?.text ?? custom?.error ?? null;
     const message = (detail ? REASON_TEXT[detail] : undefined) ?? issue?.diagnostics ?? custom?.message ?? custom?.error ?? STATUS_TEXT[res.status] ?? `Lỗi ${res.status}`;
-    throw new ApiError(res.status, res.status === 403 ? STATUS_TEXT[403]! : message, detail, data);
+    const keep = detail === 'USER_NOT_PROVISIONED' || detail === 'ORG_NOT_ALLOWED' || detail === 'AUTH_MFA_REQUIRED';
+    throw new ApiError(res.status, res.status === 403 && !keep ? STATUS_TEXT[403]! : message, detail, data);
   }
   return { status: res.status, data: data as T, headers: res.headers };
 }

@@ -29,6 +29,7 @@ import { HandoverService } from './clinical/handover.service';
 import { GovernanceService } from './governance/governance.service';
 import { RetentionScheduler, RetentionService } from './governance/retention.service';
 import { NoShowJob } from './clinical/no-show.job';
+import { PgOrgScopeLookup } from '../../../packages/security/src/pg-org-scope';
 import { ExportService } from './governance/export.service';
 import { VendorService } from './governance/vendor.service';
 import { EquipmentService } from './equipment/equipment.service';
@@ -94,6 +95,9 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         audience: cfg.audience,
         key: createRemoteJWKSet(new URL(cfg.jwksUrl)),
         tenantStatus: new PgTenantStatusLookup(pool),
+        // Cơ sở được phép theo membership trong DB của từng user (không tin claim org_ids cố định của IdP).
+        orgScope: new PgOrgScopeLookup(pool),
+        requireAmr: cfg.requireAmr,
         audit,
       },
       clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
@@ -151,7 +155,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         server.closeIdleConnections();
       }));
 
-    log({ level: 'info', msg: 'hcos-api listening', port, decisionIntervalSec: cfg.decisionIntervalSec, integrations: cfg.integrationKey ? 'enabled' : 'disabled (HCOS_INTEGRATION_KEY not set)' });
+    log({ level: 'info', msg: 'hcos-api listening', port, decisionIntervalSec: cfg.decisionIntervalSec, integrations: cfg.integrationKey ? 'enabled' : 'disabled (HCOS_INTEGRATION_KEY not set)', mfa: cfg.requireAmr.length ? cfg.requireAmr.join(',') : 'not enforced at API' });
     return { server, port, stop };
   } catch (e) {
     await pgPool.end().catch(() => undefined);

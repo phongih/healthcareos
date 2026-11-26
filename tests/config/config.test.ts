@@ -80,4 +80,10 @@ describe('loadConfig', () => {
     expect(ok.portalOtp).toMatchObject({ mode: 'webhook', url: 'https://sms.example.vn/send' });
     expect(problems({ ...OK, HCOS_PORTAL_OTP: 'sms' })).toEqual(['HCOS_PORTAL_OTP must be off, training or webhook']);
   });
+
+  it('MFA ở API: HCOS_REQUIRE_AMR — mặc định không kiểm; danh sách amr hợp lệ', () => {
+    expect(loadConfig(OK).requireAmr).toEqual([]);
+    expect(loadConfig({ ...OK, HCOS_REQUIRE_AMR: 'otp, hwk,otp' }).requireAmr).toEqual(['otp', 'hwk']);
+    expect(problems({ ...OK, HCOS_REQUIRE_AMR: 'otp;rm -rf' })).toEqual(['HCOS_REQUIRE_AMR must be a comma list of amr values (e.g. otp,hwk)']);
+  });
 });

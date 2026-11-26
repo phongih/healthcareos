@@ -37,6 +37,13 @@ def q(s):
 def sql(d):
     t, o = d["tenantId"], d["organizationId"]
     out = ["-- STAGING / THỰC TẬP — sinh từ accounts.json. Idempotent.", "BEGIN;"]
+    o2 = d.get("secondOrganization")
+    if o2:
+        # Cơ sở thứ 2 (thực tập): phạm vi cơ sở lấy theo membership trong DB, không theo claim cố định.
+        out.append(
+            "INSERT INTO iam.organizations (organization_id, tenant_id, type, code, name) VALUES "
+            f"({q(o2['id'])}, {q(t)}, 'clinic', {q(o2['code'])}, {q(o2['name'])}) ON CONFLICT DO NOTHING;"
+        )
     for a in d["accounts"]:
         out.append(
             "INSERT INTO iam.users (user_id, tenant_id, external_subject, email, display_name) VALUES "
@@ -46,6 +53,13 @@ def sql(d):
             out.append(
                 "INSERT INTO iam.memberships (tenant_id, user_id, organization_id, role) VALUES "
                 f"({q(t)}, {q(a['id'])}, {q(o)}, {q(r)}) ON CONFLICT DO NOTHING;"
+            )
+        o2 = d.get("secondOrganization")
+        for r in a.get("rolesAtSecond", []) if o2 else []:
+            out.append(
+                "INSERT INTO iam.memberships (tenant_id, user_id, organization_id, role) "
+                f"SELECT {q(t)}, {q(a['id'])}, {q(o2['id'])}, {q(r)} WHERE NOT EXISTS (SELECT 1 FROM iam.memberships "
+                f"WHERE tenant_id = {q(t)} AND user_id = {q(a['id'])} AND organization_id = {q(o2['id'])} AND role = {q(r)});"
             )
     out.append("COMMIT;")
     return "\n".join(out) + "\n"
