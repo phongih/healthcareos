@@ -52,7 +52,11 @@ export function mapError(e: unknown): MappedError {
   if (e instanceof HttpError) return { status: e.status, fhirCode: e.fhirCode, message: e.message, headers: e.headers };
   if (e instanceof TenantIsolationError) {
     return e.httpStatus === 401
-      ? { status: 401, fhirCode: 'login', message: 'Authentication required', detail: e.code, headers: { 'www-authenticate': 'Bearer' } }
+      ? {
+          status: 401, fhirCode: 'login', message: e.code === 'AUTH_MFA_REQUIRED' ? 'Multi-factor authentication required' : 'Authentication required', detail: e.code,
+          // RFC 9470: báo client cần đăng nhập lại với yếu tố xác thực mạnh hơn.
+          headers: { 'www-authenticate': e.code === 'AUTH_MFA_REQUIRED' ? 'Bearer error="insufficient_user_authentication", error_description="MFA required"' : 'Bearer' },
+        }
       : { status: 403, fhirCode: 'forbidden', message: 'Access denied', detail: e.code, headers: {} };
   }
   if (e instanceof VersionConflictError) {

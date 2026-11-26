@@ -39,39 +39,13 @@
           }
         },
         {
-          "name": "tenant_id",
+          "name": "amr",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "protocolMapper": "oidc-amr-mapper",
           "config": {
-            "claim.name": "tenant_id",
-            "claim.value": "00000000-0000-4000-8000-0000000000a1",
-            "jsonType.label": "String",
             "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "org_ids",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-hardcoded-claim-mapper",
-          "config": {
-            "claim.name": "org_ids",
-            "claim.value": "[\"00000000-0000-4000-8000-0000000000b1\"]",
-            "jsonType.label": "JSON",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "org_id",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-hardcoded-claim-mapper",
-          "config": {
-            "claim.name": "org_id",
-            "claim.value": "00000000-0000-4000-8000-0000000000b1",
-            "jsonType.label": "String",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
+            "id.token.claim": "true",
+            "introspection.token.claim": "true"
           }
         },
         {

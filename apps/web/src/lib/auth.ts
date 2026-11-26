@@ -53,7 +53,8 @@ export function claims(): Claims | null {
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(json, (c) => c.charCodeAt(0)))) as Claims;
 }
 
-export async function login(): Promise<never> {
+/** reauth: bắt IdP hỏi lại thông tin đăng nhập + OTP (không dùng lại phiên SSO cũ) — dùng khi API báo thiếu MFA. */
+export async function login(opts: { reauth?: boolean } = {}): Promise<never> {
   const verifier = randomString(48);
   const state = randomString(16);
   sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state, returnTo: location.hash || '#/' }));
@@ -65,6 +66,7 @@ export async function login(): Promise<never> {
     state,
     code_challenge: await challengeFor(verifier),
     code_challenge_method: 'S256',
+    ...(opts.reauth ? { prompt: 'login', max_age: '0' } : {}),
   });
   location.assign(`${OIDC}/auth?${q.toString()}`);
   return new Promise<never>(() => {});

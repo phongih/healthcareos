@@ -211,7 +211,11 @@ function App() {
     return (
       <main>
         <ErrorBox error={state.error} />
-        <button onClick={() => void login()}>Đăng nhập lại</button>
+        {(state.error as { detail?: string } | undefined)?.detail === 'AUTH_MFA_REQUIRED' ? (
+          <button onClick={() => void login({ reauth: true })}>Đăng nhập lại có OTP</button>
+        ) : (
+          <button onClick={() => void login()}>Đăng nhập lại</button>
+        )}
       </main>
     );
   }

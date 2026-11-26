@@ -37,6 +37,7 @@ import { DecisionEngineService, PgDecisionUnitOfWork } from '../services/api/src
 import { MrnSettingsService } from '../services/api/src/registry/mrn-settings.service';
 import { PersonRegistryService, PgRegistryUnitOfWork } from '../services/api/src/registry/person-registry.service';
 import { EquipmentService } from '../services/api/src/equipment/equipment.service';
+import { PgOrgScopeLookup } from '../packages/security/src/pg-org-scope';
 
 // ---------------------------------------------------------------------------
 // Cấu hình
@@ -141,7 +142,8 @@ if (!process.env['HCOS_KEKS']) throw new Error('Thiếu HCOS_KEKS (KEK mã hoá 
 configureKeyProvider(LocalKeyProvider.parse(process.env['HCOS_KEKS']));
 const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit });
 const handler = createApiHandler({
-  tenant: { issuer: ISS, audience: AUD, key: publicKey as never, algorithms: ['RS256'] },
+  // Như API thật: cơ sở theo membership trong DB (ttl 0: seed vừa đổi membership vừa gọi API) + bắt buộc amr có otp.
+  tenant: { issuer: ISS, audience: AUD, key: publicKey as never, algorithms: ['RS256'], orgScope: new PgOrgScopeLookup(pool, { ttlMs: 0 }), requireAmr: ['otp'] },
   clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
   registry,
   accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
@@ -169,7 +171,7 @@ async function token(username: string): Promise<string> {
   const a = acc(username);
   let t = tokens.get(username);
   if (!t) {
-    t = await new SignJWT({ tenant_id: T, org_ids: [ORG], org_id: ORG, roles: a.roles, typ: 'Bearer', azp: 'seed-training' })
+    t = await new SignJWT({ amr: ['pwd', 'otp'], roles: a.roles, typ: 'Bearer', azp: 'seed-training' })
       .setProtectedHeader({ alg: 'RS256' }).setIssuer(ISS).setAudience(AUD).setSubject(a.id)
       .setIssuedAt().setExpirationTime('2h').setJti(randomUUID()).sign(privateKey as never);
     tokens.set(username, t);

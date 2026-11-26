@@ -7,6 +7,7 @@ Cấu hình **chỉ** qua biến môi trường lúc chạy. Image không chứa
 | `HCOS_DATABASE_URL` | có | — | `postgres://<login-role>:<mật khẩu>@host:5432/db` (TCP; không hỗ trợ URL unix-socket). Login-role phải là thành viên `hcos_app`, **không** superuser/BYPASSRLS; không dùng `postgres`/`hcos_provisioner`. Khởi động bị từ chối nếu phiên DB là superuser/BYPASSRLS. |
 | `HCOS_JWT_ISSUER` | có | — | Nhiều giá trị: phân tách bằng dấu phẩy |
 | `HCOS_JWT_AUDIENCE` | có | — | Nhiều giá trị: phân tách bằng dấu phẩy |
+| `HCOS_REQUIRE_AMR` | không (staging / production: **nên đặt**) | — | Bắt buộc MFA ở API: claim `amr` của token phải chứa một trong các giá trị (vd. `otp` hoặc `otp,hwk`). Thiếu => 401 `AUTH_MFA_REQUIRED`. Cần Keycloak phát `amr` (`deploy/staging/idp-scope-mfa.py apply`). Rỗng = không kiểm (dev / test) |
 | `HCOS_JWKS_URL` | có | — | `https://…` (http chỉ cho localhost/127.0.0.1) |
 | `HCOS_PORT` | không | `8080` | 1–65535 |
 | `HCOS_HOST` | không | mọi giao diện | Địa chỉ IP (v4/v6) để lắng nghe. Đặt `127.0.0.1` khi chạy sau reverse proxy cùng máy (network host) để API không lộ ra ngoài proxy. Trong container bridge mạng mặc định phải để trống. Tên host không được chấp nhận |

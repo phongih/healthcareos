@@ -137,3 +137,8 @@ Từ lần sau, đăng nhập bằng mật khẩu và mã 6 số. Hệ thống k
   - Muốn quay về trạng thái trước đợt tập, khôi phục bằng PITR về thời điểm đó (xem `PITR.md`).
 - Web có dải cảnh báo là do build với `HCOS_ENV_LABEL`. Khi build tay, nhớ giữ biến này.
 - Cập nhật `web-dist`: **xoá nội dung bên trong**, không xoá cả thư mục. Caddy mount thư mục này; xoá thư mục thì container vẫn phục vụ bản cũ.
+
+## Cơ sở thứ 2 + MFA (PR #32)
+- `setup-training.sh` tạo **"Phòng khám Demo 2 (thực tập)"** (chưa có phòng khám / kho / bảng giá). `tt.bacsi2` (bác sĩ) và `tt.quanly1` (quản lý) có membership ở cả hai cơ sở: ô **Cơ sở** trên thanh trên có 2 lựa chọn. Các tài khoản khác chỉ thấy "Phòng khám Demo".
+- Cơ sở được phép lấy từ membership trong DB (không còn claim cố định trong Keycloak). Thu hồi membership có hiệu lực sau tối đa 30 giây.
+- API bắt buộc token có `amr` chứa `otp`. Phiên đăng nhập cũ (trước khi bật) sẽ thấy "Cần đăng nhập bằng mật khẩu và mã OTP" — bấm **Đăng nhập lại có OTP**. Sau 10 giờ kể từ lần nhập OTP, token mới không còn `otp` => phải đăng nhập lại (một ca làm việc).

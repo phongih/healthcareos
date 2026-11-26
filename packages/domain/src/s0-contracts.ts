@@ -226,8 +226,10 @@ export interface HcosJwtClaims {
   readonly tenant_id: string;
   /** Organization đang hoạt động (tuỳ chọn). */
   readonly org_id?: string;
-  /** Tập organization được phép truy cập. */
+  /** Tập organization được phép truy cập (tuỳ chọn; nếu có thì GIAO với membership trong DB, không mở rộng). */
   readonly org_ids?: string[];
+  /** RFC 8176: phương thức xác thực đã dùng (vd. ["pwd","otp"]). */
+  readonly amr?: string[];
   readonly roles?: Role[];
   readonly person_id?: string;
   readonly scope?: string;
@@ -256,7 +258,11 @@ export type TenantIsolationErrorCode =
   | 'TENANT_SUSPENDED'
   | 'TENANT_CONTEXT_MISSING'
   | 'ORG_NOT_ALLOWED'
-  | 'RESOURCE_TENANT_MISMATCH';
+  | 'RESOURCE_TENANT_MISMATCH'
+  /** Token không chứng minh đăng nhập nhiều lớp (claim amr thiếu phương thức yêu cầu). */
+  | 'AUTH_MFA_REQUIRED'
+  /** Tài khoản IdP chưa có user / membership còn hiệu lực trong tenant. */
+  | 'USER_NOT_PROVISIONED';
 
 export class TenantIsolationError extends Error {
   public readonly code: TenantIsolationErrorCode;
