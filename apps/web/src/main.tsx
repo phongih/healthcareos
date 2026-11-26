@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { api } from './lib/api';
@@ -6,6 +6,8 @@ import { claims, initAuth, login, logout } from './lib/auth';
 import { can, organizationsOf, ROLE_LABEL, rolesAt, SessionContext, type Me, type Session } from './lib/session';
 import { InboxScreen, NotificationBell } from './lib/notifications';
 import { ErrorBox } from './lib/ui';
+import { Icon } from './lib/icons';
+import { allowedApps, BottomBar, Launcher, SideNav, usePins } from './lib/nav';
 import { AdminScreen } from './screens/admin';
 import { StaffScreen } from './screens/staff';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
@@ -85,6 +87,12 @@ function useHash(): string {
   return h;
 }
 
+function initials(name: string): string {
+  const parts = name.replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean);
+  const pick = parts.length >= 2 ? [parts[parts.length - 2]!, parts[parts.length - 1]!] : parts;
+  return pick.map((p) => p[0]!.toUpperCase()).join('').slice(0, 2) || '?';
+}
+
 function Shell({ me }: { me: Me }) {
   const orgs = organizationsOf(me);
   const [orgId, setOrgId] = useState(orgs[0]?.organizationId ?? '');
@@ -93,27 +101,33 @@ function Shell({ me }: { me: Me }) {
   const session: Session = { me, orgId, setOrgId, roles, restricted };
   const route = parseRoute(useHash());
 
-  const tabs = [
-    can.patients(roles) && { hash: '#/patients', label: 'Bệnh nhân', active: ['patients', 'patient', 'encounter'].includes(route.name) },
-    can.queue(roles) && { hash: '#/queue', label: 'Hàng đợi', active: route.name === 'queue' },
-    can.bookings(roles) && { hash: '#/bookings', label: 'Lịch hẹn', active: route.name === 'bookings' },
-    can.finance(roles) && { hash: '#/finance', label: 'Thu ngân', active: route.name.startsWith('finance') },
-    can.reports(roles) && { hash: '#/reports', label: 'Báo cáo', active: route.name === 'reports' },
-    can.forecast(roles) && { hash: '#/forecast', label: 'Dự báo', active: route.name === 'forecast' },
-    can.decision(roles) && { hash: '#/decision', label: 'Decision Engine', active: route.name === 'decision' },
-    can.integrations(roles) && { hash: '#/integrations', label: 'Tích hợp', active: route.name === 'integrations' },
-    can.pharmacy(roles) && { hash: '#/pharmacy', label: 'Dược', active: route.name === 'pharmacy' },
-    can.handover(roles) && { hash: '#/handover', label: 'Quầy trả', active: route.name === 'handover' },
-    can.equipment(roles) && { hash: '#/equipment', label: 'Thiết bị', active: route.name === 'equipment' || route.name === 'device' },
-    can.governance(roles) && { hash: '#/governance', label: 'Quản trị dữ liệu', active: route.name === 'governance' },
-    can.staff(roles) && { hash: '#/staff', label: 'Nhân sự', active: route.name === 'staff' },
-    can.admin(roles) && { hash: '#/admin', label: 'Quản trị', active: route.name === 'admin' },
-  ].filter(Boolean) as Array<{ hash: string; label: string; active: boolean }>;
+  // Giao diện đợt 2: ứng dụng theo vai trò; desktop = thanh bên, điện thoại = thanh dưới đáy + lưới ứng dụng.
+  const apps = useMemo(() => allowedApps(roles), [roles]);
+  const { pins, toggle, reset, custom } = usePins(me.user.userId, roles);
+  const [launcher, setLauncher] = useState(false);
+  const closeLauncher = useCallback(() => setLauncher(false), []);
+  const current = apps.find((a) => a.routes.includes(route.name));
 
-  const firstTab = tabs[0]?.hash;
+  const home = (apps.find((a) => a.key === pins[0]) ?? apps[0])?.hash;
   useEffect(() => {
-    if (route.name === 'home' && firstTab) location.replace(firstTab);
-  }, [route.name, firstTab]);
+    if (route.name === 'home' && home) location.replace(home);
+  }, [route.name, home]);
+  useEffect(() => setLauncher(false), [route.name]);
+
+  const userName = me.user.displayName ?? me.user.email ?? 'Người dùng';
+  const roleText = [...roles].map((r) => ROLE_LABEL[r]).join(', ');
+  const userBlock = (
+    <div className="user-block">
+      <span className="avatar" aria-hidden="true">{initials(userName)}</span>
+      <span className="user-text">
+        <span className="user-name">{userName}</span>
+        <span className="user-roles">{roleText || 'Chưa có vai trò'}</span>
+      </span>
+      <button type="button" className="icon-btn" onClick={logout} aria-label="Đăng xuất" title="Đăng xuất">
+        <Icon name="logout" size={18} />
+      </button>
+    </div>
+  );
 
   return (
     <SessionContext.Provider value={session}>
@@ -122,37 +136,28 @@ function Shell({ me }: { me: Me }) {
           {ENV_LABEL}
         </div>
       )}
-      <header className="topbar">
-        <span className="brand">HealthcareOS</span>
-        <nav>
-          {tabs.map((t) => (
-            <a key={t.hash} href={t.hash} className={t.active ? 'active' : ''}>
-              {t.label}
-            </a>
-          ))}
-        </nav>
-        <span className="spacer" />
-        {orgs.length > 1 ? (
-          <select aria-label="Cơ sở" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
-            {orgs.map((o) => (
-              <option key={o.organizationId} value={o.organizationId}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="org">{orgs[0]?.name ?? 'Chưa có cơ sở'}</span>
-        )}
-        {can.notifications(roles) && <NotificationBell key={orgId} />}
-        <span className="user" title={[...roles].map((r) => ROLE_LABEL[r]).join(', ')}>
-          {me.user.displayName ?? me.user.email ?? 'Người dùng'}
-        </span>
-        <button className="link" onClick={logout}>
-          Đăng xuất
-        </button>
-      </header>
-      <main>
-        {tabs.length === 0 ? (
+      <div className="shell">
+        <SideNav apps={apps} routeName={route.name} footer={userBlock} />
+        <div className="shell-main">
+          <header className="topbar">
+            <span className="brand only-mobile">HealthcareOS</span>
+            <span className="page-title only-desktop">{current?.label ?? ''}</span>
+            <span className="spacer" />
+            {orgs.length > 1 ? (
+              <select aria-label="Cơ sở" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+                {orgs.map((o) => (
+                  <option key={o.organizationId} value={o.organizationId}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="org">{orgs[0]?.name ?? 'Chưa có cơ sở'}</span>
+            )}
+            {can.notifications(roles) && <NotificationBell key={orgId} />}
+          </header>
+          <main>
+        {apps.length === 0 ? (
           <div className="alert warn">
             Tài khoản chưa được gán vai trò nào tại cơ sở này. Liên hệ quản trị để được cấp quyền.
           </div>
@@ -197,7 +202,11 @@ function Shell({ me }: { me: Me }) {
         ) : route.name === 'staff' ? (
           <StaffScreen />
         ) : null}
-      </main>
+          </main>
+        </div>
+      </div>
+      {apps.length > 0 && <BottomBar apps={apps} pins={pins} routeName={route.name} launcherOpen={launcher} onLauncher={() => setLauncher((x) => !x)} />}
+      {launcher && <Launcher apps={apps} pins={pins} onToggle={toggle} onReset={reset} custom={custom} onClose={closeLauncher} footer={userBlock} />}
     </SessionContext.Provider>
   );
 }

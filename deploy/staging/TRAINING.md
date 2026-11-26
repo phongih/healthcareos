@@ -3,6 +3,11 @@
 Mục tiêu: nhân viên tập các thao tác hằng ngày bằng **tài khoản theo vai trò thật** trên **dữ liệu giả**.
 Đầu trang web luôn có dải màu cam ghi "MÔI TRƯỜNG THỰC TẬP".
 
+## Cách tìm các mục trên web
+- **Máy tính** (màn hình rộng từ 1024px): danh sách mục nằm ở **thanh bên trái**, chia nhóm (Tiếp đón, Khám & thiết bị, Dược, Tài chính, Báo cáo & cảnh báo, Quản trị). Ô **Cơ sở** và chuông thông báo ở góc trên bên phải; tên người dùng và nút đăng xuất ở cuối thanh bên.
+- **Điện thoại / máy tính bảng dọc**: **thanh dưới đáy** có tối đa 4 mục hay dùng của vai trò, cộng nút **Ứng dụng** để mở toàn bộ mục (có ô tìm, gõ không dấu cũng được, vd. `thu ngan`). Trong **Ứng dụng → Sửa ghim** mỗi người tự chọn 4 mục cho thanh dưới; **Về mặc định theo vai trò** để trả lại. Nút đăng xuất ở cuối màn Ứng dụng.
+- Trong tài liệu này, "tab X" nghĩa là mục X ở thanh bên / thanh dưới / Ứng dụng.
+
 ## Quy tắc bắt buộc
 - **Không nhập thông tin bệnh nhân thật** (tên, CCCD, số điện thoại, chẩn đoán của người thật). Staging không đạt yêu cầu pháp lý cho dữ liệu sức khoẻ thật.
 - Cách nhận biết dữ liệu giả:
