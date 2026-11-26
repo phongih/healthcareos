@@ -104,7 +104,15 @@ run('Quản trị nhân sự & cơ sở / PostgreSQL', () => {
     expect(a.staff.map((s) => s.username).sort()).toEqual(['bs2noi', 'ds1', 'lt1', 'ql1', 'qtv']);
     const doc = a.staff.find((s) => s.username === 'bs2noi')!;
     expect(doc.memberships.map((m) => (m as { organizationName: string }).organizationName)).toEqual(['PK 1']); // chỉ thấy membership ở cơ sở mình
-    expect(doc.manageable).toBe(true); // giao diện; thao tác khoá vẫn bị chặn vì làm ở PK 2 (xem dưới)
+    // Còn làm ở PK 2 (ngoài phạm vi) => giao diện không hiện Khoá / Đặt lại (khớp ORG_SCOPE ở máy chủ).
+    expect(doc.manageable).toBe(false);
+    expect(doc.memberships.every((m) => (m as { revocable: boolean }).revocable)).toBe(true); // vai trò nghiệp vụ ở PK 1: thu hồi được
+    expect(a.staff.find((s) => s.username === 'lt1')!.manageable).toBe(true);
+    const qtv = a.staff.find((s) => s.username === 'qtv')!;
+    expect(qtv.memberships.some((m) => (m as { revocable: boolean }).revocable)).toBe(false); // vai trò quản trị: không hiện Thu hồi
+    expect(a.staff.find((s) => s.username === 'ql1')!.memberships.some((m) => (m as { revocable: boolean }).revocable)).toBe(false); // của mình
+    const t = await svc.listStaff({}, C.tadmin);
+    expect(t.staff.find((s) => s.username === 'bs2noi')!.manageable).toBe(true);
     expect(a.staff.find((s) => s.username === 'qtv')!.manageable).toBe(false);
     expect(a.staff.find((s) => s.username === 'ql1')!.self).toBe(true);
     expect((await svc.listStaff({}, C.tadmin)).staff).toHaveLength(6);

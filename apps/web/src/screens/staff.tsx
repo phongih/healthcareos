@@ -13,7 +13,7 @@ import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 
 interface Membership {
   membershipId: string; organizationId: string; organizationName: string; role: Role; status: string; validFrom: string; validTo: string | null;
-  grantedByName: string | null; revokedAt: string | null; revokedByName: string | null; revokeReason: string | null;
+  grantedByName: string | null; revokedAt: string | null; revokedByName: string | null; revokeReason: string | null; revocable: boolean;
 }
 interface Staff { userId: string; displayName: string; username: string | null; email: string | null; status: string; memberships: Membership[]; manageable: boolean; self: boolean }
 interface StaffList { staff: Staff[]; grantableRoles: Role[]; tenantAdmin: boolean; managedOrganizationIds: string[] | null }
@@ -214,7 +214,7 @@ function StaffRow({ s, open, onToggle, orgs, roles, defaultOrg, onChanged, onSec
                     <td>{fmt(m.validFrom)} – {m.validTo ? fmt(m.validTo) : 'không thời hạn'}</td>
                     <td>{m.grantedByName ?? '—'}</td>
                     <td>{m.status === 'revoked' ? <span title={m.revokeReason ?? ''}>Đã thu hồi {fmt(m.revokedAt)}{m.revokedByName ? ` (${m.revokedByName})` : ''}: {m.revokeReason}</span> : 'Đang hiệu lực'}</td>
-                    <td>{m.status === 'active' && <button className="link danger" disabled={revoke.busy} onClick={() => void revoke.run(m)}>Thu hồi</button>}</td>
+                    <td>{m.revocable && <button className="link danger" disabled={revoke.busy} onClick={() => void revoke.run(m)}>Thu hồi</button>}</td>
                   </tr>
                 ))}
               </tbody>
