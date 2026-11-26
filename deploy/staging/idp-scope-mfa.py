@@ -85,8 +85,11 @@ def status() -> None:
 
 
 def apply() -> None:
-    info = kj('get', 'serverinfo', '--fields', 'protocolMapperTypes')
+    # KHÔNG dùng --fields: kcadm lọc trường làm rỗng map lồng (protocolMapperTypes.openid-connect) => báo thiếu mapper sai.
+    info = kj('get', 'serverinfo')
     ids = {m['id'] for m in info['protocolMapperTypes'].get('openid-connect', [])}  # type: ignore[index]
+    if not ids:
+        sys.exit('Không đọc được danh sách mapper từ serverinfo — dừng, không sửa realm.')
     if 'oidc-amr-mapper' not in ids:
         sys.exit('Keycloak này không có oidc-amr-mapper — cần Keycloak có hỗ trợ AMR trước khi bật MFA ở API.')
 
