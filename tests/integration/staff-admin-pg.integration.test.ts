@@ -48,6 +48,14 @@ class FakeIdp implements IdentityProviderAdmin {
     this.calls.push(`create:${i.username}`);
     return id;
   }
+  async createSelfUser(i: { username: string; firstName: string; email: string; password: string }) {
+    this.guard();
+    if ([...this.users.values()].some((x) => x.username === i.username)) throw new IdpError('IDP_CONFLICT', 'dup');
+    const id = uid(++this.n);
+    this.users.set(id, { id, username: i.username, enabled: true, firstName: i.firstName, lastName: '', email: i.email, password: i.password, otp: false, sessions: 0, requiredActions: ['CONFIGURE_TOTP'] });
+    this.calls.push(`self:${i.username}`);
+    return id;
+  }
   async setEnabled(id: string, e: boolean) { this.guard(); this.users.get(id)!.enabled = e; this.calls.push(`enabled:${id}:${e}`); }
   async logout(id: string) { this.guard(); this.users.get(id)!.sessions = 0; this.calls.push(`logout:${id}`); }
   async resetCredentials(id: string, p: string) { this.guard(); const u = this.users.get(id)!; u.password = p; u.otp = false; this.calls.push(`reset:${id}`); }

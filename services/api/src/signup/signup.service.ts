@@ -1,14 +1,18 @@
 /**
  * HCOS | Đăng ký khách (thiết kế 27/11/2026): bắt đầu đăng ký và xác minh OTP qua email.
  *  - start: kiểm đầu vào, sinh OTP 6 số, lưu bản băm có muối (qua iam.signup_start), gửi mã qua kênh OTP;
- *  - verify: so khớp mã, ghi kết quả qua iam.signup_check_otp (đủ 5 lần sai => khoá yêu cầu).
- * Không tạo tài khoản, tổ chức hay Keycloak ở đây; đó là bước sau khi quản trị viên duyệt.
- * Mã OTP không bao giờ được ghi log hay trả về cho người gọi ngoài kênh gửi.
+ *  - verify: so khớp mã, ghi kết quả qua iam.signup_check_otp (đủ 5 lần sai => khoá yêu cầu);
+ *  - complete: sau khi xác minh, khách tự đặt mật khẩu. Tạo tài khoản Keycloak (mật khẩu do khách đặt), rồi
+ *    iam.signup_complete tạo tổ chức 'provisioning' (chờ duyệt) + cơ sở trụ sở + tài khoản tenant_admin tạm thời.
+ *    Nếu bước DB lỗi sau khi IdP đã tạo tài khoản, tài khoản đó bị vô hiệu hoá (bù trừ).
+ * Tổ chức chờ duyệt không nhận bệnh nhân thật và không mở cơ sở; việc duyệt nằm ở bước sau.
+ * Mã OTP và mật khẩu không bao giờ được ghi log hay trả về cho người gọi.
  */
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 
 import type { PgPoolLike } from '../../../../packages/security/src/tenant-context';
-import { checkEmail, checkLicense, checkOrgName, checkPhone, checkSlug, OTP_LENGTH, OTP_TTL_MS, type Checked, type RuleError } from './signup-rules';
+import { IdpError, type IdentityProviderAdmin } from '../iam/keycloak-admin';
+import { checkContactName, checkEmail, checkLicense, checkOrgName, checkPassword, checkPhone, checkSlug, OTP_LENGTH, OTP_TTL_MS, type Checked, type RuleError } from './signup-rules';
 
 /** Kênh gửi mã OTP tới email. Trả true nếu nhà cung cấp đã nhận. */
 export interface SignupOtpSender {
@@ -21,7 +25,8 @@ export interface SignupOtpSender {
 export const OTP_CHANNEL_CATEGORY = 'signup_otp_email';
 
 export type SignupErrorCode =
-  | 'INVALID_INPUT' | 'RATE_LIMITED' | 'SLUG_TAKEN' | 'OTP_UNAVAILABLE' | 'NOT_PENDING' | 'EXPIRED' | 'LOCKED' | 'WRONG';
+  | 'INVALID_INPUT' | 'RATE_LIMITED' | 'SLUG_TAKEN' | 'OTP_UNAVAILABLE' | 'NOT_PENDING' | 'EXPIRED' | 'LOCKED' | 'WRONG'
+  | 'ACCOUNT_EXISTS' | 'IDP_UNAVAILABLE';
 
 export class SignupError extends Error {
   constructor(readonly code: SignupErrorCode, readonly detail?: RuleError) {
@@ -33,6 +38,7 @@ export class SignupError extends Error {
 export interface StartInput {
   readonly email: string;
   readonly orgName: string;
+  readonly contactName: string;
   readonly phone: string;
   readonly license: string;
   readonly slug: string;
@@ -44,6 +50,8 @@ export interface SignupDeps {
   /** Khoá HMAC cho bản băm OTP (cấu hình bí mật, không lưu trong DB). */
   readonly otpKey: Buffer;
   readonly randomCode?: () => string;
+  /** Cổng IdP để tạo tài khoản quản trị khi hoàn tất đăng ký. Không cấu hình => NOT_CONFIGURED (fail-closed). */
+  readonly idp: IdentityProviderAdmin;
 }
 
 function must<T>(c: Checked<T>): T {
@@ -72,6 +80,7 @@ export class SignupService {
   async start(input: StartInput, clientIp: string | null): Promise<{ signupId: string; expiresAt: Date }> {
     const email = must(checkEmail(input.email));
     const orgName = must(checkOrgName(input.orgName));
+    const contactName = must(checkContactName(input.contactName));
     const phone = must(checkPhone(input.phone));
     const license = must(checkLicense(input.license));
     const slug = must(checkSlug(input.slug));
@@ -93,8 +102,8 @@ export class SignupService {
     const hash = hashOtp(this.deps.otpKey, code);
     try {
       const r = await client.query(
-        'SELECT signup_id, expires_at FROM iam.signup_start($1, $2, $3, $4, $5, $6, $7::interval, $8::inet)',
-        [email, orgName, phone, license, slug, hash, `${OTP_TTL_MS / 1000} seconds`, clientIp],
+        'SELECT signup_id, expires_at FROM iam.signup_start($1, $2, $3, $4, $5, $6, $7::interval, $8::inet, $9)',
+        [email, orgName, phone, license, slug, hash, `${OTP_TTL_MS / 1000} seconds`, clientIp, contactName],
       );
       row = r.rows[0] as { signup_id: string; expires_at: Date };
     } catch (e) {
@@ -105,6 +114,51 @@ export class SignupService {
     const delivered = await this.deps.sender.send(email, code, orgName).catch(() => false);
     if (!delivered) throw new SignupError('OTP_UNAVAILABLE');
     return { signupId: row.signup_id, expiresAt: row.expires_at };
+  }
+
+  /**
+   * Hoàn tất đăng ký sau khi xác minh OTP. Trả slug và tenantId của tổ chức ở trạng thái chờ duyệt.
+   * Lỗi IdP => IDP_UNAVAILABLE (hoặc ACCOUNT_EXISTS nếu username đã có); lỗi DB sau khi tạo tài khoản IdP => vô hiệu hoá tài khoản đó.
+   */
+  async complete(signupId: string, password: string): Promise<{ slug: string; tenantId: string }> {
+    const pw = must(checkPassword(password));
+    const client = await this.deps.pool.connect();
+    let who: { email: string; contact_name: string | null; slug: string; status: string } | undefined;
+    try {
+      const r = await client.query('SELECT email, contact_name, slug, status FROM iam.signup_identity($1)', [signupId]);
+      who = r.rows[0] as typeof who;
+    } catch (e) {
+      throw mapPgError(e);
+    } finally {
+      client.release();
+    }
+    if (!who || who.status !== 'verified' || !who.contact_name) throw new SignupError('NOT_PENDING');
+
+    let sub: string;
+    try {
+      sub = await this.deps.idp.createSelfUser({
+        username: who.email,
+        firstName: who.contact_name,
+        email: who.email,
+        password: pw,
+      });
+    } catch (e) {
+      if (e instanceof IdpError && e.reason === 'IDP_CONFLICT') throw new SignupError('ACCOUNT_EXISTS');
+      throw new SignupError('IDP_UNAVAILABLE');
+    }
+
+    const c2 = await this.deps.pool.connect();
+    try {
+      const t = await c2.query('SELECT tenant_id, slug FROM iam.signup_complete($1, $2)', [signupId, sub]);
+      const out = t.rows[0] as { tenant_id: string; slug: string };
+      return { slug: out.slug, tenantId: out.tenant_id };
+    } catch (e) {
+      // Bù trừ: tài khoản IdP vừa tạo không có tổ chức tương ứng, nên vô hiệu hoá để không đăng nhập được.
+      await this.deps.idp.setEnabled(sub, false).catch(() => undefined);
+      throw mapPgError(e);
+    } finally {
+      c2.release();
+    }
   }
 
   /** Tra slug công khai: chỉ tên hiển thị, trạng thái và chuyển hướng (không có danh sách cơ sở / nhân viên). */
@@ -147,6 +201,8 @@ export function mapPgError(e: unknown): unknown {
   if (err?.message?.includes('SIGNUP_RATE_LIMITED')) return new SignupError('RATE_LIMITED');
   if (err?.code === '23505' && err.message?.includes('SLUG_TAKEN')) return new SignupError('SLUG_TAKEN');
   if (err?.code === '23505') return new SignupError('SLUG_TAKEN');
+  if (err?.message?.includes('SIGNUP_NOT_VERIFIED')) return new SignupError('NOT_PENDING');
+  if (err?.message?.includes('SIGNUP_EXPIRED')) return new SignupError('EXPIRED');
   return e;
 }
 

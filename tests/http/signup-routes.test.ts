@@ -25,6 +25,13 @@ const api: PublicSignupApi = {
     if (id !== SIGNUP_ID) throw new SignupError('NOT_PENDING');
     return { slug: 'pkmoi' };
   },
+  async complete(id, password) {
+    if (id !== SIGNUP_ID) throw new SignupError('NOT_PENDING');
+    if (password === 'ngan') throw new SignupError('INVALID_INPUT', { field: 'password', code: 'INVALID_PASSWORD' });
+    if (password === 'da-co-tai-khoan') throw new SignupError('ACCOUNT_EXISTS');
+    if (password === 'idp-loi-xyz-123') throw new SignupError('IDP_UNAVAILABLE');
+    return { slug: 'pkmoi', tenantId: '00000000-0000-4000-8000-00000000abcd' };
+  },
   async resolve(slug) {
     if (slug === 'pk1') return { displayName: 'Phòng khám 1', status: 'active', redirect: false };
     if (slug === 'cu1') return { displayName: 'Phòng khám cũ', status: 'active', redirect: true };
@@ -60,7 +67,7 @@ const freshIp = () => `203.0.113.${(seq++ % 200) + 1}`;
 const post = (path: string, body: unknown, ip = freshIp()) =>
   fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip }, body: JSON.stringify(body) });
 
-const good = { email: 'chu@pk.vn', orgName: 'Phòng khám Mới', phone: '0908697966', license: 'GPKD-0001234', slug: 'pkmoi' };
+const good = { email: 'chu@pk.vn', orgName: 'Phòng khám Mới', contactName: 'Nguyễn Văn Mới', phone: '0908697966', license: 'GPKD-0001234', slug: 'pkmoi' };
 
 describe('HTTP đăng ký khách', () => {
   it('tra slug: tổ chức đang hoạt động trả tên; chuyển hướng; ngừng hoạt động hoặc lạ => 404', async () => {
@@ -108,5 +115,24 @@ describe('HTTP đăng ký khách', () => {
     const r = await post('/api/public/signup/start', good, ip);
     expect(r.status).toBe(429);
     expect(r.headers.get('retry-after')).toBe('3600');
+  });
+
+  it('complete hợp lệ => 201 kèm slug và trạng thái chờ duyệt; không trả mật khẩu', async () => {
+    const r = await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'mat-khau-dai-12' });
+    expect(r.status).toBe(201);
+    const body = (await r.json()) as Record<string, unknown>;
+    expect(body).toEqual({ slug: 'pkmoi', status: 'pending_review' });
+    expect(JSON.stringify(body)).not.toContain('mat-khau');
+  });
+
+  it('complete: ACCOUNT_EXISTS => 409, IDP_UNAVAILABLE => 503, mật khẩu ngắn => 400', async () => {
+    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'da-co-tai-khoan' })).status).toBe(409);
+    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'idp-loi-xyz-123' })).status).toBe(503);
+    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'ngan' })).status).toBe(400);
+  });
+
+  it('complete: trường lạ, signupId sai định dạng => 400', async () => {
+    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'mat-khau-dai-12', role: 'admin' })).status).toBe(400);
+    expect((await post('/api/public/signup/complete', { signupId: 'khong-uuid', password: 'mat-khau-dai-12' })).status).toBe(400);
   });
 });

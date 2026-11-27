@@ -22,6 +22,8 @@ export interface IdentityProviderAdmin {
   getUser(id: string): Promise<IdpUser | null>;
   /** Tạo user, mật khẩu tạm + bắt đổi mật khẩu và cài OTP ở lần đăng nhập đầu. Trả id (= sub). */
   createUser(input: { username: string; firstName: string; lastName: string; email: string | null; temporaryPassword: string }): Promise<string>;
+  /** Đăng ký khách: mật khẩu do chính người dùng đặt (không tạm thời), chỉ bắt cài OTP ở lần đăng nhập đầu. Trả sub. */
+  createSelfUser(input: { username: string; firstName: string; email: string; password: string }): Promise<string>;
   setEnabled(id: string, enabled: boolean): Promise<void>;
   /** Đăng xuất mọi phiên của user (token đã cấp vẫn sống tới hạn — tối đa 15 phút). */
   logout(id: string): Promise<void>;
@@ -110,6 +112,19 @@ export class KeycloakAdminClient implements IdentityProviderAdmin {
       requiredActions: ['CONFIGURE_TOTP', 'UPDATE_PASSWORD'],
       credentials: [{ type: 'password', value: input.temporaryPassword, temporary: true }],
     });
+    const id = r.location?.split('/').pop();
+    if (r.status !== 201 || !id || !/^[0-9a-f-]{36}$/i.test(id)) throw new IdpError('IDP_REJECTED', 'Keycloak did not return the new user id');
+    return id;
+  }
+
+  async createSelfUser(input: { username: string; firstName: string; email: string; password: string }): Promise<string> {
+    const r = await this.call('POST', '/users', {
+      username: input.username, firstName: input.firstName, lastName: '', enabled: true,
+      email: input.email, emailVerified: true,
+      requiredActions: ['CONFIGURE_TOTP'],
+      credentials: [{ type: 'password', value: input.password, temporary: false }],
+    });
+    if (r.status === 409) throw new IdpError('IDP_CONFLICT', 'Username already exists');
     const id = r.location?.split('/').pop();
     if (r.status !== 201 || !id || !/^[0-9a-f-]{36}$/i.test(id)) throw new IdpError('IDP_REJECTED', 'Keycloak did not return the new user id');
     return id;
