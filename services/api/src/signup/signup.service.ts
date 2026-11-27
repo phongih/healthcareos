@@ -26,7 +26,7 @@ export const OTP_CHANNEL_CATEGORY = 'signup_otp_email';
 
 export type SignupErrorCode =
   | 'INVALID_INPUT' | 'RATE_LIMITED' | 'SLUG_TAKEN' | 'OTP_UNAVAILABLE' | 'NOT_PENDING' | 'EXPIRED' | 'LOCKED' | 'WRONG'
-  | 'ACCOUNT_EXISTS' | 'IDP_UNAVAILABLE';
+  | 'ACCOUNT_EXISTS' | 'IDP_UNAVAILABLE' | 'CAPTCHA_FAILED';
 
 export class SignupError extends Error {
   constructor(readonly code: SignupErrorCode, readonly detail?: RuleError) {

@@ -21,6 +21,7 @@ import {
 import type { ReadinessProbe } from '../../../../packages/security/src/pg-readiness';
 import { buildBookingRoutes, handlePublicBooking, RateLimiter, type BookingApi, type PublicBookingApi } from './booking-routes';
 import { handlePublicSignup, type PublicSignupApi } from './signup-routes';
+import { ProofOfWork } from '../signup/pow';
 import { buildFinanceRoutes, type FinanceApi } from './finance-routes';
 import { buildDecisionRoutes, type DecisionApi } from './decision-routes';
 import { buildIntegrationRoutes, type IntegrationApi } from './integration-routes';
@@ -143,6 +144,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...(deps.pii ? buildPiiRoutes(deps.pii) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
+  const pow = new ProofOfWork();
   const maxBody = deps.maxBodyBytes ?? 1_048_576;
   const logger: ApiLogger = deps.logger ?? { error: (m, meta) => console.error(m, JSON.stringify(meta)) };
 
@@ -197,9 +199,9 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     }
 
     // Đăng ký khách (không đăng nhập): chỉ trả thông tin tối thiểu, giới hạn tần suất theo IP.
-    if (deps.publicSignup && (url.pathname.startsWith('/api/public/signup/') || url.pathname.startsWith('/api/public/tenants/'))) {
+    if (deps.publicSignup && (url.pathname.startsWith('/api/public/signup/') || url.pathname.startsWith('/api/public/tenants/') || url.pathname === '/api/public/captcha')) {
       await handlePublicSignup(req, res, url, {
-        api: deps.publicSignup, limiter, baseHeaders,
+        api: deps.publicSignup, pow, limiter, baseHeaders,
         onError: (e) => logger.error('public signup failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' }),
       });
       return;
