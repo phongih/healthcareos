@@ -11,6 +11,7 @@ import { allowedApps, BottomBar, Launcher, SideNav, usePins } from './lib/nav';
 import { AdminScreen } from './screens/admin';
 import { StaffScreen } from './screens/staff';
 import { ReviewScreen } from './screens/review';
+import { PublicSignupScreen } from './screens/signup';
 import { TodayScreen } from './screens/today';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
@@ -257,11 +258,13 @@ function Root() {
   // Cổng đặt lịch khám online.
   const book = /^#\/book\/([a-z0-9][a-z0-9-]{2,39})(\/tra-cuu)?\/?$/.exec(hash);
   if (book) return book[2] ? <PublicLookupScreen slug={book[1]!} /> : <PublicBookingScreen slug={book[1]!} />;
+  // Đăng ký tổ chức mới (khách tự đăng ký, không đăng nhập).
+  if (/^#\/dang-ky\/?$/.test(hash)) return <PublicSignupScreen />;
   return <App />;
 }
 // HCOS-F20: cổng bệnh nhân / link chia sẻ chạy ở bundle riêng (portal.html) — chuyển trước khi khởi tạo đăng nhập nhân viên.
 const TO_PORTAL = /^#\/(portal|s)\//.test(location.hash);
-const PUBLIC_RE = /^#\/(board|book)\//;
+const PUBLIC_RE = /^#\/(board\/|book\/|dang-ky\/?$)/;
 const startedPublic = PUBLIC_RE.test(location.hash);
 addEventListener('hashchange', () => {
   // Rời trang công khai sang ứng dụng (hoặc ngược lại) => tải lại để luồng đăng nhập chạy sạch.
