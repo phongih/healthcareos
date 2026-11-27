@@ -38,6 +38,7 @@ import { VendorService } from './governance/vendor.service';
 import { EquipmentService } from './equipment/equipment.service';
 import { otpSenderFor } from './portal/otp-sender';
 import { NO_SIGNUP_OTP_CHANNEL, SignupService } from './signup/signup.service';
+import { PlatformReviewService } from './platform/review.service';
 import { smtpSignupOtp } from './signup/smtp-otp-sender';
 import { PortalAdminService } from './portal/portal-admin.service';
 import { PortalService } from './portal/portal.service';
@@ -145,6 +146,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
       portal,
       portalAdmin: new PortalAdminService({ pool, audit }),
       staffAdmin,
+      platformReview: new PlatformReviewService({ pool }),
       pii: new PiiService({ pool, audit }),
       retention,
       readiness: new PgReadinessProbe(pool, {

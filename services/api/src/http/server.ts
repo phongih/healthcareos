@@ -37,6 +37,7 @@ import { buildRetentionRoutes, type RetentionApi } from './retention-routes';
 import { buildF18Routes, type ExportApi, type VendorApi } from './f18-routes';
 import { buildEquipmentRoutes, type EquipmentApi } from './equipment-routes';
 import { buildStaffRoutes, type StaffAdminApi } from './staff-routes';
+import { buildPlatformRoutes, type PlatformReviewApi } from './platform-routes';
 import { buildPortalAdminRoutes, type PortalAdminApi } from './portal-admin-routes';
 import { handlePortal, type PortalApi } from './portal-routes';
 import { buildPiiRoutes, type PiiApi } from './pii-routes';
@@ -103,6 +104,7 @@ export interface ApiDeps {
   /** Tuỳ chọn (F20): phía nhân viên của cổng bệnh nhân. */
   readonly portalAdmin?: PortalAdminApi;
   readonly staffAdmin?: StaffAdminApi;
+  readonly platformReview?: PlatformReviewApi;
   /** Tuỳ chọn: hiện dữ liệu mã hoá + quản lý khoá (/api/pii/*, /api/keys*). */
   readonly pii?: PiiApi;
   /** Bộ giới hạn tần suất cho cổng công khai (mặc định: một bộ trong bộ nhớ cho handler này). */
@@ -137,6 +139,7 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
     ...buildEquipmentRoutes(deps.equipment),
     ...buildPortalAdminRoutes(deps.portalAdmin),
     ...buildStaffRoutes(deps.staffAdmin),
+    ...buildPlatformRoutes(deps.platformReview),
     ...(deps.pii ? buildPiiRoutes(deps.pii) : []),
   ];
   const limiter = deps.rateLimiter ?? new RateLimiter();
