@@ -10,6 +10,7 @@ import { Icon } from './lib/icons';
 import { allowedApps, BottomBar, Launcher, SideNav, usePins } from './lib/nav';
 import { AdminScreen } from './screens/admin';
 import { StaffScreen } from './screens/staff';
+import { ReviewScreen } from './screens/review';
 import { TodayScreen } from './screens/today';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
@@ -47,6 +48,7 @@ type Route =
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
   | { name: 'staff' }
+  | { name: 'review' }
   | { name: 'today' }
   | { name: 'equipment' }
   | { name: 'device'; code: string; qr: boolean }
@@ -76,6 +78,7 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/inbox')) return { name: 'inbox' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   if (hash.startsWith('#/staff')) return { name: 'staff' };
+  if (hash.startsWith('#/review')) return { name: 'review' };
   if (hash.startsWith('#/today')) return { name: 'today' };
   return { name: 'home' };
 }
@@ -204,6 +207,8 @@ function Shell({ me }: { me: Me }) {
           <AdminScreen />
         ) : route.name === 'staff' ? (
           <StaffScreen />
+        ) : route.name === 'review' ? (
+          <ReviewScreen />
         ) : route.name === 'today' ? (
           <TodayScreen />
         ) : null}

@@ -55,6 +55,10 @@ const REASON_TEXT: Record<string, string> = {
   AUTH_MFA_REQUIRED: 'Cần đăng nhập bằng mật khẩu và mã OTP (ứng dụng xác thực). Bấm "Đăng nhập lại có OTP".',
   USER_NOT_PROVISIONED: 'Tài khoản chưa được cấp quyền tại cơ sở nào (hoặc đã bị khoá). Liên hệ quản trị viên.',
   ORG_NOT_ALLOWED: 'Tài khoản không có quyền tại cơ sở được yêu cầu.',
+  // HCOS-F18 duyệt tổ chức đăng ký mới (người vận hành nền tảng)
+  NOT_OPERATOR: 'Chỉ người vận hành nền tảng mới duyệt được tổ chức đăng ký mới.',
+  NOT_PENDING: 'Tổ chức này không còn ở trạng thái chờ duyệt — tải lại danh sách.',
+  INVALID_DECISION: 'Quyết định không hợp lệ (chỉ duyệt hoặc từ chối).',
   // HCOS-F21 nhân sự & cơ sở
   ROLE_CEILING: 'Chỉ quản trị hệ thống mới cấp / thu hồi vai trò quản trị hoặc thay đổi tài khoản quản trị.',
   ORG_SCOPE: 'Bạn không quản lý cơ sở này (hoặc nhân viên còn làm ở cơ sở khác — liên hệ quản trị hệ thống).',
