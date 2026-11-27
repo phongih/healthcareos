@@ -93,18 +93,20 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     // HCOS-F20: cổng bệnh nhân (tắt mặc định; HCOS_PORTAL_OTP=training|webhook để bật đăng nhập).
     const portal = new PortalService({ pool, audit, sender: otpSenderFor(cfg.portalOtp, httpTransport()), publicBooking, retention });
     // Đăng ký khách: tắt nếu chưa có khoá OTP. Kênh gửi OTP chưa cấu hình => mọi lần gửi trả OTP_UNAVAILABLE (fail-closed).
+    const keycloakIdp = cfg.keycloakAdmin ? new KeycloakAdminClient(cfg.keycloakAdmin) : NOT_CONFIGURED;
     // Kênh OTP: SMTP nếu đã cấu hình (vẫn phải được duyệt trong platform.signup_vendors), không thì NO_SIGNUP_OTP_CHANNEL.
     const publicSignup = cfg.signupOtpKey
       ? new SignupService({
           pool,
           sender: cfg.signupSmtp ? smtpSignupOtp(cfg.signupSmtp) : NO_SIGNUP_OTP_CHANNEL,
           otpKey: cfg.signupOtpKey,
+          idp: keycloakIdp,
         })
       : null;
     const orgScope = new PgOrgScopeLookup(pool);
     // HCOS-F21: quản trị nhân sự & cơ sở (tài khoản Keycloak qua client service-account riêng).
     const staffAdmin = new StaffAdminService({
-      pool, audit, idp: cfg.keycloakAdmin ? new KeycloakAdminClient(cfg.keycloakAdmin) : NOT_CONFIGURED,
+      pool, audit, idp: keycloakIdp,
       onAccessChanged: (t) => orgScope.invalidate(asTenantId(t)),
     });
     const noShow = new NoShowJob({ pool, intervalMs: cfg.noShowIntervalSec * 1000, log });

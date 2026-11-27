@@ -393,6 +393,17 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
       slug: { category: 'reference', note: 'Đường dẫn tổ chức được chọn' },
       otp_hash: { storage: 'hashed', note: 'Mã OTP băm, không lưu dạng rõ' },
       client_ip: { level: 2, category: 'security', note: 'IP gửi yêu cầu (giới hạn tốc độ, chống lạm dụng)' },
+      contact_name: { level: 2, category: 'personal', note: 'Họ tên người đăng ký (thành tài khoản quản trị tạm thời)' },
+    },
+  },
+  'platform.operators': {
+    level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'audit_log',
+    purpose: 'Người vận hành nền tảng có quyền duyệt tổ chức đăng ký (không gắn tenant)',
+    columns: {
+      external_subject: { level: 2, category: 'security', note: 'Định danh IdP (sub) của người vận hành' },
+      granted_by: { level: 2, category: 'personal', note: 'Người cấp quyền vận hành' },
+      granted_at: { level: 1, category: 'internal', note: 'Thời điểm cấp quyền' },
+      active: { level: 1, category: 'internal', note: 'Còn hiệu lực hay không' },
     },
   },
   'iam.slug_redirects': {

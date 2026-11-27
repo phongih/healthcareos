@@ -12,7 +12,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const PHONE_RE = /^\+?[0-9 ]{8,20}$/;
 
-export type RuleError = { readonly field: 'email' | 'orgName' | 'phone' | 'license' | 'slug'; readonly code: string };
+export type RuleError = { readonly field: 'email' | 'orgName' | 'phone' | 'license' | 'slug' | 'contactName' | 'password'; readonly code: string };
 export type Checked<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: RuleError };
 
 const fail = (field: RuleError['field'], code: string): { ok: false; error: RuleError } => ({ ok: false, error: { field, code } });
@@ -41,6 +41,19 @@ export function checkLicense(raw: string): Checked<string> {
   const v = raw.trim();
   if (v.length < 5 || v.length > 40) return fail('license', 'INVALID_LICENSE');
   return { ok: true, value: v };
+}
+
+/** Họ tên người đăng ký: 2–80 ký tự, không có ký tự điều khiển. */
+export function checkContactName(raw: string): Checked<string> {
+  const v = raw.trim().replace(/\s+/g, ' ');
+  if (v.length < 2 || v.length > 80 || /[\u0000-\u001f\u007f]/.test(v)) return fail('contactName', 'INVALID_CONTACT_NAME');
+  return { ok: true, value: v };
+}
+
+/** Mật khẩu tài khoản quản trị: 12–128 ký tự, không có ký tự điều khiển. Không bao giờ được ghi log. */
+export function checkPassword(raw: string): Checked<string> {
+  if (raw.length < 12 || raw.length > 128 || /[\u0000-\u001f\u007f]/.test(raw)) return fail('password', 'INVALID_PASSWORD');
+  return { ok: true, value: raw };
 }
 
 export function checkSlug(raw: string): Checked<string> {
