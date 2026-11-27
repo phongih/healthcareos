@@ -61,7 +61,7 @@ export function SideNav({ apps, routeName, footer }: { apps: readonly AppDef[]; 
           if (!items.length) return null;
           return (
             <div key={g} className="sidenav-group">
-              <span className="sidenav-label">{g}</span>
+              {g && <span className="sidenav-label">{g}</span>}
               {items.map((a) => {
                 const on = a.routes.includes(routeName);
                 return (
@@ -149,7 +149,7 @@ export function Launcher({ apps, pins, onToggle, onReset, custom, onClose, foote
             if (!items.length) return null;
             return (
               <section key={g} className="launcher-group">
-                <h3>{g}</h3>
+                {g && <h3>{g}</h3>}
                 <div className="launcher-grid">
                   {items.map((a) => {
                     const pinned = pins.includes(a.key);

@@ -6,7 +6,7 @@ import type { IconName } from './icon-names';
 import { can, type Role } from './roles';
 
 export type AppKey =
-  | 'patients' | 'queue' | 'bookings' | 'handover' | 'equipment' | 'pharmacy' | 'finance'
+  | 'today' | 'patients' | 'queue' | 'bookings' | 'handover' | 'equipment' | 'pharmacy' | 'finance'
   | 'reports' | 'forecast' | 'decision' | 'staff' | 'governance' | 'integrations' | 'admin';
 
 export interface AppDef {
@@ -22,9 +22,11 @@ export interface AppDef {
   routes: readonly string[];
 }
 
-export const GROUPS = ['Tiếp đón', 'Khám & thiết bị', 'Dược', 'Tài chính', 'Báo cáo & cảnh báo', 'Quản trị'] as const;
+/** Nhóm '' = mục chung đứng đầu, không có nhãn nhóm (vd. "Hôm nay"). */
+export const GROUPS = ['', 'Tiếp đón', 'Khám & thiết bị', 'Dược', 'Tài chính', 'Báo cáo & cảnh báo', 'Quản trị'] as const;
 
 export const APPS: readonly AppDef[] = [
+  { key: 'today', hash: '#/today', label: 'Hôm nay', group: '', icon: 'sun', keywords: 'hom nay tong quan viec can lam workspace', allowed: can.today, routes: ['today'] },
   { key: 'patients', hash: '#/patients', label: 'Bệnh nhân', group: 'Tiếp đón', icon: 'users', keywords: 'ho so dang ky tim benh an dang kham mrn', allowed: can.patients, routes: ['patients', 'patient', 'encounter'] },
   { key: 'queue', hash: '#/queue', label: 'Hàng đợi', group: 'Tiếp đón', icon: 'queue', keywords: 'cap so goi so tv man hinh phong kham', allowed: can.queue, routes: ['queue'] },
   { key: 'bookings', hash: '#/bookings', label: 'Lịch hẹn', group: 'Tiếp đón', icon: 'calendar', keywords: 'dat lich online check-in hen', allowed: can.bookings, routes: ['bookings'] },
@@ -47,7 +49,7 @@ const ROLE_PINS: ReadonlyArray<[Role, AppKey[]]> = [
   ['clinic_admin', ['patients', 'queue', 'reports', 'staff']],
   ['executive', ['reports', 'forecast', 'finance', 'decision']],
   ['doctor', ['patients', 'queue', 'equipment']],
-  ['clinic_staff', ['patients', 'queue', 'bookings', 'finance']],
+  ['clinic_staff', ['today', 'patients', 'queue', 'bookings']],
   ['pharmacy_admin', ['pharmacy', 'forecast', 'equipment', 'handover']],
   ['pharmacist', ['pharmacy', 'handover', 'patients']],
   ['cashier', ['finance', 'handover']],

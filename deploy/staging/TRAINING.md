@@ -7,6 +7,12 @@ Mục tiêu: nhân viên tập các thao tác hằng ngày bằng **tài khoản
 - **Máy tính** (màn hình rộng từ 1024px): danh sách mục nằm ở **thanh bên trái**, chia nhóm (Tiếp đón, Khám & thiết bị, Dược, Tài chính, Báo cáo & cảnh báo, Quản trị). Ô **Cơ sở** và chuông thông báo ở góc trên bên phải; tên người dùng và nút đăng xuất ở cuối thanh bên.
 - **Điện thoại / máy tính bảng dọc**: **thanh dưới đáy** có tối đa 4 mục hay dùng của vai trò, cộng nút **Ứng dụng** để mở toàn bộ mục (có ô tìm, gõ không dấu cũng được, vd. `thu ngan`). Trong **Ứng dụng → Sửa ghim** mỗi người tự chọn 4 mục cho thanh dưới; **Về mặc định theo vai trò** để trả lại. Nút đăng xuất ở cuối màn Ứng dụng.
 - Trong tài liệu này, "tab X" nghĩa là mục X ở thanh bên / thanh dưới / Ứng dụng.
+- **Lễ tân / điều dưỡng** đăng nhập xong vào thẳng màn **Hôm nay**:
+  - ô tìm bệnh nhân bằng **mã bệnh nhân hoặc CCCD** (đúng 1 người thì mở hồ sơ ngay);
+  - 3 nút **Đăng ký mới**, **Cấp số khám**, **Check-in lịch hẹn**;
+  - 4 con số trong ngày (đang chờ, đang gọi / đang khám, vắng mặt, lịch hẹn chưa đến);
+  - hàng đợi theo phòng (số đang gọi + số người chờ), lịch hẹn chưa check-in, việc cần làm (số vắng mặt, yêu cầu đính chính từ cổng bệnh nhân).
+  Màn tự làm mới 30 giây một lần; bấm **Làm mới** để cập nhật ngay.
 
 ## Quy tắc bắt buộc
 - **Không nhập thông tin bệnh nhân thật** (tên, CCCD, số điện thoại, chẩn đoán của người thật). Staging không đạt yêu cầu pháp lý cho dữ liệu sức khoẻ thật.

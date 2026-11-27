@@ -70,6 +70,7 @@ npm run build      # ra dist/index.html, dist/app-<hash>.js, dist/app-<hash>.css
 - ≥ 1024px: thanh bên theo nhóm + thanh trên sáng (tên mục, ô Cơ sở, chuông). Hẹp hơn: thanh trên màu thương hiệu + **thanh dưới đáy** (tối đa 4 mục ghim + "Ứng dụng") + **lưới ứng dụng** (bảng trượt, ô tìm, Esc để đóng).
 - Ghim mặc định theo vai trò (`ROLE_PINS`, vai trò quản trị ưu tiên trước); người dùng sửa ghim, lưu ở `localStorage` khoá `hcos.nav.pins.v1.<userId>` (chỉ là tiện ích theo trình duyệt; không lưu được thì dùng mặc định). Không lưu dữ liệu bệnh nhân.
 - Vào `#/` => mở mục ghim đầu tiên.
+- Màn **Hôm nay** (`#/today`, `screens/today.tsx`, hàm thuần ở `lib/today-model.ts`): hiện có workspace lễ tân / điều dưỡng (`can.today` = `clinic_staff`), là mục ghim đầu tiên của vai trò này. Chỉ đọc qua API sẵn có: `/api/service-points`, `/api/queue`, `/api/bookings?date=<hôm nay giờ VN>`, `/api/portal-admin/requests`, `/fhir/Patient?mrn=|identifier=`. Không hiện SĐT / CCCD của lịch hẹn. Tự làm mới 30 giây khi tab đang hiển thị. `#/patients/new` mở sẵn form đăng ký.
 
 ## 6. Giới hạn đã biết
 - Không có chế độ offline. Tải lại trang thì phải đăng nhập lại; đây là đánh đổi có chủ ý để token không bị lưu.
