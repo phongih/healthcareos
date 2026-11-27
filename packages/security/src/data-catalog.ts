@@ -373,7 +373,32 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
     columns: { revoke_reason: { category: 'internal', note: 'Lý do thu hồi vai trò (F21) — không ghi thông tin sức khoẻ' } },
   },
   'iam.organizations': { level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Cơ sở khám chữa bệnh' },
-  'iam.tenants': { level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Chủ quản dữ liệu (đơn vị sử dụng)' },
+  'iam.tenants': {
+    level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Chủ quản dữ liệu (đơn vị sử dụng)',
+    columns: {
+      slug: { category: 'reference', note: 'Đường dẫn tổ chức /app/<slug> (công khai, không phải căn cứ phân quyền) — migration 026' },
+      business_license_no: { category: 'internal', note: 'Số giấy phép kinh doanh của tổ chức (đối chiếu khi duyệt tay) — migration 026' },
+      medical_license_no: { category: 'internal', note: 'Số giấy phép khám chữa bệnh (Sở Y tế) — migration 026' },
+      medical_license_status: { category: 'internal', note: 'Trạng thái duyệt giấy phép khám chữa bệnh; chưa approved thì không nhận bệnh nhân thật — migration 026' },
+    },
+  },
+  'iam.signup_requests': {
+    level: 2, category: 'personal', subject: 'organization', steward: 'tenant_admin', retention: 'operational',
+    purpose: 'Yêu cầu đăng ký công khai của tổ chức mới (chưa có tenant), xoá sau khi duyệt hoặc hết hạn',
+    columns: {
+      email: { level: 2, category: 'personal', note: 'Email đăng ký, nhận mã OTP' },
+      phone: { level: 2, category: 'personal', note: 'Số điện thoại liên hệ của tổ chức đăng ký' },
+      org_name: { level: 2, category: 'internal', note: 'Tên tổ chức đăng ký' },
+      business_license_no: { category: 'internal', note: 'Số giấy phép kinh doanh (đối chiếu khi duyệt tay)' },
+      slug: { category: 'reference', note: 'Đường dẫn tổ chức được chọn' },
+      otp_hash: { storage: 'hashed', note: 'Mã OTP băm, không lưu dạng rõ' },
+      client_ip: { level: 2, category: 'security', note: 'IP gửi yêu cầu (giới hạn tốc độ, chống lạm dụng)' },
+    },
+  },
+  'iam.slug_redirects': {
+    level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'operational',
+    purpose: 'Slug cũ chuyển hướng 90 ngày sau khi đổi đường dẫn tổ chức (migration 026)',
+  },
   'iam.users': {
     level: 2, category: 'personal', subject: 'staff', steward: 'tenant_admin', retention: 'audit_log',
     purpose: 'Tài khoản nhân viên (liên kết danh tính ở IdP)',
