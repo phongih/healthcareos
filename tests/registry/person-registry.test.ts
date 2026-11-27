@@ -117,6 +117,8 @@ interface State {
 }
 
 class Store {
+  /** medical_license_status của tenant trong test; mặc định đã duyệt. */
+  licenseStatus = 'approved';
   state: State = { persons: [], keys: {}, identifiers: [], patients: [], users: [], memberships: [], policies: [], merges: [], unmerges: [], outbox: [], audit: [] };
   /** Gây lỗi giữa chừng để kiểm tra rollback. */
   failAt: string | null = null;
@@ -254,6 +256,7 @@ class MemRepo implements RegistryRepository {
   async resolveMrn(_org: unknown, raw: string | null | undefined) {
     return raw ? { mrn: raw, generated: false } : { mrn: formatAutoMrn('BN', 26, ++this.mrnSeq), generated: true };
   }
+  async tenantMedicalLicenseStatus(_tenantId: string) { return this.st.licenseStatus; }
   async insertPatient(p: Patient) {
     this.maybeFail('insertPatient');
     if (p.tenantId !== this.tenantId) throw Object.assign(new Error('rls'), { code: '42501' });
@@ -823,5 +826,36 @@ describe('access policy (migration 007) trên Person Registry', () => {
     w.s.memberships[i] = { ...w.s.memberships[i]!, accessPolicyId: POL };
     const self = await w.svc.getPerson(person.personId, w.ctx.patientUser);
     expect(self.identifiers).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// Cổng giấy phép khám chữa bệnh: tổ chức chưa duyệt không nhận bệnh nhân thật
+// ===========================================================================
+describe('registry / cổng giấy phép khám chữa bệnh', () => {
+  const input = (o: object = {}) => ({ person: { ...AN, identifiers: [CCCD] }, organizationId: OA, mrn: 'MRN-LIC-1', ...o });
+
+  for (const status of ['none', 'pending', 'rejected']) {
+    it(`chặn đăng ký bệnh nhân khi medical_license_status = ${status}; không tạo người, bệnh nhân hay MRN`, async () => {
+      w = world();
+      w.store.licenseStatus = status;
+      let err: unknown = null;
+      try {
+        await w.svc.registerPersonAndPatient(input(), w.ctx.nurse);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toMatchObject({ code: 'INVALID_STATE', details: { reason: 'MEDICAL_LICENSE_REQUIRED' } });
+      expect(w.s.persons).toHaveLength(0);
+      expect(w.s.patients).toHaveLength(0);
+    });
+  }
+
+  it('cho phép đăng ký khi tổ chức đã được duyệt giấy phép', async () => {
+    w = world();
+    w.store.licenseStatus = 'approved';
+    const r = await w.svc.registerPersonAndPatient(input(), w.ctx.nurse);
+    expect(r.patient.mrn).toBe('MRN-LIC-1');
+    expect(w.s.patients).toHaveLength(1);
   });
 });

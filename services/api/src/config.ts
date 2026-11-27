@@ -58,6 +58,8 @@ export interface AppConfig {
   readonly integrationKey: Buffer | null;
   /** Khoá HMAC băm OTP đăng ký khách (HCOS_SIGNUP_OTP_KEY, base64 32 byte). Không đặt => đăng ký tắt. */
   readonly signupOtpKey: Buffer | null;
+  /** HCOS_TRAINING_ENV=1: môi trường dữ liệu giả; miễn cổng giấy phép khám chữa bệnh khi đăng ký bệnh nhân. */
+  readonly trainingEnv: boolean;
   /** SMTP gửi OTP đăng ký (HCOS_SIGNUP_SMTP_*; cả năm biến hoặc không biến nào). Vẫn cần vendor được duyệt trong danh mục. */
   readonly signupSmtp: SignupSmtpConfig | null;
   readonly publicBaseUrl: string | null;
@@ -266,6 +268,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     })(),
     integrationKey,
     signupOtpKey,
+    trainingEnv: env['HCOS_TRAINING_ENV']?.trim() === '1',
     publicBaseUrl,
     integrationDispatchSec: (() => {
       const v = int('HCOS_INTEGRATION_DISPATCH_SEC', 15, 0, 3600);

@@ -98,7 +98,7 @@ run('Lưu giữ & xoá dữ liệu / PostgreSQL', () => {
     su(`CREATE DATABASE ${DB}`, 'postgres');
     for (const f of readdirSync(MIG).filter((x) => /^\d+_.+\.sql$/.test(x)).sort()) suFile(`${MIG}/${f}`);
     su(`
-      INSERT INTO iam.tenants(tenant_id,code,name) VALUES ('${TA}','ta','A'),('${TB}','tb','B');
+      INSERT INTO iam.tenants(tenant_id,code,name,medical_license_no,medical_license_status) VALUES ('${TA}','ta','A','GP-TEST-A','approved'),('${TB}','tb','B','GP-TEST-B','approved');
       INSERT INTO iam.organizations(organization_id,tenant_id,type,code,name) VALUES ('${OA}','${TA}','clinic','c1','PK A'),('${OB}','${TB}','clinic','c3','PK B');
       INSERT INTO iam.users(user_id,tenant_id,external_subject,display_name)
         SELECT u, t, 'sub-' || u, n FROM (VALUES

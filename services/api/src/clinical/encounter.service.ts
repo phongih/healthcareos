@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 
 import { LEGACY_MRN_RE, MrnError, normalizeMrnQuery, resolveMrn } from '../registry/mrn';
 import { TenantPii } from '../../../../packages/security/src/pii';
+import { assertMayReceiveRealPatients } from '../registry/medical-license-gate';
 
 import {
   asPatientId,
@@ -116,6 +117,8 @@ export interface PatientSearchQuery {
 }
 
 export interface ClinicalRepository {
+  /** medical_license_status của tổ chức (iam.tenants); không có tenant => 'none'. */
+  tenantMedicalLicenseStatus(tenantId: string): Promise<string>;
   findPerson(personId: PersonId): Promise<Person | null>;
   findPatient(patientId: PatientId): Promise<Patient | null>;
   listIdentifiers(personId: PersonId): Promise<Identifier[]>;
@@ -156,6 +159,8 @@ export interface ClinicalServiceDeps {
   readonly audit: AuditSink;
   readonly clock?: () => Date;
   readonly newId?: () => string;
+  /** HCOS_TRAINING_ENV=1: miễn cổng giấy phép khám chữa bệnh (môi trường dữ liệu giả). Mặc định false. */
+  readonly trainingEnv?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +272,10 @@ export class ClinicalEncounterService {
   private readonly clock: () => Date;
   private readonly newId: () => string;
 
+  private readonly trainingEnv: boolean;
+
   constructor(deps: ClinicalServiceDeps) {
+    this.trainingEnv = deps.trainingEnv ?? false;
     this.uow = deps.uow;
     this.audit = deps.audit;
     this.clock = deps.clock ?? (() => new Date());
@@ -291,6 +299,7 @@ export class ClinicalEncounterService {
       if (person.status !== 'active') {
         throw new ClinicalError('INVALID_STATE', 'Person is not active (merged/deceased/inactive)');
       }
+      assertMayReceiveRealPatients(await repo.tenantMedicalLicenseStatus(ctx.tenantId), this.trainingEnv);
 
       const now = this.now();
       const assigned = await mrnCall(() => repo.resolveMrn(input.organizationId, input.mrn, new Date(now)));
@@ -1149,6 +1158,14 @@ export const mapIdentifier = (r: any): Identifier => ({
 export class PgClinicalRepository implements ClinicalRepository {
   private piiCodec: TenantPii | null = null;
   constructor(protected readonly db: TenantScopedDb) {}
+
+  async tenantMedicalLicenseStatus(tenantId: string): Promise<string> {
+    const r = await this.db.query<{ medical_license_status: string }>(
+      'SELECT medical_license_status FROM iam.tenants WHERE tenant_id = $1',
+      [tenantId],
+    );
+    return r.rows[0]?.medical_license_status ?? 'none';
+  }
 
   /** HCOS-F16: mã hoá / blind index của tenant hiện tại (khoá tải lười trong transaction). */
   protected get pii(): TenantPii {

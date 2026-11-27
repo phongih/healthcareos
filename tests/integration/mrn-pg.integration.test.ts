@@ -51,7 +51,7 @@ run('MRN tự sinh / PostgreSQL', () => {
     execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-d', DB], {
       encoding: 'utf8',
       input: `
-INSERT INTO iam.tenants(tenant_id,code,name) VALUES ('${TA}','ta','A');
+INSERT INTO iam.tenants(tenant_id,code,name,medical_license_no,medical_license_status) VALUES ('${TA}','ta','A','GP-TEST-A','approved');
 INSERT INTO iam.organizations(organization_id,tenant_id,type,code,name) VALUES ('${OA}','${TA}','clinic','c1','PK A'),('${OB}','${TA}','clinic','c2','PK B');
 INSERT INTO iam.users(user_id,tenant_id,external_subject,display_name) VALUES ('${U.admin}','${TA}','sub-${U.admin}','Quản lý'),('${U.staff}','${TA}','sub-${U.staff}','Lễ tân'),('${U.cash}','${TA}','sub-${U.cash}','Thu ngân');
 INSERT INTO iam.memberships(tenant_id,user_id,organization_id,role) VALUES ('${TA}','${U.admin}','${OA}','clinic_admin'),('${TA}','${U.admin}','${OB}','clinic_admin'),('${TA}','${U.staff}','${OA}','clinic_staff'),('${TA}','${U.cash}','${OA}','cashier');

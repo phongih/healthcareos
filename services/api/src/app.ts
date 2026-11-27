@@ -76,7 +76,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     await assertSafeDatabaseRole(pool);
 
     const audit = new PgAuditSink(pool);
-    const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit });
+    const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit, trainingEnv: cfg.trainingEnv });
     const decision = new DecisionEngineService({
       uow: new PgDecisionUnitOfWork(pool), audit, intervalMinutes: cfg.decisionIntervalSec > 0 ? Math.round(cfg.decisionIntervalSec / 60) : null,
     });
@@ -123,7 +123,7 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
         requireAmr: cfg.requireAmr,
         audit,
       },
-      clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
+      clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit, trainingEnv: cfg.trainingEnv }),
       registry,
       accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
       pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),

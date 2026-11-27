@@ -102,6 +102,7 @@ import {
   type PgPoolLike,
 } from '../../../../packages/security/src/tenant-context';
 import { TenantPii } from '../../../../packages/security/src/pii';
+import { assertMayReceiveRealPatients } from './medical-license-gate';
 
 // ---------------------------------------------------------------------------
 // Ports
@@ -151,6 +152,8 @@ export interface TargetRestore {
 
 export interface RegistryRepository {
   findUserBySubject(subject: string): Promise<User | null>;
+  /** medical_license_status của tổ chức (iam.tenants); không có tenant => 'none'. */
+  tenantMedicalLicenseStatus(tenantId: string): Promise<string>;
   listMemberships(userId: UserId): Promise<Membership[]>;
   /** Policy theo id trong tenant hiện tại (migration 007). */
   findAccessPolicies(ids: readonly AccessPolicyId[]): Promise<AccessPolicy[]>;
@@ -199,6 +202,8 @@ export interface RegistryServiceDeps {
   readonly audit: AuditSink;
   readonly clock?: () => Date;
   readonly newId?: () => string;
+  /** HCOS_TRAINING_ENV=1: miễn cổng giấy phép khám chữa bệnh (môi trường dữ liệu giả). Mặc định false. */
+  readonly trainingEnv?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +282,14 @@ export class PersonRegistryService {
   private readonly clock: () => Date;
   private readonly newId: () => string;
 
+  private readonly trainingEnv: boolean;
+
   constructor(deps: RegistryServiceDeps) {
     this.uow = deps.uow;
     this.audit = deps.audit;
     this.clock = deps.clock ?? (() => new Date());
     this.newId = deps.newId ?? randomUUID;
+    this.trainingEnv = deps.trainingEnv ?? false;
   }
 
   // ---- Create ------------------------------------------------------------
@@ -799,6 +807,7 @@ export class PersonRegistryService {
         throw new ClinicalError('VALIDATION', 'duplicateOverride is not supported here; create the person first via /api/persons');
       }
 
+      assertMayReceiveRealPatients(await repo.tenantMedicalLicenseStatus(ctx.tenantId), this.trainingEnv);
       const created = await this.createPersonWithin(repo, ctx, principal, { action: 'person.create', resourceType: 'Person' }, input.person);
 
       const now = this.now();
@@ -1069,6 +1078,14 @@ const CAND_LIMIT = 200;
 export class PgRegistryRepository implements RegistryRepository {
   private piiCodec: TenantPii | null = null;
   constructor(private readonly db: TenantScopedDb) {}
+
+  async tenantMedicalLicenseStatus(tenantId: string): Promise<string> {
+    const r = await this.db.query<{ medical_license_status: string }>(
+      'SELECT medical_license_status FROM iam.tenants WHERE tenant_id = $1',
+      [tenantId],
+    );
+    return r.rows[0]?.medical_license_status ?? 'none';
+  }
 
   /** HCOS-F16: mã hoá / blind index của tenant hiện tại. */
   private get pii(): TenantPii {

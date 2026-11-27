@@ -122,6 +122,7 @@ class Repo implements ClinicalRepository {
   async resolveMrn(_org: unknown, raw: string | null | undefined) {
     return raw ? { mrn: raw, generated: false } : { mrn: formatAutoMrn('BN', 26, ++this.mrnSeq), generated: true };
   }
+  async tenantMedicalLicenseStatus(_tenantId: string) { return 'approved'; }
   async insertPatient(p: Patient) { this.s.patients.push(p); }
   async findUserBySubject(sub: string) { return this.s.users.find((u) => u.externalSubject === sub) ?? null; }
   async listMemberships(userId: UserId) { return this.s.memberships.filter((m) => m.userId === userId); }
