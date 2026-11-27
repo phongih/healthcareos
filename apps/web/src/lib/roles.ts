@@ -24,6 +24,8 @@ export const can = {
   admin: (r: ReadonlySet<Role>) => r.has('tenant_admin'),
   /** F21: nhân sự & cơ sở (quản lý cơ sở: cơ sở mình; quản trị hệ thống: mọi nơi). */
   staff: (r: ReadonlySet<Role>) => r.has('clinic_admin') || r.has('tenant_admin'),
+  /** F18: duyệt tổ chức đăng ký mới — chỉ hiển thị cho quản trị hệ thống; máy chủ kiểm tra người vận hành. */
+  platformReview: (r: ReadonlySet<Role>) => r.has('tenant_admin'),
   queue: (r: ReadonlySet<Role>) => ['doctor', 'clinic_staff', 'clinic_admin', 'tenant_admin'].some((x) => r.has(x as Role)),
   issueTicket: (r: ReadonlySet<Role>) => r.has('clinic_staff') || r.has('clinic_admin'),
   finance: (r: ReadonlySet<Role>) => ['clinic_staff', 'cashier', 'clinic_admin', 'executive', 'tenant_admin'].some((x) => r.has(x as Role)),

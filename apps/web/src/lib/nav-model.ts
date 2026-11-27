@@ -7,7 +7,7 @@ import { can, type Role } from './roles';
 
 export type AppKey =
   | 'today' | 'patients' | 'queue' | 'bookings' | 'handover' | 'equipment' | 'pharmacy' | 'finance'
-  | 'reports' | 'forecast' | 'decision' | 'staff' | 'governance' | 'integrations' | 'admin';
+  | 'reports' | 'forecast' | 'decision' | 'staff' | 'review' | 'governance' | 'integrations' | 'admin';
 
 export interface AppDef {
   key: AppKey;
@@ -38,6 +38,7 @@ export const APPS: readonly AppDef[] = [
   { key: 'forecast', hash: '#/forecast', label: 'Dự báo', group: 'Báo cáo & cảnh báo', icon: 'trend', keywords: 'du bao tai ton kho qua tai', allowed: can.forecast, routes: ['forecast'] },
   { key: 'decision', hash: '#/decision', label: 'Decision Engine', group: 'Báo cáo & cảnh báo', icon: 'spark', keywords: 'canh bao luat quy tac thong bao', allowed: can.decision, routes: ['decision'] },
   { key: 'staff', hash: '#/staff', label: 'Nhân sự', group: 'Quản trị', icon: 'idcard', keywords: 'nhan vien tai khoan vai tro co so phan quyen', allowed: can.staff, routes: ['staff'] },
+  { key: 'review', hash: '#/review', label: 'Duyệt tổ chức', group: 'Quản trị', icon: 'check', keywords: 'duyet to chuc dang ky moi gpkd gia phep', allowed: can.platformReview, routes: ['review'] },
   { key: 'governance', hash: '#/governance', label: 'Quản trị dữ liệu', group: 'Quản trị', icon: 'shield', keywords: 'du lieu ca nhan xoa luu tru nhat ky audit', allowed: can.governance, routes: ['governance'] },
   { key: 'integrations', hash: '#/integrations', label: 'Tích hợp', group: 'Quản trị', icon: 'plug', keywords: 'teams webhook doi tac api', allowed: can.integrations, routes: ['integrations'] },
   { key: 'admin', hash: '#/admin', label: 'Quản trị', group: 'Quản trị', icon: 'gear', keywords: 'cai dat he thong khoa ma hoa', allowed: can.admin, routes: ['admin'] },
