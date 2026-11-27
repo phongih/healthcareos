@@ -58,12 +58,21 @@ export interface AppConfig {
   readonly integrationKey: Buffer | null;
   /** Khoá HMAC băm OTP đăng ký khách (HCOS_SIGNUP_OTP_KEY, base64 32 byte). Không đặt => đăng ký tắt. */
   readonly signupOtpKey: Buffer | null;
+  /** SMTP gửi OTP đăng ký (HCOS_SIGNUP_SMTP_*; cả năm biến hoặc không biến nào). Vẫn cần vendor được duyệt trong danh mục. */
+  readonly signupSmtp: SignupSmtpConfig | null;
   readonly publicBaseUrl: string | null;
   readonly integrationDispatchSec: number;
   /** HCOS-F16: KEK cục bộ (bọc DEK). */
   readonly keyProvider: LocalKeyProvider | null;
   /** HCOS-F20: kênh OTP cổng bệnh nhân. */
   readonly portalOtp: PortalOtpConfig;
+}
+export interface SignupSmtpConfig {
+  readonly host: string;
+  readonly port: number;
+  readonly user: string;
+  readonly pass: string;
+  readonly from: string;
 }
 export type PortalOtpConfig =
   | { readonly mode: 'off' }
@@ -190,8 +199,30 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     problems.push('HCOS_PORTAL_OTP must be off, training or webhook');
   }
 
+  let signupSmtp: SignupSmtpConfig | null = null;
+  const smtpKeys = ['HOST', 'PORT', 'USER', 'PASS', 'FROM'].map((k) => `HCOS_SIGNUP_SMTP_${k}`);
+  const smtpSet = smtpKeys.filter((k) => (env[k] ?? '').trim() !== '');
+  if (smtpSet.length > 0) {
+    if (smtpSet.length < smtpKeys.length) {
+      problems.push('HCOS_SIGNUP_SMTP_HOST, _PORT, _USER, _PASS and _FROM must all be set together');
+    } else {
+      const host = (env['HCOS_SIGNUP_SMTP_HOST'] ?? '').trim().toLowerCase();
+      const port = Number((env['HCOS_SIGNUP_SMTP_PORT'] ?? '').trim());
+      const user = (env['HCOS_SIGNUP_SMTP_USER'] ?? '').trim();
+      const pass = (env['HCOS_SIGNUP_SMTP_PASS'] ?? '').replace(/\r?\n$/, '');
+      const from = (env['HCOS_SIGNUP_SMTP_FROM'] ?? '').trim();
+      let ok = true;
+      if (!/^[a-z0-9.-]+$/.test(host)) { problems.push('HCOS_SIGNUP_SMTP_HOST must be a bare host name'); ok = false; }
+      if (port !== 465) { problems.push('HCOS_SIGNUP_SMTP_PORT must be 465 (implicit TLS)'); ok = false; }
+      if (!/^[^\s@<>\r\n]+@[^\s@<>\r\n]+$/.test(from)) { problems.push('HCOS_SIGNUP_SMTP_FROM must be a plain email address'); ok = false; }
+      if (/[\r\n]/.test(pass) || pass.length === 0) { problems.push('HCOS_SIGNUP_SMTP_PASS must be a single non-empty line'); ok = false; }
+      if (ok) signupSmtp = { host, port, user, pass, from };
+    }
+  }
+
   const cfg: AppConfig = {
     portalOtp,
+    signupSmtp,
     databaseUrl,
     keyProvider,
     issuer,
