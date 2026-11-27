@@ -2,17 +2,19 @@
  * HCOS | HTTP: đăng ký khách và tra đường dẫn tổ chức (không đăng nhập; xử lý trong server.ts trước xác thực).
  *
  *   GET  /api/public/tenants/:slug        => { displayName, slug } | { redirect: true } | 404 (không lộ tổ chức chưa hoạt động)
- *   POST /api/public/signup/start         { email, orgName, contactName, phone, license, slug } => 201 { signupId, expiresAt }
+ *   GET  /api/public/captcha              => { token, bits, expiresAt } (thử thách proof-of-work, xem signup/pow.ts)
+ *   POST /api/public/signup/start         { email, orgName, contactName, phone, license, slug, captchaToken, captchaNonce } => 201 { signupId, expiresAt }
  *   POST /api/public/signup/verify        { signupId, code }                       => 200 { slug }
- *   POST /api/public/signup/complete      { signupId, password }                   => 201 { slug, status: 'pending_review' }
+ *   POST /api/public/signup/complete      { signupId, password, captchaToken, captchaNonce } => 201 { slug, status: 'pending_review' }
  *     (mật khẩu chỉ đi qua HTTPS, không bao giờ được ghi log hay trả lại)
  *
- * Lỗi nghiệp vụ trả { error: <mã> } (vd. SLUG_TAKEN, RATE_LIMITED, WRONG); lỗi không rõ chỉ trả INTERNAL, không lộ chi tiết.
- * Giới hạn tần suất theo IP chạy trước khi gọi dịch vụ.
+ * Lỗi nghiệp vụ trả { error: <mã> } (vd. SLUG_TAKEN, RATE_LIMITED, WRONG, CAPTCHA_FAILED); lỗi không rõ chỉ trả INTERNAL, không lộ chi tiết.
+ * Giới hạn tần suất theo IP chạy trước khi gọi dịch vụ; lời giải CAPTCHA được kiểm tra trước khi gọi dịch vụ.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { SignupError, type SignupService, type StartInput } from '../signup/signup.service';
+import type { ProofOfWork } from '../signup/pow';
 import { clientIp, type RateLimiter } from './booking-routes';
 import { HttpError, PLAIN_JSON, readJsonBody, sendJson } from './http-kernel';
 
@@ -20,6 +22,7 @@ export type PublicSignupApi = Pick<SignupService, 'start' | 'verify' | 'resolve'
 
 const LIMITS = {
   tenant: { limit: 120, windowMs: 60_000 },
+  captcha: { limit: 60, windowMs: 60 * 60_000 },
   start: { limit: 5, windowMs: 60 * 60_000 },
   verify: { limit: 30, windowMs: 60 * 60_000 },
   complete: { limit: 10, windowMs: 60 * 60_000 },
@@ -37,11 +40,13 @@ export const SIGNUP_HTTP_STATUS: Readonly<Record<string, number>> = {
   OTP_UNAVAILABLE: 503,
   ACCOUNT_EXISTS: 409,
   IDP_UNAVAILABLE: 503,
+  CAPTCHA_FAILED: 400,
 };
 
-const START_FIELDS: readonly string[] = ['email', 'orgName', 'contactName', 'phone', 'license', 'slug'];
+const START_FIELDS: readonly string[] = ['email', 'orgName', 'contactName', 'phone', 'license', 'slug', 'captchaToken', 'captchaNonce'];
 const VERIFY_FIELDS: readonly string[] = ['signupId', 'code'];
-const COMPLETE_FIELDS: readonly string[] = ['signupId', 'password'];
+const COMPLETE_FIELDS: readonly string[] = ['signupId', 'password', 'captchaToken', 'captchaNonce'];
+const CAPTCHA_PATH = '/api/public/captcha';
 const TENANT_PATH = /^\/api\/public\/tenants\/([a-z0-9][a-z0-9-]{1,28}[a-z0-9])$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -51,20 +56,29 @@ export async function handlePublicSignup(
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
-  deps: { api: PublicSignupApi; limiter: RateLimiter; baseHeaders: Record<string, string>; onError: (e: unknown) => void },
+  deps: { api: PublicSignupApi; pow: ProofOfWork; limiter: RateLimiter; baseHeaders: Record<string, string>; onError: (e: unknown) => void },
 ): Promise<boolean> {
   const p = url.pathname;
   const tenantM = TENANT_PATH.exec(p);
+  const isCaptcha = p === CAPTCHA_PATH;
   const isStart = p === '/api/public/signup/start';
   const isVerify = p === '/api/public/signup/verify';
   const isComplete = p === '/api/public/signup/complete';
-  if (!tenantM && !isStart && !isVerify && !isComplete) return false;
+  if (!tenantM && !isCaptcha && !isStart && !isVerify && !isComplete) return false;
 
   const method = (req.method ?? 'GET').toUpperCase();
   const h = { ...deps.baseHeaders, 'cache-control': 'no-store' };
   const send = (status: number, body: unknown, extra: Record<string, string> = {}): void =>
     sendJson(res, status, body, PLAIN_JSON, { ...h, ...extra });
   const ip = clientIp(req);
+
+  if (isCaptcha) {
+    if (method !== 'GET') return (send(405, { error: 'METHOD_NOT_ALLOWED' }, { allow: 'GET' }), true);
+    if (!deps.limiter.take(`captcha|${ip}`, LIMITS.captcha.limit, LIMITS.captcha.windowMs)) return (send(429, { error: 'RATE_LIMITED' }), true);
+    const c = deps.pow.issue();
+    send(200, { token: c.token, bits: c.bits, expiresAt: c.expiresAt.toISOString() });
+    return true;
+  }
 
   if (tenantM) {
     if (method !== 'GET') return (send(405, { error: 'METHOD_NOT_ALLOWED' }, { allow: 'GET' }), true);
@@ -93,6 +107,8 @@ export async function handlePublicSignup(
     const o = body as Record<string, unknown>;
     const allowed = isStart ? START_FIELDS : isVerify ? VERIFY_FIELDS : COMPLETE_FIELDS;
     for (const k of Object.keys(o)) if (!allowed.includes(k)) throw new SignupError('INVALID_INPUT');
+    // CAPTCHA chạy trước dịch vụ: lời giải sai không gửi OTP và không tạo yêu cầu.
+    if ((isStart || isComplete) && !deps.pow.verify(str(o['captchaToken']), str(o['captchaNonce']))) throw new SignupError('CAPTCHA_FAILED');
 
     if (isStart) {
       const input: StartInput = {

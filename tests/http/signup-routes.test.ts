@@ -1,5 +1,5 @@
 /**
- * HCOS | HTTP đăng ký khách: ánh xạ mã lỗi, xác thực body, giới hạn tần suất, không lộ tổ chức chưa hoạt động.
+ * HCOS | HTTP đăng ký khách: ánh xạ mã lỗi, xác thực body, giới hạn tần suất, không lộ tổ chức chưa hoạt động, CAPTCHA proof-of-work.
  * Chạy một HTTP server thật, dịch vụ giả (không DB).
  */
 import { createServer, type Server } from 'node:http';
@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { handlePublicSignup, type PublicSignupApi } from '../../services/api/src/http/signup-routes';
 import { RateLimiter } from '../../services/api/src/http/booking-routes';
+import { ProofOfWork, solvePow } from '../../services/api/src/signup/pow';
 import { SignupError } from '../../services/api/src/signup/signup.service';
 import { checkEmail } from '../../services/api/src/signup/signup-rules';
 
@@ -45,9 +46,10 @@ let base = '';
 
 beforeAll(async () => {
   const limiter = new RateLimiter();
+  const pow = new ProofOfWork();
   server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
-    handlePublicSignup(req, res, url, { api, limiter, baseHeaders: {}, onError: () => undefined }).then((handled) => {
+    handlePublicSignup(req, res, url, { api, pow, limiter, baseHeaders: {}, onError: () => undefined }).then((handled) => {
       if (!handled) {
         res.writeHead(404).end();
       }
@@ -67,6 +69,14 @@ const freshIp = () => `203.0.113.${(seq++ % 200) + 1}`;
 const post = (path: string, body: unknown, ip = freshIp()) =>
   fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip }, body: JSON.stringify(body) });
 
+/** Lấy một thử thách CAPTCHA và giải nó (thử thách chỉ dùng được một lần, nên mỗi yêu cầu cần một cái mới). */
+async function captcha(ip = freshIp()): Promise<{ captchaToken: string; captchaNonce: string }> {
+  const r = await fetch(base + '/api/public/captcha', { headers: { 'x-forwarded-for': ip } });
+  const c = (await r.json()) as { token: string; bits: number };
+  return { captchaToken: c.token, captchaNonce: solvePow(c.token, c.bits) };
+}
+const withCaptcha = async (body: Record<string, unknown>, ip?: string) => ({ ...body, ...(await captcha(ip)) });
+
 const good = { email: 'chu@pk.vn', orgName: 'Phòng khám Mới', contactName: 'Nguyễn Văn Mới', phone: '0908697966', license: 'GPKD-0001234', slug: 'pkmoi' };
 
 describe('HTTP đăng ký khách', () => {
@@ -78,8 +88,34 @@ describe('HTTP đăng ký khách', () => {
     expect((await fetch(base + '/api/public/tenants/pk1', { method: 'POST', headers: { 'x-forwarded-for': freshIp() } })).status).toBe(405);
   });
 
+  it('GET captcha trả thử thách có token, độ khó và hạn; POST bị từ chối', async () => {
+    const r = await fetch(base + '/api/public/captcha', { headers: { 'x-forwarded-for': freshIp() } });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { token: string; bits: number; expiresAt: string };
+    expect(typeof body.token).toBe('string');
+    expect(body.bits).toBeGreaterThan(0);
+    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    expect((await fetch(base + '/api/public/captcha', { method: 'POST', headers: { 'x-forwarded-for': freshIp() } })).status).toBe(405);
+  });
+
+  it('start thiếu hoặc sai lời giải CAPTCHA => 400 CAPTCHA_FAILED, không gọi dịch vụ', async () => {
+    const none = await post('/api/public/signup/start', { ...good, email: 'khong-captcha@pk.vn' });
+    expect(none.status).toBe(400);
+    expect(await none.json()).toEqual({ error: 'CAPTCHA_FAILED' });
+    const wrong = await post('/api/public/signup/start', { ...good, captchaToken: 'sai.sai', captchaNonce: 'x' });
+    expect(await wrong.json()).toEqual({ error: 'CAPTCHA_FAILED' });
+  });
+
+  it('lời giải CAPTCHA dùng lại lần hai => 400 CAPTCHA_FAILED', async () => {
+    const c = await captcha();
+    expect((await post('/api/public/signup/start', { ...good, ...c })).status).toBe(201);
+    const again = await post('/api/public/signup/start', { ...good, ...c });
+    expect(again.status).toBe(400);
+    expect(await again.json()).toEqual({ error: 'CAPTCHA_FAILED' });
+  });
+
   it('start hợp lệ => 201 kèm signupId, không trả mã OTP', async () => {
-    const r = await post('/api/public/signup/start', good);
+    const r = await post('/api/public/signup/start', await withCaptcha(good));
     expect(r.status).toBe(201);
     const body = (await r.json()) as Record<string, unknown>;
     expect(body).toEqual({ signupId: SIGNUP_ID, expiresAt: '2026-11-27T04:00:00.000Z' });
@@ -87,15 +123,15 @@ describe('HTTP đăng ký khách', () => {
   });
 
   it('lỗi nghiệp vụ map sang mã HTTP đúng', async () => {
-    expect((await post('/api/public/signup/start', { ...good, slug: 'taken' })).status).toBe(409);
-    expect((await post('/api/public/signup/start', { ...good, email: 'loi@pk.vn' })).status).toBe(503);
-    const bad = await post('/api/public/signup/start', { ...good, email: 'khong-phai-email' });
+    expect((await post('/api/public/signup/start', await withCaptcha({ ...good, slug: 'taken' }))).status).toBe(409);
+    expect((await post('/api/public/signup/start', await withCaptcha({ ...good, email: 'loi@pk.vn' }))).status).toBe(503);
+    const bad = await post('/api/public/signup/start', await withCaptcha({ ...good, email: 'khong-phai-email' }));
     expect(bad.status).toBe(400);
     expect(await bad.json()).toEqual({ error: 'INVALID_INPUT', field: 'email' });
   });
 
   it('body sai: trường lạ, JSON hỏng, signupId không phải UUID => 400', async () => {
-    expect((await post('/api/public/signup/start', { ...good, role: 'admin' })).status).toBe(400);
+    expect((await post('/api/public/signup/start', await withCaptcha({ ...good, role: 'admin' }))).status).toBe(400);
     const junk = await fetch(base + '/api/public/signup/start', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': freshIp() }, body: '{' });
     expect(junk.status).toBe(400);
     expect((await post('/api/public/signup/verify', { signupId: 'khong-phai-uuid', code: '123456' })).status).toBe(400);
@@ -109,16 +145,16 @@ describe('HTTP đăng ký khách', () => {
     expect(await ok.json()).toEqual({ slug: 'pkmoi' });
   });
 
-  it('start vượt 5 lần / giờ từ cùng IP => 429', async () => {
+  it('start vượt 5 lần / giờ từ cùng IP => 429 (kiểm tra trước CAPTCHA)', async () => {
     const ip = '203.0.113.250';
-    for (let i = 0; i < 5; i++) await post('/api/public/signup/start', good, ip);
-    const r = await post('/api/public/signup/start', good, ip);
+    for (let i = 0; i < 5; i++) await post('/api/public/signup/start', await withCaptcha(good, ip), ip);
+    const r = await post('/api/public/signup/start', { ...good }, ip);
     expect(r.status).toBe(429);
     expect(r.headers.get('retry-after')).toBe('3600');
   });
 
   it('complete hợp lệ => 201 kèm slug và trạng thái chờ duyệt; không trả mật khẩu', async () => {
-    const r = await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'mat-khau-dai-12' });
+    const r = await post('/api/public/signup/complete', await withCaptcha({ signupId: SIGNUP_ID, password: 'mat-khau-dai-12' }));
     expect(r.status).toBe(201);
     const body = (await r.json()) as Record<string, unknown>;
     expect(body).toEqual({ slug: 'pkmoi', status: 'pending_review' });
@@ -126,13 +162,14 @@ describe('HTTP đăng ký khách', () => {
   });
 
   it('complete: ACCOUNT_EXISTS => 409, IDP_UNAVAILABLE => 503, mật khẩu ngắn => 400', async () => {
-    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'da-co-tai-khoan' })).status).toBe(409);
-    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'idp-loi-xyz-123' })).status).toBe(503);
-    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'ngan' })).status).toBe(400);
+    expect((await post('/api/public/signup/complete', await withCaptcha({ signupId: SIGNUP_ID, password: 'da-co-tai-khoan' }))).status).toBe(409);
+    expect((await post('/api/public/signup/complete', await withCaptcha({ signupId: SIGNUP_ID, password: 'idp-loi-xyz-123' }))).status).toBe(503);
+    expect((await post('/api/public/signup/complete', await withCaptcha({ signupId: SIGNUP_ID, password: 'ngan' }))).status).toBe(400);
   });
 
-  it('complete: trường lạ, signupId sai định dạng => 400', async () => {
-    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'mat-khau-dai-12', role: 'admin' })).status).toBe(400);
-    expect((await post('/api/public/signup/complete', { signupId: 'khong-uuid', password: 'mat-khau-dai-12' })).status).toBe(400);
+  it('complete: thiếu CAPTCHA => 400; trường lạ, signupId sai định dạng => 400', async () => {
+    expect((await post('/api/public/signup/complete', { signupId: SIGNUP_ID, password: 'mat-khau-dai-12' })).status).toBe(400);
+    expect((await post('/api/public/signup/complete', await withCaptcha({ signupId: SIGNUP_ID, password: 'mat-khau-dai-12', role: 'admin' }))).status).toBe(400);
+    expect((await post('/api/public/signup/complete', await withCaptcha({ signupId: 'khong-uuid', password: 'mat-khau-dai-12' }))).status).toBe(400);
   });
 });
