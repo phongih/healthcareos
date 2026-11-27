@@ -10,6 +10,7 @@ import { Icon } from './lib/icons';
 import { allowedApps, BottomBar, Launcher, SideNav, usePins } from './lib/nav';
 import { AdminScreen } from './screens/admin';
 import { StaffScreen } from './screens/staff';
+import { TodayScreen } from './screens/today';
 import { BookingsScreen, PublicBookingScreen, PublicLookupScreen } from './screens/booking';
 import { EncounterScreen } from './screens/encounter';
 import { DecisionScreen } from './screens/decision';
@@ -46,6 +47,7 @@ type Route =
   | { name: 'financeShift'; id: string }
   | { name: 'admin' }
   | { name: 'staff' }
+  | { name: 'today' }
   | { name: 'equipment' }
   | { name: 'device'; code: string; qr: boolean }
   | { name: 'home' };
@@ -74,6 +76,7 @@ function parseRoute(hash: string): Route {
   if (hash.startsWith('#/inbox')) return { name: 'inbox' };
   if (hash.startsWith('#/admin')) return { name: 'admin' };
   if (hash.startsWith('#/staff')) return { name: 'staff' };
+  if (hash.startsWith('#/today')) return { name: 'today' };
   return { name: 'home' };
 }
 
@@ -119,7 +122,7 @@ function Shell({ me }: { me: Me }) {
   const userBlock = (
     <div className="user-block">
       <span className="avatar" aria-hidden="true">{initials(userName)}</span>
-      <span className="user-text">
+      <span className="user-text" title={`${userName} — ${roleText}`}>
         <span className="user-name">{userName}</span>
         <span className="user-roles">{roleText || 'Chưa có vai trò'}</span>
       </span>
@@ -201,6 +204,8 @@ function Shell({ me }: { me: Me }) {
           <AdminScreen />
         ) : route.name === 'staff' ? (
           <StaffScreen />
+        ) : route.name === 'today' ? (
+          <TodayScreen />
         ) : null}
           </main>
         </div>

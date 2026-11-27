@@ -21,7 +21,8 @@ export function PatientsScreen() {
   const [mode, setMode] = useState<Mode>('mrn');
   const [q, setQ] = useState({ mrn: '', cccd: '', family: '', given: '', birthdate: '' });
   const [results, setResults] = useState<FhirPatient[] | null>(null);
-  const [showRegister, setShowRegister] = useState(false);
+  // #/patients/new (nút "Đăng ký mới" ở màn Hôm nay) => mở sẵn form đăng ký.
+  const [showRegister, setShowRegister] = useState(() => location.hash === '#/patients/new' && can.registerPatient(roles));
 
   const search = useAction(async () => {
     const p = new URLSearchParams({ organization: orgId, _count: '20' });

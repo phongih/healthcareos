@@ -1,5 +1,8 @@
 /** Tên biểu tượng (TS thuần, để module không có JSX dùng được). */
 export type IconName =
+  | 'plus'
+  | 'ticket'
+  | 'sun'
   | 'home'
   | 'users'
   | 'queue'

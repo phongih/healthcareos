@@ -18,7 +18,7 @@ describe('điều hướng theo vai trò (giao diện đợt 2)', () => {
   });
 
   it('ghim mặc định theo vai trò, tối đa 4, chỉ trong ứng dụng được phép', () => {
-    expect(defaultPins(R('clinic_staff'))).toEqual(['patients', 'queue', 'bookings', 'finance']);
+    expect(defaultPins(R('clinic_staff'))).toEqual(['today', 'patients', 'queue', 'bookings']);
     expect(defaultPins(R('doctor'))).toEqual(['patients', 'queue', 'equipment']);
     expect(defaultPins(R('clinic_admin', 'doctor'))).toEqual(['patients', 'queue', 'reports', 'staff']);
     expect(defaultPins(R('cashier'))).toEqual(['finance', 'handover']);

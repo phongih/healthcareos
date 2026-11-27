@@ -346,7 +346,9 @@ run('Cổng bệnh nhân / PostgreSQL', () => {
     // Lịch hẹn: thông tin hành chính lấy từ hồ sơ; portal_person_id ghi qua trigger.
     const opts = await portal.bookingOptions(t);
     expect(opts).toBeTruthy();
-    const visitDate = addDays(TODAY, 2);
+    // Ngày đặt lịch: hôm nay + 2, bỏ Chủ nhật (phòng khám không nhận lịch CN — test từng hỏng khi chạy vào thứ Sáu).
+    const plus2 = addDays(TODAY, 2);
+    const visitDate = new Date(`${plus2}T00:00:00Z`).getUTCDay() === 0 ? addDays(TODAY, 3) : plus2;
     expect(await pout(portal.book(t, { personId: P.mom.personId, servicePointId: spId, visitDate, period: 'morning' }))).toBe('422:CONSENT_REQUIRED');
     const b = await portal.book(t, { personId: P.mom.personId, servicePointId: spId, visitDate, period: 'morning', reason: 'Tái khám', consent: true });
     expect(b).toHaveProperty('code');
