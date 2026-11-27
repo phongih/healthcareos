@@ -60,6 +60,12 @@ describe('Sổ nguồn dữ liệu AI', () => {
   it('máy chủ chỉ ra ngoài qua bộ giao tích hợp (F12) và JWKS của IdP', () => {
     const egress = /from 'node:(https|tls|dgram)'|import \{[^}]*\b(connect|createConnection|Socket)\b[^}]*\} from 'node:net'|request as https?Request|\bfetch\s*\(|createRemoteJWKSet\s*\(|from 'undici'|from 'axios'/;
     const files = [...walk('services/api/src'), ...walk('packages')].filter((f) => egress.test(read(f)));
-    expect(files.sort()).toEqual(['services/api/src/app.ts', 'services/api/src/integration/transport.ts']);
+    // smtp-otp-sender.ts: điểm ra ngoài duy nhất cho OTP đăng ký khách (SMTP qua TLS, port 465).
+    // Chỉ được gọi khi kênh đã được duyệt trong danh mục vendor; mặc định fail-closed.
+    expect(files.sort()).toEqual([
+      'services/api/src/app.ts',
+      'services/api/src/integration/transport.ts',
+      'services/api/src/signup/smtp-otp-sender.ts',
+    ]);
   });
 });
