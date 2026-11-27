@@ -516,6 +516,18 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
       },
     },
   },
+  'platform.signup_vendors': {
+    level: 2, category: 'security', subject: 'none', steward: 'tenant_admin', retention: 'reference',
+    purpose: 'Danh mục vendor được duyệt cho kênh OTP đăng ký khách (cấp nền tảng, không gắn tenant)',
+    columns: {
+      vendor: { level: 1, category: 'reference', note: 'Mã vendor (ví dụ host SMTP)' },
+      category: { level: 1, category: 'reference', note: 'Loại kênh được duyệt' },
+      cleared_by: { level: 2, category: 'personal', note: 'Người duyệt vendor (nhân viên vận hành)' },
+      cleared_at: { level: 1, category: 'reference', note: 'Thời điểm duyệt' },
+      review_due: { level: 1, category: 'reference', note: 'Hạn xét lại vendor' },
+      active: { level: 1, category: 'reference', note: 'Còn hiệu lực hay không' },
+    },
+  },
   'platform.outbox_events': {
     level: 3, category: 'personal_sensitive', subject: 'patient', steward: 'tenant_admin', retention: 'operational',
     purpose: 'Sự kiện miền (đợt khám tạo / đóng…) chờ phát',

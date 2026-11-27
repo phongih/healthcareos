@@ -38,6 +38,7 @@ import { VendorService } from './governance/vendor.service';
 import { EquipmentService } from './equipment/equipment.service';
 import { otpSenderFor } from './portal/otp-sender';
 import { NO_SIGNUP_OTP_CHANNEL, SignupService } from './signup/signup.service';
+import { smtpSignupOtp } from './signup/smtp-otp-sender';
 import { PortalAdminService } from './portal/portal-admin.service';
 import { PortalService } from './portal/portal.service';
 import { PiiService } from './security/pii.service';
@@ -92,8 +93,13 @@ export async function startApp(env: Readonly<Record<string, string | undefined>>
     // HCOS-F20: cổng bệnh nhân (tắt mặc định; HCOS_PORTAL_OTP=training|webhook để bật đăng nhập).
     const portal = new PortalService({ pool, audit, sender: otpSenderFor(cfg.portalOtp, httpTransport()), publicBooking, retention });
     // Đăng ký khách: tắt nếu chưa có khoá OTP. Kênh gửi OTP chưa cấu hình => mọi lần gửi trả OTP_UNAVAILABLE (fail-closed).
+    // Kênh OTP: SMTP nếu đã cấu hình (vẫn phải được duyệt trong platform.signup_vendors), không thì NO_SIGNUP_OTP_CHANNEL.
     const publicSignup = cfg.signupOtpKey
-      ? new SignupService({ pool, sender: NO_SIGNUP_OTP_CHANNEL, otpKey: cfg.signupOtpKey })
+      ? new SignupService({
+          pool,
+          sender: cfg.signupSmtp ? smtpSignupOtp(cfg.signupSmtp) : NO_SIGNUP_OTP_CHANNEL,
+          otpKey: cfg.signupOtpKey,
+        })
       : null;
     const orgScope = new PgOrgScopeLookup(pool);
     // HCOS-F21: quản trị nhân sự & cơ sở (tài khoản Keycloak qua client service-account riêng).

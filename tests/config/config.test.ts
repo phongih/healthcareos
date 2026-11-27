@@ -87,3 +87,43 @@ describe('loadConfig', () => {
     expect(problems({ ...OK, HCOS_REQUIRE_AMR: 'otp;rm -rf' })).toEqual(['HCOS_REQUIRE_AMR must be a comma list of amr values (e.g. otp,hwk)']);
   });
 });
+
+describe('loadConfig: SMTP gửi OTP đăng ký', () => {
+  const SMTP = {
+    HCOS_SIGNUP_SMTP_HOST: 'smtp.gmail.com',
+    HCOS_SIGNUP_SMTP_PORT: '465',
+    HCOS_SIGNUP_SMTP_USER: 'noreply@smart.id.vn',
+    HCOS_SIGNUP_SMTP_PASS: 'app-pass-abcdefghijkl',
+    HCOS_SIGNUP_SMTP_FROM: 'noreply@smart.id.vn',
+  };
+
+  it('không đặt biến nào => null (fail-closed)', () => {
+    expect(loadConfig(OK).signupSmtp).toBeNull();
+  });
+
+  it('đủ năm biến hợp lệ => cấu hình SMTP', () => {
+    expect(loadConfig({ ...OK, ...SMTP }).signupSmtp).toEqual({
+      host: 'smtp.gmail.com',
+      port: 465,
+      user: 'noreply@smart.id.vn',
+      pass: 'app-pass-abcdefghijkl',
+      from: 'noreply@smart.id.vn',
+    });
+  });
+
+  it('đặt thiếu biến => lỗi, không tự tắt im lặng', () => {
+    const { HCOS_SIGNUP_SMTP_PASS: _p, ...partial } = SMTP;
+    expect(problems({ ...OK, ...partial }).join(' ')).toMatch(/must all be set together/);
+  });
+
+  it('cổng khác 465 (không có STARTTLS) và email gửi sai => lỗi', () => {
+    expect(problems({ ...OK, ...SMTP, HCOS_SIGNUP_SMTP_PORT: '587' }).join(' ')).toMatch(/PORT must be 465/);
+    expect(problems({ ...OK, ...SMTP, HCOS_SIGNUP_SMTP_FROM: 'khong-phai-email' }).join(' ')).toMatch(/FROM must be a plain email/);
+  });
+
+  it('mật khẩu có xuống dòng => lỗi, và thông báo lỗi không chứa mật khẩu', () => {
+    const p = problems({ ...OK, ...SMTP, HCOS_SIGNUP_SMTP_PASS: 'bi-mat\nxyz' });
+    expect(p.join(' ')).toMatch(/PASS must be a single non-empty line/);
+    expect(p.join(' ')).not.toContain('bi-mat');
+  });
+});
