@@ -374,8 +374,12 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
   },
   'iam.organizations': { level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Cơ sở khám chữa bệnh' },
   'iam.tenants': {
-    level: 1, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Chủ quản dữ liệu (đơn vị sử dụng)',
+    level: 2, category: 'reference', subject: 'organization', steward: 'tenant_admin', retention: 'reference', purpose: 'Chủ quản dữ liệu (đơn vị sử dụng)',
     columns: {
+      contact_phone: { level: 2, category: 'personal', note: 'Số điện thoại liên hệ của tổ chức (đối chiếu khi duyệt) — migration 030' },
+      reviewed_by: { level: 2, category: 'personal', note: 'Người vận hành đã duyệt / từ chối — migration 030' },
+      reviewed_at: { level: 1, category: 'internal', note: 'Thời điểm duyệt / từ chối — migration 030' },
+      review_note: { level: 2, category: 'internal', note: 'Lý do từ chối (không ghi dữ liệu cá nhân) — migration 030' },
       slug: { category: 'reference', note: 'Đường dẫn tổ chức /app/<slug> (công khai, không phải căn cứ phân quyền) — migration 026' },
       business_license_no: { category: 'internal', note: 'Số giấy phép kinh doanh của tổ chức (đối chiếu khi duyệt tay) — migration 026' },
       medical_license_no: { category: 'internal', note: 'Số giấy phép khám chữa bệnh (Sở Y tế) — migration 026' },
