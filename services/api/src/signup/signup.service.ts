@@ -90,6 +90,20 @@ export class SignupService {
     return { signupId: row.signup_id, expiresAt: row.expires_at };
   }
 
+  /** Tra slug công khai: chỉ tên hiển thị, trạng thái và chuyển hướng (không có danh sách cơ sở / nhân viên). */
+  async resolve(slug: string): Promise<{ displayName: string; status: string; redirect: boolean } | null> {
+    const v = checkSlug(slug);
+    if (!v.ok) return null;
+    const client = await this.deps.pool.connect();
+    try {
+      const r = await client.query('SELECT display_name, status, is_redirect FROM iam.resolve_slug($1)', [v.value]);
+      const row = r.rows[0] as { display_name: string; status: string; is_redirect: boolean } | undefined;
+      return row ? { displayName: row.display_name, status: row.status, redirect: row.is_redirect } : null;
+    } finally {
+      client.release();
+    }
+  }
+
   async verify(signupId: string, code: string): Promise<{ slug: string }> {
     const client = await this.deps.pool.connect();
     try {
@@ -118,3 +132,6 @@ export function mapPgError(e: unknown): unknown {
   if (err?.code === '23505') return new SignupError('SLUG_TAKEN');
   return e;
 }
+
+/** Kênh OTP mặc định: chưa cấu hình nhà cung cấp => không gửi được (fail-closed, không bao giờ hiện mã). */
+export const NO_SIGNUP_OTP_CHANNEL: SignupOtpSender = { send: async () => false };

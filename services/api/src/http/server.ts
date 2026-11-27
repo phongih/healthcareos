@@ -20,6 +20,7 @@ import {
 } from '../../../../packages/security/src/tenant-context';
 import type { ReadinessProbe } from '../../../../packages/security/src/pg-readiness';
 import { buildBookingRoutes, handlePublicBooking, RateLimiter, type BookingApi, type PublicBookingApi } from './booking-routes';
+import { handlePublicSignup, type PublicSignupApi } from './signup-routes';
 import { buildFinanceRoutes, type FinanceApi } from './finance-routes';
 import { buildDecisionRoutes, type DecisionApi } from './decision-routes';
 import { buildIntegrationRoutes, type IntegrationApi } from './integration-routes';
@@ -74,6 +75,8 @@ export interface ApiDeps {
   readonly bookings?: BookingApi;
   /** Tuỳ chọn: cổng đặt lịch công khai /api/public/booking/<slug>/*, KHÔNG cần đăng nhập (giới hạn tần suất theo IP). */
   readonly publicBooking?: PublicBookingApi;
+  /** Tuỳ chọn: đăng ký khách + tra đường dẫn tổ chức /api/public/signup/*, /api/public/tenants/<slug> (KHÔNG đăng nhập). */
+  readonly publicSignup?: PublicSignupApi;
   /** Tuỳ chọn: thu ngân (/api/finance/*). */
   readonly finance?: FinanceApi;
   /** Tuỳ chọn: dự báo kinh doanh (/api/forecast/*). */
@@ -186,6 +189,15 @@ export function createApiHandler(deps: ApiDeps): ApiHandler {
       await handlePublicBooking(req, res, url, {
         api: deps.publicBooking, limiter, baseHeaders,
         onError: (e) => logger.error('public booking failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' }),
+      });
+      return;
+    }
+
+    // Đăng ký khách (không đăng nhập): chỉ trả thông tin tối thiểu, giới hạn tần suất theo IP.
+    if (deps.publicSignup && (url.pathname.startsWith('/api/public/signup/') || url.pathname.startsWith('/api/public/tenants/'))) {
+      await handlePublicSignup(req, res, url, {
+        api: deps.publicSignup, limiter, baseHeaders,
+        onError: (e) => logger.error('public signup failed', { correlationId, error: e instanceof Error ? e.name : 'unknown' }),
       });
       return;
     }

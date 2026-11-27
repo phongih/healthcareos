@@ -56,6 +56,8 @@ export interface AppConfig {
   readonly backupHorizonDays: number;
   /** Khoá mã hoá bí mật tích hợp (32 byte); null = tắt tích hợp. */
   readonly integrationKey: Buffer | null;
+  /** Khoá HMAC băm OTP đăng ký khách (HCOS_SIGNUP_OTP_KEY, base64 32 byte). Không đặt => đăng ký tắt. */
+  readonly signupOtpKey: Buffer | null;
   readonly publicBaseUrl: string | null;
   readonly integrationDispatchSec: number;
   /** HCOS-F16: KEK cục bộ (bọc DEK). */
@@ -130,6 +132,13 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
     const k = /^[A-Za-z0-9+/]+={0,2}$/.test(keyRaw) ? Buffer.from(keyRaw, 'base64') : Buffer.alloc(0);
     if (k.length !== 32) problems.push('HCOS_INTEGRATION_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)');
     else integrationKey = k;
+  }
+  let signupOtpKey: Buffer | null = null;
+  const signupRaw = env['HCOS_SIGNUP_OTP_KEY']?.trim();
+  if (signupRaw) {
+    const k = /^[A-Za-z0-9+/]+={0,2}$/.test(signupRaw) ? Buffer.from(signupRaw, 'base64') : Buffer.alloc(0);
+    if (k.length !== 32) problems.push('HCOS_SIGNUP_OTP_KEY must be base64 of exactly 32 bytes (openssl rand -base64 32)');
+    else signupOtpKey = k;
   }
   let publicBaseUrl: string | null = null;
   const baseRaw = env['HCOS_PUBLIC_BASE_URL']?.trim();
@@ -225,6 +234,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): A
       return v;
     })(),
     integrationKey,
+    signupOtpKey,
     publicBaseUrl,
     integrationDispatchSec: (() => {
       const v = int('HCOS_INTEGRATION_DISPATCH_SEC', 15, 0, 3600);
