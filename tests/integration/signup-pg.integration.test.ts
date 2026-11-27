@@ -23,7 +23,10 @@ const su = (sql: string, db = DB) =>
 
 class RecordingSender implements SignupOtpSender {
   sent: Array<{ to: string; code: string }> = [];
-  constructor(private readonly ok = true) {}
+  constructor(
+    private readonly ok = true,
+    readonly vendor = 'test-vendor',
+  ) {}
   async send(to: string, code: string): Promise<boolean> {
     this.sent.push({ to, code });
     return this.ok;
@@ -47,6 +50,13 @@ run('Đăng ký khách / PostgreSQL (migration 027)', () => {
       execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-d', DB, '-f', `${MIG}/${f}`]);
     }
     su(`INSERT INTO iam.tenants (tenant_id, code, name, slug) VALUES ('00000000-0000-4000-8000-0000000000c1', 'co-chu', 'Chủ', 'pk1')`);
+    // Danh mục vendor cấp nền tảng (migration 028): một vendor được duyệt, một hết hạn xét lại, một đã tắt.
+    su(`INSERT INTO platform.signup_vendors (vendor, category, cleared_by, review_due)
+        VALUES ('test-vendor', 'signup_otp_email', 'ops@test', now() + interval '180 days')`);
+    su(`INSERT INTO platform.signup_vendors (vendor, category, cleared_by, cleared_at, review_due)
+        VALUES ('stale-vendor', 'signup_otp_email', 'ops@test', now() - interval '2 days', now() - interval '1 day')`);
+    su(`INSERT INTO platform.signup_vendors (vendor, category, cleared_by, review_due, active)
+        VALUES ('off-vendor', 'signup_otp_email', 'ops@test', now() + interval '180 days', false)`);
   });
   afterAll(() => {
     try {
@@ -99,6 +109,20 @@ run('Đăng ký khách / PostgreSQL (migration 027)', () => {
     const svc = new SignupService({ pool: psqlPool({ database: DB }), sender: new RecordingSender(), otpKey: KEY });
     for (let i = 0; i < 3; i++) await svc.start({ ...base, email: 'nhieu@pk.vn' }, null);
     expect(await errCode(svc.start({ ...base, email: 'nhieu@pk.vn' }, null))).toBe('RATE_LIMITED');
+  });
+
+  it('vendor chưa duyệt, quá hạn xét lại hoặc đã tắt => OTP_UNAVAILABLE, không ghi yêu cầu, không gửi', async () => {
+    for (const [vendor, email, slug] of [
+      ['unknown-vendor', 'chuadk@pk.vn', 'vchuadk'],
+      ['stale-vendor', 'quahan@pk.vn', 'vquahan'],
+      ['off-vendor', 'taott@pk.vn', 'vtaott'],
+    ] as const) {
+      const sender = new RecordingSender(true, vendor);
+      const svc = new SignupService({ pool: psqlPool({ database: DB }), sender, otpKey: KEY });
+      expect(await errCode(svc.start({ ...base, email, slug }, null))).toBe('OTP_UNAVAILABLE');
+      expect(sender.sent).toEqual([]);
+      expect(su(`SELECT count(*) FROM iam.signup_requests WHERE email = '${email}'`)).toBe('0');
+    }
   });
 
   it('kênh OTP không gửi được => OTP_UNAVAILABLE', async () => {

@@ -12,8 +12,13 @@ import { checkEmail, checkLicense, checkOrgName, checkPhone, checkSlug, OTP_LENG
 
 /** Kênh gửi mã OTP tới email. Trả true nếu nhà cung cấp đã nhận. */
 export interface SignupOtpSender {
+  /** Mã vendor phải có trong platform.signup_vendors (đã duyệt, còn hạn) thì mới được gửi. */
+  readonly vendor: string;
   send(to: string, code: string, orgName: string): Promise<boolean>;
 }
+
+/** Loại kênh trong danh mục vendor cấp nền tảng (khớp CHECK của migration 028). */
+export const OTP_CHANNEL_CATEGORY = 'signup_otp_email';
 
 export type SignupErrorCode =
   | 'INVALID_INPUT' | 'RATE_LIMITED' | 'SLUG_TAKEN' | 'OTP_UNAVAILABLE' | 'NOT_PENDING' | 'EXPIRED' | 'LOCKED' | 'WRONG';
@@ -70,10 +75,22 @@ export class SignupService {
     const phone = must(checkPhone(input.phone));
     const license = must(checkLicense(input.license));
     const slug = must(checkSlug(input.slug));
-    const code = (this.deps.randomCode ?? defaultCode)();
-    const hash = hashOtp(this.deps.otpKey, code);
     const client = await this.deps.pool.connect();
     let row: { signup_id: string; expires_at: Date };
+    try {
+      // Kiểm tra vendor trước khi ghi yêu cầu: kênh chưa duyệt thì không tạo bản ghi và không gửi gì.
+      // Trả chuỗi 'OK'/'NO' thay vì boolean: driver khác nhau biểu diễn boolean khác nhau.
+      const c = await client.query(
+        "SELECT CASE WHEN platform.signup_channel_cleared($1, $2) THEN 'OK' ELSE 'NO' END AS state",
+        [OTP_CHANNEL_CATEGORY, this.deps.sender.vendor],
+      );
+      if ((c.rows[0] as { state: string } | undefined)?.state !== 'OK') throw new SignupError('OTP_UNAVAILABLE');
+    } catch (e) {
+      client.release();
+      throw e instanceof SignupError ? e : mapPgError(e);
+    }
+    const code = (this.deps.randomCode ?? defaultCode)();
+    const hash = hashOtp(this.deps.otpKey, code);
     try {
       const r = await client.query(
         'SELECT signup_id, expires_at FROM iam.signup_start($1, $2, $3, $4, $5, $6, $7::interval, $8::inet)',
@@ -134,4 +151,4 @@ export function mapPgError(e: unknown): unknown {
 }
 
 /** Kênh OTP mặc định: chưa cấu hình nhà cung cấp => không gửi được (fail-closed, không bao giờ hiện mã). */
-export const NO_SIGNUP_OTP_CHANNEL: SignupOtpSender = { send: async () => false };
+export const NO_SIGNUP_OTP_CHANNEL: SignupOtpSender = { vendor: 'none', send: async () => false };

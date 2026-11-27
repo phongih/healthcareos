@@ -133,6 +133,8 @@ export async function deliverOtpBySmtp(
 /** Kênh OTP email: trả false nếu gửi không được (không ném lỗi ra ngoài, không ghi log mã). */
 export function smtpSignupOtp(cfg: SmtpConfig, connect: SmtpConnect = tlsSmtpConnect): SignupOtpSender {
   return {
+    // Vendor = host SMTP; phải được duyệt trong platform.signup_vendors trước khi gửi.
+    vendor: cfg.host,
     async send(to, code, orgName) {
       try {
         await deliverOtpBySmtp(cfg, to, code, orgName, connect);
