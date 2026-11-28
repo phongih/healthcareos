@@ -52,7 +52,7 @@ const ROLE_PINS: ReadonlyArray<[Role, AppKey[]]> = [
   ['doctor', ['today', 'patients', 'queue', 'equipment']],
   ['clinic_staff', ['today', 'patients', 'queue', 'bookings']],
   ['pharmacy_admin', ['pharmacy', 'forecast', 'equipment', 'handover']],
-  ['pharmacist', ['pharmacy', 'handover', 'patients']],
+  ['pharmacist', ['today', 'pharmacy', 'handover', 'patients']],
   ['cashier', ['today', 'finance', 'handover']],
 ];
 export const MAX_PINS = 4;
