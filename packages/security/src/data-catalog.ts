@@ -384,6 +384,10 @@ export const DATA_CATALOG: Readonly<Record<string, TableLabel>> = {
       business_license_no: { category: 'internal', note: 'Số giấy phép kinh doanh của tổ chức (đối chiếu khi duyệt tay) — migration 026' },
       medical_license_no: { category: 'internal', note: 'Số giấy phép khám chữa bệnh (Sở Y tế) — migration 026' },
       medical_license_status: { category: 'internal', note: 'Trạng thái duyệt giấy phép khám chữa bệnh; chưa approved thì không nhận bệnh nhân thật — migration 026' },
+      medical_license_submitted_at: { category: 'internal', note: 'Thời điểm tổ chức nộp / nộp lại số giấy phép khám chữa bệnh — migration 031' },
+      medical_license_reviewed_by: { category: 'internal', note: 'Người vận hành duyệt hoặc từ chối giấy phép khám chữa bệnh — migration 031' },
+      medical_license_reviewed_at: { category: 'internal', note: 'Thời điểm duyệt hoặc từ chối giấy phép khám chữa bệnh — migration 031' },
+      medical_license_note: { category: 'internal', note: 'Lý do từ chối giấy phép khám chữa bệnh (nếu có) — migration 031' },
     },
   },
   'iam.signup_requests': {
