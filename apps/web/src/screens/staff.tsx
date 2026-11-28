@@ -11,6 +11,7 @@ import { api } from '../lib/api';
 import { ROLE_LABEL, useSession, type Role } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
 import { MedicalLicenseCard } from './medical-license-card';
+import { OrgWizard } from './org-wizard';
 
 interface Membership {
   membershipId: string; organizationId: string; organizationName: string; role: Role; status: string; validFrom: string; validTo: string | null;
@@ -261,30 +262,9 @@ function Grant({ s, orgs, roles, defaultOrg, onDone }: { s: Staff; orgs: Org[]; 
   );
 }
 
-const COPY: Array<[string, string]> = [
-  ['servicePoints', 'Phòng khám (+ số chỗ đặt lịch / sức khám)'], ['priceList', 'Bảng giá dịch vụ'], ['supplyNorms', 'Định mức vật tư theo dịch vụ'],
-  ['deviceRequirements', 'Dịch vụ cần thiết bị'], ['financeSettings', 'Tạm ứng mặc định (KHÔNG chép tài khoản ngân hàng)'], ['forecastSettings', 'Thông số dự báo'],
-  ['handoverDesks', 'Quầy trả'], ['decisionRules', 'Luật Decision Engine'], ['mrnSettings', 'Cài đặt mã bệnh nhân'],
-];
-
 function Organizations({ data, reload }: { data: { organizations: Org[]; canManage: boolean }; reload: () => void }) {
-  const [form, setForm] = useState(false);
-  const [code, setCode] = useState('');
-  const [name, setName] = useState('');
-  const [prefix, setPrefix] = useState('');
-  const [from, setFrom] = useState(data.organizations.find((o) => o.status === 'active')?.organizationId ?? '');
-  const [copy, setCopy] = useState<Record<string, boolean>>(Object.fromEntries(COPY.map(([k]) => [k, k !== 'decisionRules'])));
+  const [wizard, setWizard] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const create = useAction(async (e: FormEvent) => {
-    e.preventDefault();
-    const r = await api<{ copied: Record<string, number> }>('POST', '/api/admin/organizations', {
-      body: { code, name, ...(prefix ? { mrnPrefix: prefix } : {}), ...(from ? { copyFrom: from, copy } : {}) },
-    });
-    const c = Object.entries(r.data.copied).filter(([, n]) => n > 0).map(([k, n]) => `${COPY.find(([x]) => x === k)?.[1].split(' (')[0] ?? k}: ${n}`);
-    setMsg(`Đã tạo ${name}.${c.length ? ` Đã chép — ${c.join('; ')}.` : ''} Cấp vai trò quản lý cho người phụ trách ở bảng Nhân sự; cổng đặt lịch, kho, thiết bị, tài khoản ngân hàng cấu hình riêng.`);
-    setForm(false); setCode(''); setName(''); setPrefix('');
-    reload();
-  });
   const toggle = useAction(async (o: Org) => {
     const next = o.status === 'active' ? 'inactive' : 'active';
     const reason = prompt(`${next === 'inactive' ? 'Ngừng' : 'Mở lại'} cơ sở ${o.name}. Lý do (bắt buộc):`);
@@ -293,37 +273,15 @@ function Organizations({ data, reload }: { data: { organizations: Org[]; canMana
     reload();
   });
   return (
-    <Card title={`Cơ sở (${data.organizations.length})`} actions={data.canManage && !form ? <button onClick={() => { setForm(true); setMsg(null); }}>+ Tạo cơ sở</button> : undefined}>
+    <Card title={`Cơ sở (${data.organizations.length})`} actions={data.canManage && !wizard ? <button onClick={() => { setWizard(true); setMsg(null); }}>+ Tạo cơ sở</button> : undefined}>
       <ErrorBox error={toggle.error} />
       {msg && <Notice kind="ok">{msg}</Notice>}
-      {form && (
-        <form className="card inset" onSubmit={(e) => void create.run(e)}>
-          <div className="row wrap">
-            <Field label="Tên cơ sở *"><input required minLength={3} maxLength={160} value={name} onChange={(e) => setName(e.target.value)} /></Field>
-            <Field label="Mã *" hint="chữ thường, số, gạch — vd. pk-quan-7"><input required pattern="[a-z0-9][a-z0-9-]{1,39}" value={code} onChange={(e) => setCode(e.target.value.toLowerCase())} /></Field>
-            <Field label="Tiền tố mã BN" hint="1–4 chữ in hoa, nên khác cơ sở khác (vd. Q7)"><input pattern="[A-Za-z]{1,4}" value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase())} /></Field>
-          </div>
-          <Field label="Sao chép cấu hình từ">
-            <select value={from} onChange={(e) => setFrom(e.target.value)}>
-              <option value="">— Không sao chép (cơ sở trống) —</option>
-              {data.organizations.filter((o) => o.status === 'active').map((o) => <option key={o.organizationId} value={o.organizationId}>{o.name}</option>)}
-            </select>
-          </Field>
-          {from && (
-            <fieldset className="roles">
-              <legend>Sao chép</legend>
-              {COPY.map(([k, label]) => (
-                <label key={k} className="check"><input type="checkbox" checked={!!copy[k]} onChange={(e) => setCopy({ ...copy, [k]: e.target.checked })} /> {label}</label>
-              ))}
-            </fieldset>
-          )}
-          <p className="muted">Không sao chép người bệnh, phiếu thu, ca, kho / lô thuốc, thiết bị, cổng đặt lịch, kết nối ngoài, tài khoản ngân hàng.</p>
-          <ErrorBox error={create.error} />
-          <div className="row">
-            <button disabled={create.busy}>Tạo cơ sở</button>
-            <button type="button" className="link" onClick={() => setForm(false)}>Huỷ</button>
-          </div>
-        </form>
+      {wizard && (
+        <OrgWizard
+          orgs={data.organizations}
+          onCancel={() => setWizard(false)}
+          onDone={(text) => { setWizard(false); setMsg(text); reload(); }}
+        />
       )}
       <table>
         <thead><tr><th>Cơ sở</th><th>Mã</th><th>Nhân viên</th><th>Phòng khám</th><th>Dịch vụ có giá</th><th>Trạng thái</th><th /></tr></thead>
