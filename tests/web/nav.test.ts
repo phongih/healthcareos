@@ -22,6 +22,7 @@ describe('điều hướng theo vai trò (giao diện đợt 2)', () => {
     expect(defaultPins(R('doctor'))).toEqual(['today', 'patients', 'queue', 'equipment']);
     expect(defaultPins(R('clinic_admin', 'doctor'))).toEqual(['patients', 'queue', 'reports', 'staff']);
     expect(defaultPins(R('cashier'))).toEqual(['today', 'finance', 'handover']);
+    expect(defaultPins(R('pharmacist'))).toEqual(['today', 'pharmacy', 'handover', 'patients']);
     for (const r of ['tenant_admin', 'clinic_admin', 'executive', 'doctor', 'clinic_staff', 'pharmacy_admin', 'pharmacist', 'cashier'] as Role[]) {
       const pins = defaultPins(R(r));
       const allowed = new Set(allowedApps(R(r)).map((a) => a.key));

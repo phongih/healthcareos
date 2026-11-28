@@ -16,6 +16,7 @@ import { firstName, searchParamsFor, summarizeQueue, todayVN } from '../lib/toda
 import type { ServicePoint } from './queue';
 import { CashierToday } from './today-cashier';
 import { DoctorToday } from './today-doctor';
+import { PharmacistToday } from './today-pharmacist';
 
 interface Ticket {
   ticketId: string; servicePointId: string; displayNo: string; status: string; calledAt: string | null; priorityReason: string | null;
@@ -241,5 +242,6 @@ export function TodayScreen() {
   const { roles } = useSession();
   if (roles.has('doctor') && !roles.has('clinic_staff')) return <DoctorToday />;
   if (roles.has('cashier') && !roles.has('clinic_staff') && !roles.has('doctor')) return <CashierToday />;
+  if (roles.has('pharmacist') && !roles.has('clinic_staff') && !roles.has('doctor') && !roles.has('cashier')) return <PharmacistToday />;
   return <ReceptionToday />;
 }
