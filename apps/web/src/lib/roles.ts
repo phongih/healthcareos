@@ -49,7 +49,7 @@ export const can = {
   supplies: (r: ReadonlySet<Role>) => ['pharmacy_admin', 'clinic_admin', 'executive', 'tenant_admin', 'cashier'].some((x) => r.has(x as Role)),
   /** F20: cổng bệnh nhân — liên kết giám hộ, phiên, yêu cầu đính chính (server kiểm tra portal:manage / portal:requests). */
   /** Giao diện đợt 3: màn "Hôm nay" (hiện có workspace lễ tân / điều dưỡng). */
-  today: (r: ReadonlySet<Role>) => r.has('clinic_staff') || r.has('doctor'),
+  today: (r: ReadonlySet<Role>) => r.has('clinic_staff') || r.has('doctor') || r.has('cashier'),
   portalManage: (r: ReadonlySet<Role>) => ['clinic_staff', 'clinic_admin', 'tenant_admin'].some((x) => r.has(x as Role)),
   recordLot: (r: ReadonlySet<Role>) => r.has('doctor') || r.has('clinic_staff'),
   notifications: (r: ReadonlySet<Role>) =>

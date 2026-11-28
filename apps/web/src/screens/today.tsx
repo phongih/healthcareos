@@ -14,6 +14,7 @@ import { can, useSession } from '../lib/session';
 import { ErrorBox, navigate, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
 import { firstName, searchParamsFor, summarizeQueue, todayVN } from '../lib/today-model';
 import type { ServicePoint } from './queue';
+import { CashierToday } from './today-cashier';
 import { DoctorToday } from './today-doctor';
 
 interface Ticket {
@@ -239,5 +240,6 @@ function PatientQuickSearch() {
 export function TodayScreen() {
   const { roles } = useSession();
   if (roles.has('doctor') && !roles.has('clinic_staff')) return <DoctorToday />;
+  if (roles.has('cashier') && !roles.has('clinic_staff') && !roles.has('doctor')) return <CashierToday />;
   return <ReceptionToday />;
 }
