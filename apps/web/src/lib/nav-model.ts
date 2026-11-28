@@ -49,7 +49,7 @@ const ROLE_PINS: ReadonlyArray<[Role, AppKey[]]> = [
   ['tenant_admin', ['patients', 'queue', 'reports', 'staff']],
   ['clinic_admin', ['patients', 'queue', 'reports', 'staff']],
   ['executive', ['reports', 'forecast', 'finance', 'decision']],
-  ['doctor', ['patients', 'queue', 'equipment']],
+  ['doctor', ['today', 'patients', 'queue', 'equipment']],
   ['clinic_staff', ['today', 'patients', 'queue', 'bookings']],
   ['pharmacy_admin', ['pharmacy', 'forecast', 'equipment', 'handover']],
   ['pharmacist', ['pharmacy', 'handover', 'patients']],

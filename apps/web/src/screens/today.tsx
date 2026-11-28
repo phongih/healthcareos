@@ -14,6 +14,7 @@ import { can, useSession } from '../lib/session';
 import { ErrorBox, navigate, Notice, RedactedBadge, useAction, useLoad } from '../lib/ui';
 import { firstName, searchParamsFor, summarizeQueue, todayVN } from '../lib/today-model';
 import type { ServicePoint } from './queue';
+import { DoctorToday } from './today-doctor';
 
 interface Ticket {
   ticketId: string; servicePointId: string; displayNo: string; status: string; calledAt: string | null; priorityReason: string | null;
@@ -30,7 +31,7 @@ const REFRESH_MS = 30_000;
 const longDate = (now = new Date()) =>
   new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }).format(now);
 
-export function TodayScreen() {
+function ReceptionToday() {
   const { me, orgId, roles } = useSession();
   const day = todayVN();
   const canPortal = can.portalManage(roles);
@@ -232,4 +233,11 @@ function PatientQuickSearch() {
       )}
     </div>
   );
+}
+
+/** Bác sĩ (không phải lễ tân) thấy màn riêng; lễ tân / điều dưỡng giữ màn cũ. */
+export function TodayScreen() {
+  const { roles } = useSession();
+  if (roles.has('doctor') && !roles.has('clinic_staff')) return <DoctorToday />;
+  return <ReceptionToday />;
 }
