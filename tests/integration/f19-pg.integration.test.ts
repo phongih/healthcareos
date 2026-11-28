@@ -46,7 +46,9 @@ const su = (sql: string, db = DB) => execFileSync('psql', ['-X', '-q', '-tA', '-
 const outcome = (p: Promise<unknown>) =>
   p.then(() => 'OK', (e: { code?: string; details?: { reason?: string } }) => (e.details?.reason ? `${e.code}:${e.details.reason}` : e.code ?? 'ERR'));
 const code = (p: Promise<unknown>) => p.then(() => 'OK', (e: { code?: string }) => e.code);
-const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+// Ngày theo giờ Việt Nam, đúng như service (vnToday). Dùng ngày UTC sẽ lệch một ngày sau 17:00 UTC
+// và làm test "cùng ngày" thất bại.
+const day = (n: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date(Date.now() + n * 86_400_000));
 const asApp = async <T>(fn: (c: PsqlClient) => Promise<T>): Promise<T> => {
   const c = new PsqlClient({ database: DB });
   try {
