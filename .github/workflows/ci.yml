@@ -93,7 +93,7 @@ jobs:
           psql -X -q -v ON_ERROR_STOP=1 -d hcos_training -f deploy/staging/seed.sql
           python3 deploy/staging/training/accounts.py sql | psql -X -q -v ON_ERROR_STOP=1 -d hcos_training
           psql -X -q -v ON_ERROR_STOP=1 -d hcos_training -c "CREATE ROLE ci_api LOGIN PASSWORD 'ci_api' IN ROLE hcos_app"
-          export HCOS_DATABASE_URL=postgres://ci_api:ci_api@localhost:5432/hcos_training TT_PATIENTS=6
+          export HCOS_DATABASE_URL=postgres://ci_api:ci_api@localhost:5432/hcos_training TT_PATIENTS=6 HCOS_TRAINING_ENV=1
           export HCOS_KEKS="ci:$(openssl rand -base64 32)"
           npx tsx scripts/seed-training.ts
           # Giả lập số lưu hành mẫu bị cắt của bản seed cũ ("MẪU-TT-NEB1-"): lần chạy sau phải tự sửa cả 5 thiết bị.

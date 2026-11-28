@@ -203,6 +203,7 @@ class MemoryRepo implements ClinicalRepository {
   async resolveMrn(_org: unknown, raw: string | null | undefined) {
     return raw ? { mrn: raw, generated: false } : { mrn: formatAutoMrn('BN', 26, ++this.mrnSeq), generated: true };
   }
+  async tenantMedicalLicenseStatus(_tenantId: string) { return 'approved'; }
   async insertPatient(p: Patient) {
     this.writable(p.tenantId);
     // PK toàn cục (không theo tenant) như patients_pkey.

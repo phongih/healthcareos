@@ -35,7 +35,7 @@ const suFile = (f: string) => execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_
 const scalar = (sql: string) => execFileSync('psql', ['-X', '-tA', '-d', DB, '-c', sql], { encoding: 'utf8' }).trim();
 
 const SEED = `
-INSERT INTO iam.tenants(tenant_id,code,name) VALUES ('${TA}','ta','A'),('${TB}','tb','B');
+INSERT INTO iam.tenants(tenant_id,code,name,medical_license_no,medical_license_status) VALUES ('${TA}','ta','A','GP-TEST-A','approved'),('${TB}','tb','B','GP-TEST-B','approved');
 INSERT INTO iam.organizations(organization_id,tenant_id,type,code,name) VALUES ('${OA}','${TA}','clinic','c1','C1'),('${OB}','${TB}','clinic','c1','C1');
 INSERT INTO iam.users(user_id,tenant_id,external_subject,display_name) VALUES
   ('${U.nurse}','${TA}','sub-nurse','N'),('${U.pharm}','${TA}','sub-pharm','P'),('${U.clinicAdmin}','${TA}','sub-clinicAdmin','CA'),
