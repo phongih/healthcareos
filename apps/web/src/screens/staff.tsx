@@ -10,6 +10,7 @@ import { useState, type FormEvent } from 'react';
 import { api } from '../lib/api';
 import { ROLE_LABEL, useSession, type Role } from '../lib/session';
 import { Card, ErrorBox, Field, Notice, useAction, useLoad } from '../lib/ui';
+import { MedicalLicenseCard } from './medical-license-card';
 
 interface Membership {
   membershipId: string; organizationId: string; organizationName: string; role: Role; status: string; validFrom: string; validTo: string | null;
@@ -60,6 +61,7 @@ export function StaffScreen() {
   return (
     <div className="stack">
       {secret && <TempPassword who={secret.who} password={secret.password} onClose={() => setSecret(null)} />}
+      <MedicalLicenseCard />
       <Card
         title={`Nhân sự${data ? ` (${data.staff.length})` : ''}`}
         actions={
