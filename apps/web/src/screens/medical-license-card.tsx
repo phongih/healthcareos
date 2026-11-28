@@ -47,7 +47,9 @@ export function MedicalLicenseCard() {
   return (
     <Card title="Giấy phép khám chữa bệnh">
       <p className="muted">
-        Số giấy phép do Sở Y tế cấp. Tổ chức chưa được duyệt giấy phép chỉ dùng dữ liệu thực tập, không nhận bệnh nhân thật.
+        {s.status === 'approved'
+          ? 'Giấy phép đã được duyệt. Tổ chức có thể nhận bệnh nhân thật.'
+          : 'Số giấy phép do Sở Y tế cấp. Tổ chức chưa được duyệt giấy phép chỉ dùng dữ liệu thực tập, không nhận bệnh nhân thật.'}
       </p>
       <p>
         <strong>Trạng thái:</strong> {LABEL[s.status]}
