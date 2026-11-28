@@ -22,12 +22,6 @@ const REFRESH_MS = 30_000;
 const fmtTime = (iso: string) => new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 const longDate = () => new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date());
 
-/** Tổng thu trong ca = tiền vào trừ tiền ra, cộng mọi phương thức. */
-const netInShift = (s: Shift | null): number => {
-  if (!s?.totals) return 0;
-  return Object.values(s.totals).reduce((n, t) => n + (t.in - t.out), 0);
-};
-
 export function CashierToday() {
   const { me, orgId } = useSession();
 
@@ -66,7 +60,6 @@ export function CashierToday() {
         <div className="row wrap">
           <div><strong>{open.length}</strong> hồ sơ đang mở</div>
           <div><strong>{fmtVnd(owed)}</strong> còn phải thu</div>
-          <div><strong>{shiftOpen ? fmtVnd(netInShift(s)) : '—'}</strong> thu trong ca</div>
         </div>
       </Card>
 
