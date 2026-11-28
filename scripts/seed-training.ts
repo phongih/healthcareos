@@ -140,11 +140,13 @@ const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 20
 // HCOS-F16: KEK lấy từ hcos.env (HCOS_KEKS) như API — seed ghi dữ liệu đã mã hoá giống hệt người dùng thật.
 if (!process.env['HCOS_KEKS']) throw new Error('Thiếu HCOS_KEKS (KEK mã hoá dữ liệu) trong hcos.env');
 configureKeyProvider(LocalKeyProvider.parse(process.env['HCOS_KEKS']));
-const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit });
+// Script này chỉ sinh dữ liệu giả cho thực tập: bắt buộc môi trường thực tập, và miễn cổng giấy phép khám chữa bệnh.
+if (process.env['HCOS_TRAINING_ENV'] !== '1') throw new Error('seed-training chỉ chạy ở môi trường thực tập (HCOS_TRAINING_ENV=1)');
+const registry = new PersonRegistryService({ uow: new PgRegistryUnitOfWork(pool), audit, trainingEnv: true });
 const handler = createApiHandler({
   // Như API thật: cơ sở theo membership trong DB (ttl 0: seed vừa đổi membership vừa gọi API) + bắt buộc amr có otp.
   tenant: { issuer: ISS, audience: AUD, key: publicKey as never, algorithms: ['RS256'], orgScope: new PgOrgScopeLookup(pool, { ttlMs: 0 }), requireAmr: ['otp'] },
-  clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit }),
+  clinical: new ClinicalEncounterService({ uow: new PgClinicalUnitOfWork(pool), audit, trainingEnv: true }),
   registry,
   accessPolicies: new AccessPolicyService({ uow: new PgAccessPolicyUnitOfWork(pool), audit }),
   pharmacy: new PharmacyInventoryService({ uow: new PgPharmacyUnitOfWork(pool), audit }),
